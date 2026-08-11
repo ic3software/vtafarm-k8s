@@ -103,7 +103,7 @@ replace the node.
 
 ```bash
 # 1. remove it from Kubernetes
-kubectl delete node rancher-ha-server-2
+kubectl delete node k3s-rancher-server-2
 
 # 2. confirm the remaining cluster is healthy
 kubectl get nodes
@@ -181,7 +181,7 @@ For accidental deletion, a failed upgrade, or rebuilding the cluster. This follo
 make snapshots
 ```
 
-Note the filename, e.g. `etcd-snapshot-rancher-ha-server-1-1754812800`.
+Note the filename, e.g. `etcd-snapshot-k3s-rancher-server-1-1754812800`.
 
 ### Step 2 — stop k3s everywhere
 

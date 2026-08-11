@@ -46,6 +46,10 @@ apply: ## Create/update the cluster (stack 01)
 kubeconfig: ## Re-fetch the kubeconfig from the first server
 	terraform -chdir=$(INFRA) apply -replace=null_resource.kubeconfig -auto-approve
 
+.PHONY: kubeconfig-merge
+kubeconfig-merge: ## Merge the cluster into ~/.kube/config so you can switch contexts
+	@bash $(ROOT)/scripts/merge-kubeconfig.sh $(KUBECONFIG_FILE)
+
 .PHONY: outputs
 outputs: ## Print stack 01 outputs (LB IPs, node IPs, DNS records)
 	terraform -chdir=$(INFRA) output

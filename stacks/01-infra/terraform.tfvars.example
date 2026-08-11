@@ -3,7 +3,7 @@
 hcloud_token = "REPLACE_ME"
 
 # The network zone is derived from the location; there is nothing else to set.
-cluster_name = "rancher-ha"
+cluster_name = "k3s-rancher"
 location     = "nbg1" # Nuremberg
 
 # --- Cluster shape ---------------------------------------------------------

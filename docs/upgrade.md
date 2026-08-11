@@ -197,7 +197,7 @@ done
 ### Reboot one node at a time
 
 ```bash
-NODE=rancher-ha-server-2
+NODE=k3s-rancher-server-2
 IP=<public ip of that node>
 
 # 1. move workloads off

@@ -80,6 +80,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 │   └── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
+│   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
 │   └── etcd-snapshot.sh        # take / list etcd snapshots
 └── docs/
     ├── backup-restore.md       # disaster-recovery runbook (includes a drill)
@@ -217,7 +218,7 @@ Minimum you need to set:
 
 ```hcl
 hcloud_token = "your Hetzner token"
-cluster_name = "rancher-ha"
+cluster_name = "k3s-rancher"
 
 # Lock SSH to your own addresses: curl -s https://ifconfig.me
 # One entry per address, always /32 — Hetzner takes CIDR notation only.
@@ -248,22 +249,38 @@ Takes roughly **5–8 minutes**. Terraform will appear to hang on
 `null_resource.kubeconfig` — that is it waiting for the first server to finish bootstrapping.
 This is expected.
 
-Then:
+The cluster's kubeconfig is now at `./kubeconfig`. Use it directly:
 
 ```bash
 export KUBECONFIG=$PWD/kubeconfig
 kubectl get nodes -o wide
 ```
 
-You should see three `Ready` nodes with roles `control-plane,etcd,master`:
+Or, if you already juggle other clusters, merge it into `~/.kube/config` so it becomes one
+more context you can switch to:
 
-```text
-NAME                  STATUS   ROLES                       AGE   VERSION
-rancher-ha-server-1   Ready    control-plane,etcd,master   4m    v1.35.7+k3s1
-rancher-ha-server-2   Ready    control-plane,etcd,master   3m    v1.35.7+k3s1
-rancher-ha-server-3   Ready    control-plane,etcd,master   2m    v1.35.7+k3s1
+```bash
+make kubeconfig-merge
+kubectl config use-context k3s-rancher
 ```
 
+The merge backs up `~/.kube/config` first, leaves your other clusters and your current context
+untouched, and is safe to re-run — same-named entries are replaced rather than duplicated, so
+running it again after rebuilding the cluster just refreshes the credentials. The context takes
+its name from `cluster_name`.
+
+Either way, you should see three `Ready` nodes with roles `control-plane,etcd,master`:
+
+```text
+NAME                   STATUS   ROLES                       AGE   VERSION
+k3s-rancher-server-1   Ready    control-plane,etcd,master   4m    v1.35.7+k3s1
+k3s-rancher-server-2   Ready    control-plane,etcd,master   3m    v1.35.7+k3s1
+k3s-rancher-server-3   Ready    control-plane,etcd,master   2m    v1.35.7+k3s1
+```
+
+> The rest of this README assumes `KUBECONFIG` points at the cluster. If you merged instead,
+> either select the context first or add `--context k3s-rancher` to the kubectl commands.
+>
 > If nodes stay `NotReady` with a `node.cloudprovider.kubernetes.io/uninitialized` taint, the
 > Hetzner CCM has not started — see [Troubleshooting](docs/troubleshooting.md).
 
@@ -401,7 +418,7 @@ This is the only way to know whether "HA" is actually HA.
 
 ```bash
 # pick a node you are NOT connected to, and power it off
-hcloud server poweroff rancher-ha-server-3     # or use the Console
+hcloud server poweroff k3s-rancher-server-3     # or use the Console
 ```
 
 In another terminal:
@@ -420,7 +437,7 @@ Expected behaviour:
 | throughout | `https://rancher.yourdomain.com` stays available |
 
 ```bash
-hcloud server poweron rancher-ha-server-3
+hcloud server poweron k3s-rancher-server-3
 kubectl get nodes          # back to Ready within a minute or two
 ```
 
@@ -585,6 +602,7 @@ make rancher-password    # Rancher bootstrap password
 make snapshot            # on-demand etcd snapshot
 make snapshots           # list snapshots
 make kubeconfig          # re-fetch the kubeconfig
+make kubeconfig-merge    # merge it into ~/.kube/config as a switchable context
 ```
 
 ### Growing the cluster
