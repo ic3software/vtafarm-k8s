@@ -180,15 +180,6 @@ ssh_private_key_path = "~/.ssh/my_key"
 
 Ed25519 and RSA both work.
 
-**If that key is already uploaded to your Hetzner project**, Terraform must not upload it
-again — Hetzner rejects a duplicate fingerprint and the apply fails with
-`SSH key with the same fingerprint already exists`. Look up its name under
-**Security → SSH keys** in the Console and reference it instead:
-
-```hcl
-existing_ssh_key_name = "my-laptop"   # ssh_public_key_path is then ignored
-```
-
 Only if you have no key at all:
 
 ```bash

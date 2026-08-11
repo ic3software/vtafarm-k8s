@@ -38,7 +38,7 @@ resource "hcloud_server" "server" {
   server_type        = var.server_type
   image              = var.os_image
   location           = var.location
-  ssh_keys           = [local.ssh_key_id]
+  ssh_keys           = [hcloud_ssh_key.this.id]
   placement_group_id = hcloud_placement_group.servers.id
   user_data          = local.server_user_data[count.index]
 

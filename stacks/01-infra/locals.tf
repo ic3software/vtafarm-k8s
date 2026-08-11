@@ -29,8 +29,6 @@ locals {
   }
   network_zone = local.network_zones[var.location]
 
-  ssh_key_id = var.existing_ssh_key_name == "" ? hcloud_ssh_key.this[0].id : data.hcloud_ssh_key.existing[0].id
-
   common_labels = {
     cluster = var.cluster_name
     managed = "terraform"

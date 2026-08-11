@@ -155,11 +155,16 @@ variable "enable_proxy_protocol" {
 
 variable "ssh_public_key_path" {
   description = <<-EOT
-    Path to an existing SSH public key. It is uploaded to Hetzner and installed
-    in root's authorized_keys on every node. Point this at whatever key you
-    already use; there is no need to generate a new one.
+    Path to an existing SSH public key. Point this at whatever key you already
+    use; there is no need to generate a new one.
 
-    Ignored when existing_ssh_key_name is set.
+    Terraform owns the key object in Hetzner: it uploads the key, servers get it
+    written into root's authorized_keys at creation, and `terraform destroy`
+    removes it again. If this same public key is already in the project (Console
+    -> Security -> SSH keys), delete it there first - the API rejects a second
+    key with the same fingerprint (uniqueness_error). Removing a key object does
+    not lock you out of running servers; it is only read when a server is
+    created.
   EOT
   type        = string
   default     = "~/.ssh/id_ed25519.pub"
@@ -176,18 +181,6 @@ variable "ssh_private_key_path" {
   default     = "~/.ssh/id_ed25519"
 }
 
-variable "existing_ssh_key_name" {
-  description = <<-EOT
-    Name of an SSH key ALREADY uploaded to this Hetzner project, as shown under
-    Security -> SSH keys. Set this when the key is already there: Hetzner
-    rejects a second upload of the same fingerprint, so letting Terraform create
-    it would fail the apply.
-
-    Leave empty to have Terraform upload ssh_public_key_path itself.
-  EOT
-  type        = string
-  default     = ""
-}
 
 # ---------------------------------------------------------------------------
 # k3s

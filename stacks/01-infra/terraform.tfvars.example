@@ -19,11 +19,6 @@ server_type  = "cx23" # 2 vCPU / 4 GB / 40 GB NVMe - see the note in variables.t
 ssh_public_key_path  = "~/.ssh/id_ed25519.pub"
 ssh_private_key_path = "~/.ssh/id_ed25519"
 
-# If this public key is ALREADY uploaded to the Hetzner project, put its name
-# here instead (Console -> Security -> SSH keys). Hetzner rejects a duplicate
-# fingerprint, so Terraform must reference it rather than upload it again.
-existing_ssh_key_name = ""
-
 # Lock SSH down to your own address. Find it with: curl -s https://ifconfig.me
 # Leaving 0.0.0.0/0 here means the whole internet may knock on port 22.
 ssh_allowed_cidrs = ["0.0.0.0/0"]

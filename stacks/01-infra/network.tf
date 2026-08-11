@@ -20,22 +20,15 @@ resource "hcloud_network_subnet" "nodes" {
   ip_range     = var.subnet_cidr
 }
 
-# Either upload the key, or reference one that is already in the project.
-# Hetzner refuses a second upload of the same fingerprint, so reusing a key you
-# have used before requires the data source rather than the resource.
+# Terraform owns this key. Hetzner rejects a second key with the same
+# fingerprint, so if the public key is already in the project by hand, delete it
+# there first.
 resource "hcloud_ssh_key" "this" {
-  count = var.existing_ssh_key_name == "" ? 1 : 0
-
   name       = "${var.cluster_name}-admin"
   public_key = file(pathexpand(var.ssh_public_key_path))
   labels     = local.common_labels
 }
 
-data "hcloud_ssh_key" "existing" {
-  count = var.existing_ssh_key_name == "" ? 0 : 1
-
-  name = var.existing_ssh_key_name
-}
 
 # "spread" asks Hetzner to place these servers on different physical hosts.
 # Without it three "HA" control-plane nodes can end up on one machine and a
