@@ -133,6 +133,25 @@ locals {
         # over the private network (VXLAN), which needs no Hetzner routes.
         networking = { enabled = false }
         env = {
+          # The nodes advertise their private addresses to Kubernetes. Tell the
+          # CCM which Hetzner network contains those addresses so it can match
+          # each Node to its cloud Server and remove the external-cloud-provider
+          # initialization taint. The chart only injects HCLOUD_NETWORK when its
+          # route management is enabled, so provide it explicitly here.
+          HCLOUD_NETWORK = {
+            valueFrom = {
+              secretKeyRef = {
+                name = "hcloud"
+                key  = "network"
+              }
+            }
+          }
+
+          # Flannel VXLAN owns pod routing. Setting HCLOUD_NETWORK without this
+          # would also start Hetzner's network route controller, duplicating a
+          # responsibility that this cluster deliberately leaves to Flannel.
+          HCLOUD_NETWORK_ROUTES_ENABLED = { value = "false" }
+
           # Load balancers are owned by Terraform in this repo. Without this the
           # CCM would create a second, untracked LB for every Service of type
           # LoadBalancer and `terraform destroy` would silently leave it behind.

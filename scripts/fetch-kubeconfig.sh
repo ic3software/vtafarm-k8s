@@ -23,11 +23,31 @@ SSH_OPTS=(
 echo "==> waiting for k3s to finish bootstrapping on ${SSH_HOST} (up to 20 min)"
 ready=0
 for i in $(seq 1 120); do
-  if ssh "${SSH_OPTS[@]}" "root@${SSH_HOST}" \
-    'test -f /var/lib/rancher/.k3s-bootstrap-done && test -f /etc/rancher/k3s/k3s.yaml' 2>/dev/null; then
-    ready=1
-    break
-  fi
+  remote_status="$(ssh "${SSH_OPTS[@]}" "root@${SSH_HOST}" '
+    if test -f /var/lib/rancher/.k3s-bootstrap-done && test -f /etc/rancher/k3s/k3s.yaml; then
+      echo ready
+    elif test -f /var/lib/rancher/.k3s-bootstrap-failed; then
+      echo failed
+    else
+      echo waiting
+    fi
+  ' 2>/dev/null || true)"
+
+  case "$remote_status" in
+    ready)
+      ready=1
+      break
+      ;;
+    failed)
+      echo >&2
+      echo "==> ERROR: k3s bootstrap failed on ${SSH_HOST}:" >&2
+      ssh "${SSH_OPTS[@]}" "root@${SSH_HOST}" \
+        'cat /var/lib/rancher/.k3s-bootstrap-failed; tail -100 /var/log/cloud-init-output.log' \
+        >&2 || true
+      exit 1
+      ;;
+  esac
+
   printf '    still waiting (%s/120)\r' "$i"
   sleep 10
 done

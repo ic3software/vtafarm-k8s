@@ -316,7 +316,7 @@ dig +short rancher.yourdomain.com
 ```bash
 cd stacks/02-platform
 cp terraform.tfvars.example terraform.tfvars
-$EDITOR terraform.tfvars
+code terraform.tfvars
 ```
 
 ```hcl

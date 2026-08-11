@@ -49,13 +49,13 @@ resource "hcloud_server" "server" {
     ipv6_enabled = false
   }
 
-  # Attach the private network as part of creating the server, NOT afterwards
-  # with a separate hcloud_server_network resource.
+  # Keep the network attachment inline so Terraform owns it together with the
+  # server instead of through a competing hcloud_server_network resource.
   #
-  # A later attach is a hot-plug: the NIC appears after cloud-init has already
-  # run its network stage, so nothing configures it and it sits there DOWN with
-  # no address. The bootstrap script then waits for an IP that never arrives.
-  # Attaching here means the interface exists before the OS boots.
+  # Even an inline network is attached after server creation by the hcloud
+  # provider when a public network is enabled. The guest may therefore see it
+  # as a hot-plugged NIC after cloud-init's network stage; k3s-bootstrap.sh
+  # detects and configures that NIC explicitly with netplan.
   network {
     network_id = hcloud_network.this.id
     ip         = local.server_private_ips[count.index]

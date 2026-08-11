@@ -76,7 +76,8 @@ ssh root@<server-2> 'journalctl -u k3s -n 100 --no-pager'
 
 | What you see | Meaning | Fix |
 | --- | --- | --- |
-| `waiting for private IP 10.0.1.102 to appear ...` repeated | The private network interface card (NIC) was never attached | Check `hcloud_server_network` applied cleanly; `ssh root@<node> 'ip -o -4 addr'` |
+| `waiting for the private network interface to appear ...` repeated | Hetzner has not exposed the private NIC to the guest | Check the server's private-network attachment in the Hetzner Console; inspect `ip -o link show` on the node |
+| `waiting for private IP 10.0.1.102 on enp7s0 ...` repeated | The NIC exists but DHCP did not assign the IP requested by Terraform | Inspect `/etc/netplan/60-k3s-private-network.yaml`, then run `netplan generate && netplan apply`; compare `ip -o -4 addr` with `terraform output servers` |
 | `waiting for peer 10.0.1.10 ...` never succeeds | The API load balancer is not forwarding | Hetzner Console → Load Balancers → your cluster's LB → Targets. If server-1 is unhealthy, its k3s is not listening on 6443 |
 | `failed to validate server token` | Token mismatch — the node has different `token:` than the cluster | Compare `/etc/rancher/k3s/config.yaml` across nodes |
 | `etcdserver: too many learner members in cluster` | Two nodes tried to join simultaneously | Restart k3s on the failing node: `systemctl restart k3s`. It retries and succeeds |

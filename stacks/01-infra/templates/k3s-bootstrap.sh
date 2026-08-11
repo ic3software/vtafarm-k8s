@@ -6,6 +6,21 @@
 # Logs land in /var/log/cloud-init-output.log.
 set -euo pipefail
 
+STATUS_DIR="/var/lib/rancher"
+DONE_MARKER="${STATUS_DIR}/.k3s-bootstrap-done"
+FAILED_MARKER="${STATUS_DIR}/.k3s-bootstrap-failed"
+install -d -m 0755 "$STATUS_DIR"
+rm -f "$DONE_MARKER" "$FAILED_MARKER"
+
+record_failure() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'bootstrap failed with exit status %s at %s\n' \
+      "$status" "$(date -Is)" >"$FAILED_MARKER"
+  fi
+}
+trap record_failure EXIT
+
 # shellcheck disable=SC1091
 source /etc/k3s-bootstrap.env
 
@@ -17,29 +32,114 @@ source /etc/k3s-bootstrap.env
 
 log() { echo "[k3s-bootstrap] $(date -Is) $*"; }
 
+interface_with_ip() {
+  ip -o -4 addr show |
+    awk -v pfx="${NODE_IP}/" '$4 ~ "^"pfx {print $2; exit}'
+}
+
+find_private_interface() {
+  public_interface="$1"
+
+  for interface_path in /sys/class/net/*; do
+    interface="${interface_path##*/}"
+    [ "$interface" = "lo" ] && continue
+    [ "$interface" = "$public_interface" ] && continue
+    # Ignore software interfaces if the image happens to provide any. Both
+    # Hetzner virtio NICs have a device entry under /sys/class/net.
+    [ -e "${interface_path}/device" ] || continue
+    printf '%s\n' "$interface"
+    return 0
+  done
+
+  return 1
+}
+
+configure_private_interface() {
+  interface="$1"
+  mac_address="$(cat "/sys/class/net/${interface}/address")"
+
+  case "$mac_address" in
+    ??:??:??:??:??:??) ;;
+    *)
+      log "ERROR: could not determine the MAC address of ${interface}"
+      return 1
+      ;;
+  esac
+
+  log "configuring private interface ${interface} (${mac_address}) with netplan DHCP"
+  cat >/etc/netplan/60-k3s-private-network.yaml <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    k3s-private:
+      match:
+        macaddress: "${mac_address}"
+      dhcp4: true
+      dhcp4-overrides:
+        use-dns: false
+      dhcp6: false
+      mtu: 1450
+      optional: true
+EOF
+  chmod 0600 /etc/netplan/60-k3s-private-network.yaml
+
+  if ! netplan generate; then
+    log "ERROR: netplan rejected the private interface configuration"
+    return 1
+  fi
+  if ! netplan apply; then
+    log "ERROR: netplan could not activate private interface ${interface}"
+    return 1
+  fi
+}
+
 # ---------------------------------------------------------------------------
-# 1. Wait for the Hetzner private network to be attached.
+# 1. Configure the Hetzner private network.
 #
-# cloud-init frequently runs before the second NIC is configured. k3s must bind
-# to the private IP, so we block until it exists and then record the interface
-# name for flannel (it differs between Intel/AMD/ARM instance types, so it is
-# detected here rather than hard-coded).
+# The hcloud provider can attach the private NIC after the server has started.
+# In that case cloud-init has already completed its network stage, leaving the
+# hot-plugged NIC DOWN and without an address. Detect the NIC by excluding the
+# public default-route interface, persist a MAC-matched netplan definition, and
+# actively run DHCP. The interface name differs across instance types, so it is
+# never hard-coded.
 # ---------------------------------------------------------------------------
+PUBLIC_IFACE="$(ip -o -4 route show default | awk '{print $5; exit}')"
+if [ -z "$PUBLIC_IFACE" ]; then
+  log "ERROR: could not identify the public default-route interface"
+  ip -o -4 route show || true
+  exit 1
+fi
+
 IFACE=""
+PRIVATE_IFACE=""
+NETPLAN_CONFIGURED=0
 for _ in $(seq 1 60); do
-  IFACE="$(ip -o -4 addr show | awk -v pfx="${NODE_IP}/" '$4 ~ "^"pfx {print $2; exit}')"
+  IFACE="$(interface_with_ip)"
   [ -n "$IFACE" ] && break
-  log "waiting for private IP ${NODE_IP} to appear ..."
+
+  if [ -z "$PRIVATE_IFACE" ]; then
+    PRIVATE_IFACE="$(find_private_interface "$PUBLIC_IFACE" || true)"
+  fi
+
+  if [ -z "$PRIVATE_IFACE" ]; then
+    log "waiting for the private network interface to appear ..."
+  elif [ "$NETPLAN_CONFIGURED" -eq 0 ]; then
+    configure_private_interface "$PRIVATE_IFACE"
+    NETPLAN_CONFIGURED=1
+    log "waiting for private IP ${NODE_IP} on ${PRIVATE_IFACE} ..."
+  else
+    log "waiting for private IP ${NODE_IP} on ${PRIVATE_IFACE} ..."
+  fi
   sleep 5
 done
 
 if [ -z "$IFACE" ]; then
   log "ERROR: private IP ${NODE_IP} never appeared on any interface"
-  # Print link state as well as addresses: an interface that is present but
-  # DOWN with no address means the network was hot-plugged after cloud-init
-  # configured networking, rather than attached at server creation.
   ip -o link show
   ip -o -4 addr show
+  ip -o -4 route show
+  sed -n '1,200p' /etc/netplan/60-k3s-private-network.yaml 2>/dev/null || true
   exit 1
 fi
 log "private interface for ${NODE_IP} is ${IFACE}"
@@ -107,6 +207,6 @@ if ! systemctl is-active --quiet k3s; then
   exit 1
 fi
 
-install -d -m 0755 /var/lib/rancher
-touch /var/lib/rancher/.k3s-bootstrap-done
+rm -f "$FAILED_MARKER"
+touch "$DONE_MARKER"
 log "k3s is running - bootstrap complete"
