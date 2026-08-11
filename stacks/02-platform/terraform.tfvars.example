@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+# --- Rancher ---------------------------------------------------------------
+# The A record for this name must already point at the load balancer
+# (terraform -chdir=../01-infra output load_balancer_ipv4).
+rancher_hostname  = "rancher.example.com"
+letsencrypt_email = "you@example.com"
+
+# Use "staging" until DNS resolves correctly, then switch to "production".
+# Let's Encrypt only allows 5 failed production orders per hostname per hour.
+letsencrypt_environment = "staging"
+
+# Leave empty to have Terraform generate one:
+#   terraform output -raw rancher_bootstrap_password
+rancher_bootstrap_password = ""
+
+rancher_replicas      = 3
+rancher_chart_version = "2.14.3"
+cert_manager_version  = "v1.21.1"
+
+# --- Rancher backups to DigitalOcean Spaces --------------------------------
+# Same Space as the etcd snapshots; a different folder keeps them apart.
+backup_s3_endpoint   = "fra1.digitaloceanspaces.com"
+backup_s3_region     = "fra1"
+backup_s3_bucket     = "my-k3s-backups"
+backup_s3_folder     = "rancher-backup"
+backup_s3_access_key = ""
+backup_s3_secret_key = ""
+
+# Pinned to the Rancher minor via catalog.cattle.io/rancher-version.
+# 109.x = Rancher 2.14.x, 110.x = Rancher 2.15.x. Bump both together.
+rancher_backup_chart_version = "109.0.7+up10.0.8"
+
+# --- Automated k3s upgrades ------------------------------------------------
+# Keep this equal to k3s_version in stack 01. Changing it here and re-applying
+# is what performs a rolling upgrade, one node at a time.
+k3s_target_version = "v1.35.7+k3s1"

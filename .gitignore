@@ -1,0 +1,28 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl.bak
+
+# Secrets / generated artefacts
+kubeconfig
+kubeconfig.yaml
+*.pem
+.env
+
+# Tooling
+node_modules/
+
+# macOS
+.DS_Store

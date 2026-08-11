@@ -1,0 +1,50 @@
+#cloud-config
+hostname: ${hostname}
+preserve_hostname: false
+fqdn: ${hostname}
+
+package_update: true
+package_upgrade: false
+packages:
+  - curl
+  - ca-certificates
+  - jq
+  - open-iscsi
+  - nfs-common
+
+write_files:
+  - path: /etc/rancher/k3s/config.yaml
+    permissions: "0600"
+    owner: root:root
+    encoding: b64
+    content: ${base64encode(k3s_config)}
+
+  - path: /etc/k3s-bootstrap.env
+    permissions: "0600"
+    owner: root:root
+    encoding: b64
+    content: ${base64encode(bootstrap_env)}
+
+  - path: /usr/local/bin/k3s-bootstrap.sh
+    permissions: "0700"
+    owner: root:root
+    encoding: b64
+    content: ${base64encode(bootstrap_script)}
+
+  - path: /etc/sysctl.d/99-kubernetes.conf
+    permissions: "0644"
+    owner: root:root
+    encoding: b64
+    content: ${base64encode(sysctl_config)}
+
+%{ for name, content in manifests ~}
+  - path: /var/lib/rancher/k3s/server/manifests/${name}
+    permissions: "0600"
+    owner: root:root
+    encoding: b64
+    content: ${base64encode(content)}
+%{ endfor ~}
+
+runcmd:
+  - [systemctl, restart, systemd-sysctl]
+  - [bash, /usr/local/bin/k3s-bootstrap.sh]

@@ -1,1 +1,696 @@
-# terraform-hcloud-k3s-ha
+# k3s HA + Rancher on Hetzner Cloud
+
+Terraform for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
+Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one.
+
+The HA topology follows the [official k3s embedded-etcd HA guide](https://docs.k3s.io/datastore/ha-embedded):
+an odd number of server nodes, the first started with `--cluster-init`, the rest joining through a
+**fixed registration address** (a Hetzner Load Balancer in this setup).
+
+---
+
+## Contents
+
+- [Architecture](#architecture)
+- [Terraform in three minutes](#terraform-in-three-minutes)
+- [Prerequisites](#prerequisites)
+- [Deploy](#deploy)
+- [Testing](#testing)
+- [Backups](#backups)
+- [Upgrades](#upgrades)
+- [Day-2 operations](#day-2-operations)
+- [Troubleshooting](#troubleshooting)
+- [Cost](#cost)
+- [Teardown](#teardown)
+
+---
+
+## Architecture
+
+```text
+                          internet
+                              │
+                ┌─────────────▼──────────────┐
+                │  Hetzner Load Balancer     │
+                │    :6443  Kubernetes API   │  → servers
+                │    :80    HTTP  ─┐         │  → all nodes
+                │    :443   HTTPS ─┘ Traefik │
+                └─────────────┬──────────────┘
+                          10.0.1.10
+  ┌───────────────────────────┴────────────────────────────┐
+  │           Hetzner private network 10.0.1.0/24          │
+  │                                                        │
+  │   server-1          server-2          server-3         │
+  │   10.0.1.101        10.0.1.102        10.0.1.103       │
+  │   ┌──────────┐      ┌──────────┐      ┌──────────┐     │
+  │   │ k3s      │      │ k3s      │      │ k3s      │     │
+  │   │ + etcd   │◄────►│ + etcd   │◄────►│ + etcd   │     │
+  │   │ Traefik  │      │ Traefik  │      │ Traefik  │     │
+  │   │ Rancher  │      │ Rancher  │      │ Rancher  │     │
+  │   └──────────┘      └──────────┘      └──────────┘     │
+  │         placement group = spread (separate hosts)      │
+  └────────────────────────────┬───────────────────────────┘
+                               │
+                               ▼  etcd snapshot every 6h
+                     DigitalOcean Spaces (S3)
+```
+
+### Design decisions worth knowing about
+
+| Decision | Why |
+| --- | --- |
+| **3 servers with embedded etcd** | etcd needs a quorum of `(n/2)+1`, so the server count must be odd and at least 3. Three nodes tolerate one failure. |
+| **k3s pinned to v1.35.7, Rancher to 2.14.3** | The Rancher chart declares a `kubeVersion` constraint that helm enforces: `2.14.x -> < 1.36.0-0`. The k3s `stable` channel is on v1.36, so following it would make `helm install rancher` fail outright. v1.35.7 is the newest k3s that 2.14.3 accepts. |
+| **API behind a load balancer (fixed registration address)** | Nodes join via `https://10.0.1.10:6443`. Any server can be replaced without the others noticing, and your kubeconfig points at the same stable address. |
+| **One load balancer, three services** | A Hetzner load balancer serves up to 5 services and 10,000 concurrent connections. A management cluster whose ingress traffic is a couple of admins has nothing to gain from a second one, so :6443, :80 and :443 share it. Targets belong to the load balancer while health checks belong to each service, and every node runs both the API server and Traefik, so all three services report green. |
+| **All k3s traffic on the private network** | Hetzner Cloud Firewalls only filter the **public** interface — private network traffic is never inspected. So etcd (2379-2380), the API (6443), flannel's Virtual Extensible LAN tunnel (VXLAN, 8472) and the kubelet (10250) all bind to private IPs, and the public interface only exposes SSH. |
+| **Placement group `spread`** | Without it, three "HA" servers can land on the same physical host and one hardware failure costs you etcd quorum. |
+| **Hetzner cloud controller manager (CCM) manages nodes, Terraform manages load balancers** | The CCM sets `providerID`, topology labels and node lifecycle. Its load-balancer controller is switched off (`HCLOUD_LOAD_BALANCERS_ENABLED=false`) — otherwise it creates load balancers Terraform doesn't know about, which survive `terraform destroy` and keep billing you. |
+| **Traefik as a DaemonSet with hostPorts** | Installing an external CCM requires `--disable-cloud-controller`, which also removes k3s' built-in servicelb (klipper). Traefik binds directly to `:80`/`:443` on the host instead, so the load balancer has something to reach. |
+| **IPv4 only on the nodes** | One address family is one set of firewall rules to reason about. Hetzner still gives the load balancer an IPv6 address and offers no switch for that, but it reaches the nodes over private IPv4 regardless. |
+| **`cx33` on x86, not the ARM64 `cax` line** | `cx33` is 4 vCPU / 8 GB / 80 GB NVMe on shared AMD EPYC — enough headroom for three Rancher replicas alongside etcd. The `cax` (ARM64) line is cheaper, but [Rancher documents ARM64 as experimental and not recommended for production](https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64). |
+
+### Repository layout
+
+```text
+.
+├── Makefile                    # every common task is a make target
+├── stacks/
+│   ├── 01-infra/               # Hetzner resources + the k3s cluster
+│   └── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
+├── scripts/
+│   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
+│   └── etcd-snapshot.sh        # take / list etcd snapshots
+└── docs/
+    ├── backup-restore.md       # disaster-recovery runbook (includes a drill)
+    ├── upgrade.md              # upgrade runbook
+    └── troubleshooting.md      # start here when something is stuck
+```
+
+**Why two stacks?**
+Terraform must be able to configure a provider *before* it starts running. The `helm` and
+`kubernetes` providers need a kubeconfig — which only exists after stack 01 has finished.
+Putting both in one stack creates a chicken-and-egg problem. Split apart, stack 01 builds the
+cluster and emits a kubeconfig, stack 02 consumes it. This is the standard pattern.
+
+---
+
+## Terraform in three minutes
+
+**The core idea:** you *describe the desired end state* in `.tf` files. Terraform diffs that
+against what actually exists in the cloud and works out what to change. It is not a script —
+there is no execution order, only a dependency graph it derives from how resources reference
+each other.
+
+**Four kinds of file:**
+
+| File | Role |
+| --- | --- |
+| `variables.tf` | Declares which knobs exist (like a function signature) |
+| `terraform.tfvars` | The values you actually supply (**contains secrets, gitignored**) |
+| other `*.tf` | The resource definitions themselves |
+| `terraform.tfstate` | Terraform's ledger of what it has created. **Lose it and Terraform forgets everything and wants to rebuild it all** |
+
+**Four commands:**
+
+```bash
+terraform init      # download providers (first run, or after changing provider versions)
+terraform plan      # "what would happen if I ran this" — read-only, run it freely
+terraform apply     # actually do it; shows the plan first and asks you to type yes
+terraform destroy   # delete everything this stack created
+```
+
+**Reading a plan:**
+
+```text
++ create      new resource
+~ update      changed in place (no service impact)
+-/+ replace   destroyed and recreated  ←←← stop and think when you see this
+- destroy     removed
+```
+
+> ⚠️ The dangerous one here is `-/+ replace` on `hcloud_server.server` — that means Terraform
+> wants to rebuild control-plane nodes, and all three at once wipes the cluster. This repo
+> guards against the common cause with
+> `lifecycle { ignore_changes = [user_data, ssh_keys, image] }`, because cloud-init only ever
+> runs on first boot: editing it changes nothing on a running node, yet would still trigger a
+> rebuild. When you genuinely want to roll a node, do it **one at a time**:
+> `terraform apply -replace='hcloud_server.server[2]'`
+
+**Where does state live?**
+Locally, in `stacks/*/terraform.tfstate`. Fine for a single operator, but **back it up**, or
+switch to a remote backend (S3 / Terraform Cloud). Losing state is painful to recover from.
+
+---
+
+## Prerequisites
+
+### 1. Tools
+
+```bash
+brew install terraform kubectl helm jq
+```
+
+Terraform ≥ 1.6, kubectl, Helm 3, jq.
+
+### 2. A Hetzner API token
+
+Hetzner Cloud Console → your project → **Security** → **API tokens** → Generate API token →
+permission **Read & Write** → copy it (shown only once).
+
+### 3. An SSH key
+
+**Use the key you already have.** Terraform needs two paths: the public key, which it uploads
+to Hetzner and installs in root's `authorized_keys` on every node, and the matching private
+key, which never leaves your machine — only `scripts/fetch-kubeconfig.sh` and
+`scripts/etcd-snapshot.sh` use it to reach the nodes.
+
+```bash
+ls -l ~/.ssh/*.pub          # find what you already have
+```
+
+If your key lives at the default location there is nothing to configure. Otherwise point the
+variables at it:
+
+```hcl
+# stacks/01-infra/terraform.tfvars
+ssh_public_key_path  = "~/.ssh/my_key.pub"
+ssh_private_key_path = "~/.ssh/my_key"
+```
+
+Ed25519 and RSA both work.
+
+**If that key is already uploaded to your Hetzner project**, Terraform must not upload it
+again — Hetzner rejects a duplicate fingerprint and the apply fails with
+`SSH key with the same fingerprint already exists`. Look up its name under
+**Security → SSH keys** in the Console and reference it instead:
+
+```hcl
+existing_ssh_key_name = "my-laptop"   # ssh_public_key_path is then ignored
+```
+
+Only if you have no key at all:
+
+```bash
+ssh-keygen -t ed25519 -C "k3s-hetzner" -f ~/.ssh/id_ed25519
+```
+
+> If your private key has a passphrase, run `ssh-add ~/.ssh/my_key` once before
+> `make apply`, otherwise the kubeconfig fetch stalls waiting for a prompt it cannot show you.
+
+### 4. A domain
+
+Rancher **requires a DNS hostname** — it cannot be reached by IP. Have something like
+`rancher.yourdomain.com` ready, on a zone you can edit.
+
+### 5. DigitalOcean Spaces (for etcd snapshots)
+
+- DigitalOcean → **Spaces Object Storage** → Create a Space, region **`fra1`** (Frankfurt is
+  closest to `fsn1`, so uploads are fast)
+- DigitalOcean → **API** → **Spaces Keys** → Generate New Key. Note the access key and secret
+  key — the secret is shown once.
+
+---
+
+## Deploy
+
+### Step 1 — Configure stack 01
+
+```bash
+cd stacks/01-infra
+cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars
+```
+
+Minimum you need to set:
+
+```hcl
+hcloud_token = "your Hetzner token"
+cluster_name = "rancher-ha"
+
+# Lock SSH to your own address: curl -s https://ifconfig.me
+ssh_allowed_cidrs = ["1.2.3.4/32"]
+
+# Put the Rancher hostname in the API certificate now, so you never need to reissue it
+additional_tls_sans = ["rancher.yourdomain.com"]
+
+# etcd snapshots to DigitalOcean Spaces (required - there is no local-only mode)
+etcd_s3_endpoint   = "fra1.digitaloceanspaces.com"
+etcd_s3_region     = "fra1"
+etcd_s3_bucket     = "your-space-name"
+etcd_s3_access_key = "..."
+etcd_s3_secret_key = "..."
+```
+
+### Step 2 — Build the cluster
+
+```bash
+cd ../..            # back to the repo root
+make init
+make plan           # read what it intends to do
+make apply          # type yes
+```
+
+Takes roughly **5–8 minutes**. Terraform will appear to hang on
+`null_resource.kubeconfig` — that is it waiting for the first server to finish bootstrapping.
+This is expected.
+
+Then:
+
+```bash
+export KUBECONFIG=$PWD/kubeconfig
+kubectl get nodes -o wide
+```
+
+You should see three `Ready` nodes with roles `control-plane,etcd,master`:
+
+```text
+NAME                  STATUS   ROLES                       AGE   VERSION
+rancher-ha-server-1   Ready    control-plane,etcd,master   4m    v1.35.7+k3s1
+rancher-ha-server-2   Ready    control-plane,etcd,master   3m    v1.35.7+k3s1
+rancher-ha-server-3   Ready    control-plane,etcd,master   2m    v1.35.7+k3s1
+```
+
+> If nodes stay `NotReady` with a `node.cloudprovider.kubernetes.io/uninitialized` taint, the
+> Hetzner CCM has not started — see [Troubleshooting](docs/troubleshooting.md).
+
+**Save the join token — this matters:**
+
+```bash
+make token
+```
+
+Besides letting nodes join, this token encrypts confidential data inside etcd.
+**Without it, an etcd snapshot cannot be restored.** Put it in your password manager.
+
+### Step 3 — Point DNS at the load balancer
+
+```bash
+make outputs
+```
+
+Take `load_balancer_ipv4` and create:
+
+```text
+rancher.yourdomain.com.   A      <load_balancer_ipv4>
+```
+
+**Wait for DNS to propagate before continuing**, otherwise the Let's Encrypt challenge fails:
+
+```bash
+dig +short rancher.yourdomain.com
+```
+
+### Step 4 — Install Rancher
+
+```bash
+cd stacks/02-platform
+cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars
+```
+
+```hcl
+rancher_hostname  = "rancher.yourdomain.com"
+letsencrypt_email = "you@yourdomain.com"
+
+# Start with staging — see the note below
+letsencrypt_environment = "staging"
+
+backup_s3_bucket     = "your-space-name"
+backup_s3_access_key = "..."
+backup_s3_secret_key = "..."
+```
+
+> **Why staging first?** Let's Encrypt production allows only **5 failed orders per hostname
+> per hour**. A DNS typo or a blocked port 80 burns through that quota fast, and then you wait.
+> Staging has no such limit; its certificates are simply untrusted by browsers. Prove the whole
+> path works, then switch.
+
+```bash
+cd ../..
+make apply-platform
+```
+
+Takes **5–10 minutes** (cert-manager → Rancher → certificate issuance).
+
+Check the certificate was issued:
+
+```bash
+kubectl -n cattle-system get certificate
+# READY should be True
+```
+
+### Step 5 — Switch to a real certificate
+
+Once staging works:
+
+```hcl
+# stacks/02-platform/terraform.tfvars
+letsencrypt_environment = "production"
+```
+
+```bash
+# delete the staging cert so cert-manager reissues
+kubectl -n cattle-system delete secret tls-rancher-ingress
+make apply-platform
+```
+
+### Step 6 — Log in
+
+```bash
+make rancher-password
+open https://rancher.yourdomain.com
+```
+
+User `admin`, with that password. Rancher forces a change on first login.
+
+---
+
+## Testing
+
+### Quick health check
+
+```bash
+make status
+```
+
+Shows nodes, etcd members, any non-Running pods, the Rancher deployment and certificates.
+
+### Detailed verification
+
+```bash
+export KUBECONFIG=$PWD/kubeconfig
+
+# 1. Three Ready nodes, all of them actual etcd members
+kubectl get nodes -L node-role.kubernetes.io/etcd
+
+# 2. etcd is healthy (run against any server)
+ssh root@<server-1-public-ip> 'k3s kubectl get --raw "/healthz?verbose"' | grep etcd
+
+# 3. The Hetzner CCM is up and nodes carry a providerID
+kubectl -n kube-system get pods -l app.kubernetes.io/name=hcloud-cloud-controller-manager
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.providerID}{"\n"}{end}'
+# expect hcloud://<server-id>
+
+# 4. Traefik runs as a DaemonSet, one pod per node
+kubectl -n kube-system get ds traefik -o wide
+
+# 5. Every load balancer service reports healthy targets
+#    (Hetzner Console → Load Balancers → Targets)
+
+# 6. Rancher has three replicas spread across nodes
+kubectl -n cattle-system get pods -o wide -l app=rancher
+```
+
+### HA failover test — do this once, before you rely on the cluster
+
+This is the only way to know whether "HA" is actually HA.
+
+```bash
+# pick a node you are NOT connected to, and power it off
+hcloud server poweroff rancher-ha-server-3     # or use the Console
+```
+
+In another terminal:
+
+```bash
+watch kubectl get nodes
+```
+
+Expected behaviour:
+
+| When | What happens |
+| --- | --- |
+| immediately | `kubectl` keeps working — the LB routes to the remaining two servers |
+| ~40s | the node goes `NotReady` |
+| ~5 min | its pods are evicted and rescheduled elsewhere |
+| throughout | `https://rancher.yourdomain.com` stays available |
+
+```bash
+hcloud server poweron rancher-ha-server-3
+kubectl get nodes          # back to Ready within a minute or two
+```
+
+> **What if you kill a second node?** etcd loses quorum (1 of 3 is below the required
+> `(3/2)+1 = 2`) and **the API server stops serving**. That is etcd behaving correctly, not a
+> bug. Tolerating two simultaneous failures requires five servers.
+
+### Test the ingress path
+
+```bash
+kubectl create deployment hello --image=nginxdemos/hello
+kubectl expose deployment hello --port=80
+kubectl create ingress hello --class=traefik \
+  --rule="hello.yourdomain.com/*=hello:80"
+
+# once DNS points at the ingress LB
+curl -I http://hello.yourdomain.com
+
+# clean up
+kubectl delete ingress hello; kubectl delete svc hello; kubectl delete deploy hello
+```
+
+### Test persistent storage (Hetzner CSI)
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: csi-test
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: hcloud-volumes
+  resources:
+    requests:
+      storage: 10Gi
+EOF
+
+kubectl get pvc csi-test        # should reach Bound; a real Hetzner volume is created
+kubectl delete pvc csi-test
+```
+
+---
+
+## Backups
+
+Two layers. Both are configured, and neither substitutes for the other:
+
+| Layer | Tool | Covers | Use when |
+| --- | --- | --- | --- |
+| **etcd snapshot** | built into k3s | the entire Kubernetes datastore (every resource, including all of Rancher) | the cluster is broken, something was deleted by mistake, or you need to roll back |
+| **Rancher backup** | rancher-backup operator | only Rancher's own CRDs, users and downstream cluster registrations | migrating Rancher to a different cluster |
+
+Both upload to your DigitalOcean Space on a schedule.
+
+### etcd snapshots
+
+Every **6 hours** by default, 10 kept locally, 60 kept in S3, compressed. Tunable via the
+`etcd_snapshot_*` / `etcd_s3_*` variables in `stacks/01-infra/terraform.tfvars`.
+
+```bash
+make snapshots            # list all snapshots (local + S3)
+make snapshot             # take one right now
+```
+
+### Three things you must keep outside the cluster
+
+A snapshot file on its own is not enough. Store these in a password manager or separate backup:
+
+1. **The k3s token** — `make token`. It decrypts the bootstrap data inside every snapshot.
+2. **Terraform state** — `stacks/*/terraform.tfstate`.
+3. **The S3 credentials** — otherwise you cannot reach the backups you took.
+
+### Restoring
+
+The full procedure, including how to rehearse it, is in
+**[docs/backup-restore.md](docs/backup-restore.md)**.
+
+**Run the drill before you go live.** A backup you have never restored is not a backup.
+
+---
+
+## Upgrades
+
+Three independent things. Recommended order: **k3s → Rancher → operating system**.
+
+### 1. k3s
+
+Handled by `system-upgrade-controller` — the
+[approach k3s documents for automated upgrades](https://docs.k3s.io/upgrades/automated).
+It is already installed and **pinned to an explicit version**, so nothing moves on its own.
+
+```hcl
+# stacks/02-platform/terraform.tfvars
+k3s_target_version = "v1.35.8+k3s1"
+```
+
+```bash
+make snapshot
+make apply-platform
+```
+
+The controller works **one node at a time**: cordon → swap the binary → restart → wait for
+Ready → next node.
+
+```bash
+kubectl -n system-upgrade get jobs -w
+kubectl get nodes -w
+```
+
+> **Which version?** It must satisfy the Rancher chart's `kubeVersion` — 2.14.x means
+> **< 1.36.0-0**, i.e. v1.33 / v1.34 / v1.35. List the current channel heads with:
+>
+> ```bash
+> curl -s https://update.k3s.io/v1-release/channels | jq -r '.data[] | "\(.id)\t\(.latest)"'
+> ```
+>
+> The Plan pins an exact version on purpose. A k3s release channel would work here too, but
+> it would upgrade the cluster past what the installed Rancher chart accepts, unattended.
+
+### 2. Rancher
+
+```hcl
+# stacks/02-platform/terraform.tfvars
+rancher_chart_version = "2.14.4"
+```
+
+```bash
+make snapshot        # rollback for a failed Rancher upgrade IS the etcd snapshot
+make apply-platform
+```
+
+Rancher cannot skip minor versions (no 2.12 → 2.14; go 2.12 → 2.13 → 2.14).
+
+### 3. Operating system
+
+`unattended-upgrades` installs security patches automatically but deliberately never reboots.
+Reboot one node at a time:
+
+```bash
+ssh root@<node-ip> 'test -f /var/run/reboot-required && echo "reboot needed"'
+
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+ssh root@<node-ip> 'reboot'
+# wait for the node to return
+kubectl uncordon <node-name>
+```
+
+Full procedures and a checklist: **[docs/upgrade.md](docs/upgrade.md)**.
+
+---
+
+## Day-2 operations
+
+```bash
+make help                # list every target
+make status              # cluster health overview
+make outputs             # LB IPs, node IPs, DNS records to create
+make ssh                 # SSH into the first control-plane node
+make token               # the k3s token
+make rancher-password    # Rancher bootstrap password
+make snapshot            # on-demand etcd snapshot
+make snapshots           # list snapshots
+make kubeconfig          # re-fetch the kubeconfig
+```
+
+### Growing the cluster
+
+Every node is a control-plane and etcd member, so scaling means adding servers — and the
+count must stay **odd** for etcd quorum. Going from 3 to 5 raises the tolerated simultaneous
+failures from one to two:
+
+```hcl
+# stacks/01-infra/terraform.tfvars
+server_count = 5
+```
+
+```bash
+make snapshot        # etcd membership changes; have a restore point first
+make apply
+kubectl get nodes -w
+```
+
+The new nodes wait for the existing ones, join through the load balancer, and pick up the
+firewall and load balancer target by label. Nothing else needs changing.
+
+> This repo has no separate worker pool by design — with everything schedulable there is one
+> node type to reason about. If workloads ever outgrow that, the change is a second
+> `hcloud_server` resource with `INSTALL_K3S_EXEC=agent` in its bootstrap env, plus an
+> `agent-plan` for the upgrade controller.
+
+---
+
+## Troubleshooting
+
+When a node is stuck, always start with the bootstrap log:
+
+```bash
+ssh root@<node-ip> 'tail -100 /var/log/cloud-init-output.log'
+ssh root@<node-ip> 'journalctl -u k3s -n 200 --no-pager'
+```
+
+**[docs/troubleshooting.md](docs/troubleshooting.md)** covers:
+
+- nodes stuck `NotReady` with the `uninitialized` taint (CCM did not start)
+- Let's Encrypt certificate never issued
+- the second and third servers fail to join
+- `terraform plan` wants to replace server nodes
+- Rancher pods in `CrashLoopBackOff`
+- load balancer targets reported unhealthy
+
+---
+
+## Cost
+
+Monthly cost for `fsn1` with the defaults:
+
+| Item | Unit | Qty | / month |
+| --- | --- | --- | --- |
+| `cx33` (4 vCPU / 8 GB / 80 GB NVMe) | €10.19 | 3 | €30.57 |
+| Load Balancer `lb11` | €8.99 | 1 | €8.99 |
+| Public IPv4 | €0.60 | 3 | €1.80 |
+| **Hetzner total** | | | **€41.36** |
+| DigitalOcean Spaces | $5.00 | 1 | ~$5 |
+
+Unit prices are the gross figures shown in the Hetzner Console (German VAT included);
+the net list prices are about 19% lower.
+
+Ways to trim it:
+
+- drop `server_type` to `cx23` for a test cluster — saves about €15/month, but 4 GB RAM is
+  tight for three Rancher replicas alongside etcd
+- adding a fourth and fifth server costs €20.38/month and buys tolerance for two
+  simultaneous node failures instead of one
+
+---
+
+## Teardown
+
+```bash
+make destroy
+```
+
+Destroys stack 02 (Helm releases) first, then stack 01 (Hetzner resources).
+
+> The order matters. Destroying the infrastructure first leaves stack 02's state believing its
+> releases still exist. If that happens, clear the entries with
+> `terraform -chdir=stacks/02-platform state rm <resource>`.
+
+Afterwards, check the Hetzner Console for leftover Volumes. PVs created by the CSI driver are
+not Terraform-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
+volumes stay and keep billing.
+
+---
+
+## References
+
+- [k3s — High Availability with Embedded etcd](https://docs.k3s.io/datastore/ha-embedded)
+- [k3s — Fixed Registration Address](https://docs.k3s.io/datastore/ha)
+- [k3s — Networking Requirements](https://docs.k3s.io/installation/requirements)
+- [k3s — etcd Snapshot CLI](https://docs.k3s.io/cli/etcd-snapshot)
+- [k3s — Automated Upgrades](https://docs.k3s.io/upgrades/automated)
+- [Rancher — Install on a Kubernetes Cluster](https://ranchermanager.docs.rancher.com/getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster)
+- [Rancher — Support Matrix](https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/)
+- [Hetzner Cloud Terraform Provider](https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs)
+- [hcloud-cloud-controller-manager](https://github.com/hetznercloud/hcloud-cloud-controller-manager)

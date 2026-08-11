@@ -1,0 +1,39 @@
+{
+  // Files this repo owns. Everything vendored is excluded below.
+  "globs": ["**/*.md"],
+  "ignores": [
+    "**/.terraform/**",
+    "**/node_modules/**"
+  ],
+
+  "config": {
+    "default": true,
+
+    // Prose wraps at 100. Tables and code blocks are excluded: wrapping a
+    // table breaks it, and command lines must stay copy-pasteable.
+    "MD013": {
+      "line_length": 100,
+      "tables": false,
+      "code_blocks": false,
+      "headings": false
+    },
+
+    // Runbooks legitimately repeat "Procedure" / "Verify" under different
+    // parent sections. Only flag duplicates that are actual siblings.
+    "MD024": { "siblings_only": true },
+
+    // Ordered lists are numbered 1. 2. 3. rather than all "1."
+    "MD029": { "style": "ordered" },
+
+    // Bare URLs are never intentional here; use link syntax or backticks.
+    "MD034": true,
+
+    // The first line of every file is its H1 title.
+    "MD041": true,
+
+    "MD046": { "style": "fenced" },
+    "MD048": { "style": "backtick" },
+    "MD049": { "style": "asterisk" },
+    "MD050": { "style": "asterisk" }
+  }
+}

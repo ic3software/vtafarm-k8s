@@ -1,0 +1,55 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+# --- Hetzner ---------------------------------------------------------------
+# Console -> your project -> Security -> API tokens -> Generate (Read & Write)
+hcloud_token = "REPLACE_ME"
+
+cluster_name = "rancher-ha"
+location     = "fsn1"
+network_zone = "eu-central"
+
+# --- Cluster shape ---------------------------------------------------------
+# Odd number >= 3 so etcd keeps quorum. Every node is control-plane + etcd and
+# also runs workloads, Rancher included.
+server_count = 3
+server_type  = "cx33" # 4 vCPU / 8 GB / 80 GB NVMe
+
+# --- Access ----------------------------------------------------------------
+# Point these at the SSH key you already use - no need to generate a new one.
+ssh_public_key_path  = "~/.ssh/id_ed25519.pub"
+ssh_private_key_path = "~/.ssh/id_ed25519"
+
+# If this public key is ALREADY uploaded to the Hetzner project, put its name
+# here instead (Console -> Security -> SSH keys). Hetzner rejects a duplicate
+# fingerprint, so Terraform must reference it rather than upload it again.
+existing_ssh_key_name = ""
+
+# Lock SSH down to your own address. Find it with: curl -s https://ifconfig.me
+# Leaving 0.0.0.0/0 here means the whole internet may knock on port 22.
+ssh_allowed_cidrs = ["0.0.0.0/0"]
+
+# --- k3s -------------------------------------------------------------------
+# Newest k3s that Rancher 2.14.3 accepts. Going to v1.36 requires moving to
+# Rancher 2.15 as well - 2.14.x declares kubeVersion < 1.36.0-0 and helm
+# refuses the install.
+k3s_version = "v1.35.7+k3s1"
+
+# Add the Rancher hostname so kubectl also works through the ingress name.
+additional_tls_sans = [
+  # "rancher.example.com",
+]
+
+# --- etcd snapshots to DigitalOcean Spaces ---------------------------------
+# Create the Space and a Spaces access key first:
+#   DigitalOcean -> Spaces Object Storage -> Create a Space  (region: fra1)
+#   DigitalOcean -> API -> Spaces Keys -> Generate New Key
+etcd_s3_endpoint   = "fra1.digitaloceanspaces.com"
+etcd_s3_region     = "fra1"
+etcd_s3_bucket     = "my-k3s-backups"
+etcd_s3_folder     = "" # defaults to cluster_name
+etcd_s3_access_key = ""
+etcd_s3_secret_key = ""
+etcd_s3_retention  = 60
+
+etcd_snapshot_schedule_cron = "0 */6 * * *"
+etcd_snapshot_retention     = 10
