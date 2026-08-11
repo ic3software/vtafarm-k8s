@@ -126,11 +126,35 @@ variable "service_cidr" {
 
 variable "ssh_allowed_cidrs" {
   description = <<-EOT
-    Source CIDRs allowed to reach port 22 on the nodes.
-    Set this to your own IP - "0.0.0.0/0" leaves SSH open to the internet.
+    Source addresses allowed to reach port 22 on the nodes. Hetzner firewall
+    rules take CIDR notation only, so a single address is written /32 - a bare
+    "203.0.113.7" is rejected by the API.
+
+    List as many as you need:
+
+      ssh_allowed_cidrs = [
+        "203.0.113.7/32",    # office
+        "198.51.100.42/32",  # admin 1, home
+        "198.51.100.99/32",  # admin 2, home
+      ]
+
+    Find your current address with: curl -s https://ifconfig.me
+
+    This only gates SSH. kubectl is unaffected - it reaches the API through the
+    load balancer, which talks to the nodes over the private network and is not
+    covered by this firewall.
+
+    Home connections usually have a changing address, so expect to update this.
+    Being locked out is recoverable either way: the Hetzner Console's web console
+    reaches a server regardless of firewall rules.
   EOT
   type        = list(string)
   default     = ["0.0.0.0/0"]
+
+  validation {
+    condition     = alltrue([for c in var.ssh_allowed_cidrs : can(cidrnetmask(c))])
+    error_message = "Every entry needs a prefix length: use \"203.0.113.7/32\" for one address, not \"203.0.113.7\"."
+  }
 }
 
 variable "load_balancer_type" {
@@ -208,12 +232,6 @@ variable "k3s_version" {
   default     = "v1.35.7+k3s1"
 }
 
-variable "additional_tls_sans" {
-  description = "Extra hostnames/IPs added to the Kubernetes API server certificate."
-  type        = list(string)
-  default     = []
-}
-
 variable "hcloud_ccm_version" {
   description = "Chart version of hcloud-cloud-controller-manager (charts.hetzner.cloud)."
   type        = string
@@ -241,9 +259,16 @@ variable "etcd_snapshot_schedule_cron" {
 }
 
 variable "etcd_snapshot_retention" {
-  description = "How many snapshots to keep on the local disk of each server."
+  description = <<-EOT
+    How many snapshots to keep on the local disk of each server. Unlike the S3
+    count this is per node, since each node only ever prunes its own directory:
+    12 with a 6-hourly cron is 3 days on each machine.
+
+    Local snapshots exist for fast rollback. Anything that outlives the nodes
+    themselves comes from S3, which is why etcd_s3_retention is set much higher.
+  EOT
   type        = number
-  default     = 10
+  default     = 12
 }
 
 variable "etcd_s3_endpoint" {
@@ -287,9 +312,23 @@ variable "etcd_s3_secret_key" {
 }
 
 variable "etcd_s3_retention" {
-  description = "How many snapshots to keep in the bucket."
+  description = <<-EOT
+    How many snapshots to keep in the bucket. k3s prunes the oldest past this
+    count after every upload.
+
+    Retention is a COUNT, not a window, and the count is shared: k3s lists every
+    object under <folder>/etcd-snapshot regardless of which node wrote it, sorts
+    newest-first and deletes the rest. Every server takes its own snapshot on the
+    schedule, so with 3 servers and a 6-hourly cron that is 12 per day:
+
+      days kept = etcd_s3_retention / (server_count * snapshots per day)
+      360       / (3 * 4)                                        = 30 days
+
+    Compressed snapshots of a Rancher management cluster run tens of MB, so 360
+    is well inside a 250 GB DigitalOcean Space.
+  EOT
   type        = number
-  default     = 60
+  default     = 360
 }
 
 variable "etcd_s3_bucket_lookup_type" {

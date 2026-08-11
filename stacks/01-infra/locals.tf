@@ -12,8 +12,8 @@ locals {
   # address"; nodes reach it over the private network.
   registration_address = "https://${local.lb_private_ip}:6443"
 
-  # What your workstation's kubeconfig points at: the same load balancer, but
-  # through its public IP.
+  # What your workstation's kubeconfig points at: the same load balancer, through
+  # its public IP.
   kube_api_endpoint = "https://${hcloud_load_balancer.this.ipv4}:6443"
 
   # A Hetzner network lives in a zone, not a location, and every subnet in it
@@ -50,10 +50,7 @@ locals {
 
     # Names/IPs baked into the API server certificate. Without the load balancer
     # address in here, kubectl through it would fail TLS verification.
-    tls-san = distinct(concat(
-      [hcloud_load_balancer.this.ipv4, local.lb_private_ip],
-      var.additional_tls_sans,
-    ))
+    tls-san = [hcloud_load_balancer.this.ipv4, local.lb_private_ip]
 
     # Hetzner's cloud controller manager replaces the one bundled with k3s.
     # Disabling k3s' own also removes klipper (servicelb); Traefik is switched to

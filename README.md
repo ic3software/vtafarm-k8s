@@ -210,7 +210,7 @@ Rancher **requires a DNS hostname** — it cannot be reached by IP. Have somethi
 ```bash
 cd stacks/01-infra
 cp terraform.tfvars.example terraform.tfvars
-$EDITOR terraform.tfvars
+code terraform.tfvars
 ```
 
 Minimum you need to set:
@@ -219,11 +219,13 @@ Minimum you need to set:
 hcloud_token = "your Hetzner token"
 cluster_name = "rancher-ha"
 
-# Lock SSH to your own address: curl -s https://ifconfig.me
-ssh_allowed_cidrs = ["1.2.3.4/32"]
+# Lock SSH to your own addresses: curl -s https://ifconfig.me
+# One entry per address, always /32 — Hetzner takes CIDR notation only.
+ssh_allowed_cidrs = [
+  "203.0.113.7/32",   # office
+  "198.51.100.42/32", # admin 1, home
+]
 
-# Put the Rancher hostname in the API certificate now, so you never need to reissue it
-additional_tls_sans = ["rancher.yourdomain.com"]
 
 # etcd snapshots to DigitalOcean Spaces (required - there is no local-only mode)
 etcd_s3_endpoint   = "fra1.digitaloceanspaces.com"

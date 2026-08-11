@@ -9,7 +9,7 @@
 
 | Layer | By | Contents | Frequency | Destination |
 | --- | --- | --- | --- | --- |
-| etcd snapshot | k3s built-in | the whole Kubernetes datastore | every 6h | 10 local per server + 60 in DigitalOcean Spaces |
+| etcd snapshot | k3s built-in | the whole Kubernetes datastore | every 6h, on each server | 12 per server locally (3 days) + 360 in DigitalOcean Spaces (30 days) |
 | Rancher backup | rancher-backup operator | Rancher CRDs, users, downstream cluster registrations | daily 03:00 | 30 in DigitalOcean Spaces |
 
 Configured in:
@@ -66,6 +66,8 @@ Confirm:
 
 - the newest entry matches the schedule (within the last 6 hours)
 - the `LOCATION` column contains `s3://` entries, meaning the upload really succeeded
+- all three servers appear — each one snapshots independently and stamps its own name into
+  the filename, so `etcd-snapshot-<node>-<timestamp>` should show up three times per cycle
 
 Or read it from the source:
 

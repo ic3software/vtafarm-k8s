@@ -1,5 +1,3 @@
-# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
-
 # --- Hetzner ---------------------------------------------------------------
 # Console -> your project -> Security -> API tokens -> Generate (Read & Write)
 hcloud_token = "REPLACE_ME"
@@ -19,20 +17,18 @@ server_type  = "cx23" # 2 vCPU / 4 GB / 40 GB NVMe - see the note in variables.t
 ssh_public_key_path  = "~/.ssh/id_ed25519.pub"
 ssh_private_key_path = "~/.ssh/id_ed25519"
 
-# Lock SSH down to your own address. Find it with: curl -s https://ifconfig.me
+# Lock SSH down to your own addresses. Find yours with: curl -s https://ifconfig.me
+# A single address is written /32 - Hetzner takes CIDR notation only.
 # Leaving 0.0.0.0/0 here means the whole internet may knock on port 22.
-ssh_allowed_cidrs = ["0.0.0.0/0"]
+ssh_allowed_cidrs = [
+  "0.0.0.0/0"
+]
 
 # --- k3s -------------------------------------------------------------------
 # Newest k3s that Rancher 2.14.3 accepts. Going to v1.36 requires moving to
 # Rancher 2.15 as well - 2.14.x declares kubeVersion < 1.36.0-0 and helm
 # refuses the install.
 k3s_version = "v1.35.7+k3s1"
-
-# Add the Rancher hostname so kubectl also works through the ingress name.
-additional_tls_sans = [
-  # "rancher.example.com",
-]
 
 # --- etcd snapshots to DigitalOcean Spaces ---------------------------------
 # Create the Space and a Spaces access key first:
@@ -44,7 +40,12 @@ etcd_s3_bucket     = "my-k3s-backups"
 etcd_s3_folder     = "" # defaults to cluster_name
 etcd_s3_access_key = ""
 etcd_s3_secret_key = ""
-etcd_s3_retention  = 60
+etcd_s3_retention  = 360
 
+# --- etcd snapshots to local disk and s3 -------------------------------------------
+# Cron schedule for snapshots. The default is every 6 hours, which is 4/day
 etcd_snapshot_schedule_cron = "0 */6 * * *"
-etcd_snapshot_retention     = 10
+
+# Per node, on local disk: 4 snapshots/day, so 12 is 3 days on each machine.
+# Local copies are for fast rollback; long-term history lives in S3.
+etcd_snapshot_retention = 12
