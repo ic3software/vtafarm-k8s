@@ -404,7 +404,7 @@ Shows nodes, etcd members, any non-Running pods, the Rancher deployment and cert
 ### Detailed verification
 
 ```bash
-export KUBECONFIG=$PWD/kubeconfig
+kubectl config use-context k3s-rancher
 
 # 1. Three Ready nodes, all of them actual etcd members
 kubectl get nodes -L node-role.kubernetes.io/etcd
@@ -460,41 +460,6 @@ kubectl get nodes          # back to Ready within a minute or two
 > `(3/2)+1 = 2`) and **the API server stops serving**. That is etcd behaving correctly, not a
 > bug. Tolerating two simultaneous failures requires five servers.
 
-### Test the ingress path
-
-```bash
-kubectl create deployment hello --image=nginxdemos/hello
-kubectl expose deployment hello --port=80
-kubectl create ingress hello --class=traefik \
-  --rule="hello.yourdomain.com/*=hello:80"
-
-# once DNS points at the ingress LB
-curl -I http://hello.yourdomain.com
-
-# clean up
-kubectl delete ingress hello; kubectl delete svc hello; kubectl delete deploy hello
-```
-
-### Test persistent storage (Hetzner CSI)
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: csi-test
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: hcloud-volumes
-  resources:
-    requests:
-      storage: 10Gi
-EOF
-
-kubectl get pvc csi-test        # should reach Bound; a real Hetzner volume is created
-kubectl delete pvc csi-test
-```
-
 ---
 
 ## Backups
@@ -510,7 +475,9 @@ Both upload to your DigitalOcean Space on a schedule.
 
 ### etcd snapshots
 
-Every **6 hours** by default, 10 kept locally, 60 kept in S3, compressed. Tunable via the
+Every **6 hours** by default. Each node keeps 12 compressed snapshots locally (3 days), while
+all three nodes share an S3 retention limit of 360 snapshots. At 4 snapshots per node per day,
+that is 12 uploads per day and approximately 30 days of S3 history. Tune these values with the
 `etcd_snapshot_*` / `etcd_s3_*` variables in `stacks/01-infra/terraform.tfvars`.
 
 ```bash
