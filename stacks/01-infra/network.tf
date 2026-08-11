@@ -16,7 +16,7 @@ resource "hcloud_network" "this" {
 resource "hcloud_network_subnet" "nodes" {
   network_id   = hcloud_network.this.id
   type         = "cloud"
-  network_zone = var.network_zone
+  network_zone = local.network_zone
   ip_range     = var.subnet_cidr
 }
 

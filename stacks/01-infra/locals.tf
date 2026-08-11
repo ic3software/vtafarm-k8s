@@ -16,6 +16,19 @@ locals {
   # through its public IP.
   kube_api_endpoint = "https://${hcloud_load_balancer.this.ipv4}:6443"
 
+  # A Hetzner network lives in a zone, not a location, and every subnet in it
+  # must share that zone. Deriving it from var.location removes a second setting
+  # that could silently disagree with the first.
+  network_zones = {
+    fsn1 = "eu-central"
+    nbg1 = "eu-central"
+    hel1 = "eu-central"
+    ash  = "us-east"
+    hil  = "us-west"
+    sin  = "ap-southeast"
+  }
+  network_zone = local.network_zones[var.location]
+
   ssh_key_id = var.existing_ssh_key_name == "" ? hcloud_ssh_key.this[0].id : data.hcloud_ssh_key.existing[0].id
 
   common_labels = {

@@ -130,9 +130,8 @@ make apply-platform
 Hetzner Console → Load Balancers → Targets shows red.
 
 Targets belong to the load balancer, health checks belong to each service — so every service
-checks every target. The target list is servers only, and in single-LB mode Traefik carries a
-`nodeSelector` restricting it to those same nodes, so all three services should be green. A red
-target means the node genuinely is not listening.
+checks every target. Every node runs both the API server and Traefik, so all three services
+should be green. A red target means that node genuinely is not listening.
 
 **The Kubernetes API service** (health check TCP 6443):
 
@@ -146,7 +145,7 @@ ssh root@<server-2> 'curl -sk https://10.0.1.101:6443/cacerts | head -3'
 **The ingress services** (health check TCP 80/443):
 
 ```bash
-# how many nodes Traefik is scheduled on (servers only in single-LB mode)
+# Traefik should be scheduled on every node
 kubectl -n kube-system get ds traefik -o wide
 kubectl -n kube-system get pods -l app.kubernetes.io/name=traefik -o wide
 
@@ -201,7 +200,7 @@ kubectl -n cattle-system logs -l app=rancher --tail=100 --previous
 | Log message | Cause |
 | --- | --- |
 | `Rancher must be installed on a supported Kubernetes version` | k3s is outside Rancher's support matrix. Check the README version table |
-| OOMKilled (`kubectl describe pod` shows it) | Not enough RAM. `cx23` (4 GB) is too small for three Rancher replicas plus etcd — move to `cx33` |
+| OOMKilled (`kubectl describe pod` shows it) | Out of memory. `cx23` gives 4 GB per node, which fits k3s + etcd + one Rancher replica with little to spare, and a Rancher upgrade briefly doubles the replicas. Confirm with `kubectl top nodes`, then raise `server_type` to `cx33` and roll the nodes one at a time |
 | `failed to get ingress` / waiting on TLS | The certificate is not ready yet; fix the cert-manager chain first |
 | `replicas` exceed schedulable nodes | `rancher_replicas` must be ≤ the number of nodes that can accept the pods |
 

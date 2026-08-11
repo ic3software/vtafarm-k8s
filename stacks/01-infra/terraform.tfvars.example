@@ -4,15 +4,15 @@
 # Console -> your project -> Security -> API tokens -> Generate (Read & Write)
 hcloud_token = "REPLACE_ME"
 
+# The network zone is derived from the location; there is nothing else to set.
 cluster_name = "rancher-ha"
-location     = "fsn1"
-network_zone = "eu-central"
+location     = "nbg1" # Nuremberg
 
 # --- Cluster shape ---------------------------------------------------------
 # Odd number >= 3 so etcd keeps quorum. Every node is control-plane + etcd and
 # also runs workloads, Rancher included.
 server_count = 3
-server_type  = "cx33" # 4 vCPU / 8 GB / 80 GB NVMe
+server_type  = "cx23" # 2 vCPU / 4 GB / 40 GB NVMe - see the note in variables.tf
 
 # --- Access ----------------------------------------------------------------
 # Point these at the SSH key you already use - no need to generate a new one.

@@ -24,15 +24,28 @@ variable "cluster_name" {
 }
 
 variable "location" {
-  description = "Hetzner location. fsn1/nbg1/hel1 are in the eu-central network zone."
-  type        = string
-  default     = "fsn1"
-}
+  description = <<-EOT
+    Hetzner location. The private network's zone is derived from it, so this is
+    the only knob - there is no second setting that has to agree with it.
 
-variable "network_zone" {
-  description = "Hetzner network zone matching var.location (eu-central, us-east, us-west)."
+      nbg1  Nuremberg, DE    eu-central
+      fsn1  Falkenstein, DE  eu-central
+      hel1  Helsinki, FI     eu-central
+      ash   Ashburn, VA      us-east
+      hil   Hillsboro, OR    us-west
+      sin   Singapore        ap-southeast
+
+    Machine types and prices differ per location; check the Console before
+    moving. Changing this on a live cluster replaces every server - a server
+    cannot migrate between locations.
+  EOT
   type        = string
-  default     = "eu-central"
+  default     = "nbg1"
+
+  validation {
+    condition     = contains(["fsn1", "nbg1", "hel1", "ash", "hil", "sin"], var.location)
+    error_message = "Unknown location. If Hetzner has added one, extend this list and the network_zones map in locals.tf."
+  }
 }
 
 variable "server_count" {
@@ -55,15 +68,22 @@ variable "server_count" {
 variable "server_type" {
   description = <<-EOT
     Hetzner server type. Current shared-vCPU line:
-      cx23  2 vCPU /  4 GB /  40 GB
-      cx33  4 vCPU /  8 GB /  80 GB   <- default, comfortable for Rancher
+      cx23  2 vCPU /  4 GB /  40 GB   <- default
+      cx33  4 vCPU /  8 GB /  80 GB
       cx43  8 vCPU / 16 GB / 160 GB
       cx53 16 vCPU / 32 GB / 320 GB
+
     Stay on x86 (cx/cpx/ccx). The ARM64 line (cax) is cheaper, but Rancher
     documents ARM64 as experimental and not recommended for production.
+
+    On cx23 the 4 GB budget is tight: k3s with etcd takes roughly 1 GB, a
+    Rancher replica another 1-1.5 GB, and the bundled add-ons about 0.5 GB.
+    It fits, with little headroom. If Rancher pods start getting OOMKilled -
+    most likely during a Rancher upgrade, when replicas briefly double - move
+    to cx33. See docs/troubleshooting.md.
   EOT
   type        = string
-  default     = "cx33"
+  default     = "cx23"
 }
 
 variable "os_image" {
@@ -236,8 +256,8 @@ variable "etcd_snapshot_retention" {
 variable "etcd_s3_endpoint" {
   description = <<-EOT
     S3 endpoint, WITHOUT the scheme and WITHOUT the bucket name.
-      DigitalOcean Spaces : fra1.digitaloceanspaces.com  (fra1 is closest to fsn1)
-      Hetzner Object Store: fsn1.your-objectstorage.com
+      DigitalOcean Spaces : fra1.digitaloceanspaces.com  (fra1 is closest to nbg1)
+      Hetzner Object Store: nbg1.your-objectstorage.com
       AWS S3              : s3.eu-central-1.amazonaws.com
   EOT
   type        = string

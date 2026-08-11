@@ -68,7 +68,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 | **Hetzner cloud controller manager (CCM) manages nodes, Terraform manages load balancers** | The CCM sets `providerID`, topology labels and node lifecycle. Its load-balancer controller is switched off (`HCLOUD_LOAD_BALANCERS_ENABLED=false`) — otherwise it creates load balancers Terraform doesn't know about, which survive `terraform destroy` and keep billing you. |
 | **Traefik as a DaemonSet with hostPorts** | Installing an external CCM requires `--disable-cloud-controller`, which also removes k3s' built-in servicelb (klipper). Traefik binds directly to `:80`/`:443` on the host instead, so the load balancer has something to reach. |
 | **IPv4 only on the nodes** | One address family is one set of firewall rules to reason about. Hetzner still gives the load balancer an IPv6 address and offers no switch for that, but it reaches the nodes over private IPv4 regardless. |
-| **`cx33` on x86, not the ARM64 `cax` line** | `cx33` is 4 vCPU / 8 GB / 80 GB NVMe on shared AMD EPYC — enough headroom for three Rancher replicas alongside etcd. The `cax` (ARM64) line is cheaper, but [Rancher documents ARM64 as experimental and not recommended for production](https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64). |
+| **`cx23` on x86, not the ARM64 `cax` line** | `cx23` is 2 vCPU / 4 GB / 40 GB NVMe on shared AMD EPYC. The memory budget is deliberately tight — k3s with etcd takes ~1 GB, a Rancher replica 1–1.5 GB, the bundled add-ons ~0.5 GB — so watch for OOMKills during Rancher upgrades and step up to `cx33` if they appear. The `cax` (ARM64) line is cheaper still, but [Rancher documents ARM64 as experimental and not recommended for production](https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64). |
 
 ### Repository layout
 
@@ -206,7 +206,7 @@ Rancher **requires a DNS hostname** — it cannot be reached by IP. Have somethi
 ### 5. DigitalOcean Spaces (for etcd snapshots)
 
 - DigitalOcean → **Spaces Object Storage** → Create a Space, region **`fra1`** (Frankfurt is
-  closest to `fsn1`, so uploads are fast)
+  closest to `nbg1`, so uploads are fast)
 - DigitalOcean → **API** → **Spaces Keys** → Generate New Key. Note the access key and secret
   key — the secret is shown once.
 
@@ -643,14 +643,14 @@ ssh root@<node-ip> 'journalctl -u k3s -n 200 --no-pager'
 
 ## Cost
 
-Monthly cost for `fsn1` with the defaults:
+Monthly cost for `nbg1` with the defaults:
 
 | Item | Unit | Qty | / month |
 | --- | --- | --- | --- |
-| `cx33` (4 vCPU / 8 GB / 80 GB NVMe) | €10.19 | 3 | €30.57 |
+| `cx23` (2 vCPU / 4 GB / 40 GB NVMe) | €6.59 | 3 | €19.77 |
 | Load Balancer `lb11` | €8.99 | 1 | €8.99 |
 | Public IPv4 | €0.60 | 3 | €1.80 |
-| **Hetzner total** | | | **€41.36** |
+| **Hetzner total** | | | **€30.56** |
 | DigitalOcean Spaces | $5.00 | 1 | ~$5 |
 
 Unit prices are the gross figures shown in the Hetzner Console (German VAT included);
@@ -658,9 +658,9 @@ the net list prices are about 19% lower.
 
 Ways to trim it:
 
-- drop `server_type` to `cx23` for a test cluster — saves about €15/month, but 4 GB RAM is
-  tight for three Rancher replicas alongside etcd
-- adding a fourth and fifth server costs €20.38/month and buys tolerance for two
+- moving up to `cx33` (4 vCPU / 8 GB) costs about €11/month more in total and removes the
+  memory pressure described above — the obvious first step if Rancher starts getting OOMKilled
+- adding a fourth and fifth server costs €13.18/month and buys tolerance for two
   simultaneous node failures instead of one
 
 ---
