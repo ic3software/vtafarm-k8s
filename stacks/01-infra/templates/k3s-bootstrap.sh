@@ -9,6 +9,12 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source /etc/k3s-bootstrap.env
 
+# Assert what the env file has to provide. Without this, a variable dropped from
+# the Terraform side surfaces as "unbound variable" on whichever line happens to
+# use it first - which may be minutes into the run, after the node looks healthy.
+: "${NODE_IP:?not set in /etc/k3s-bootstrap.env}"
+: "${K3S_VERSION:?not set in /etc/k3s-bootstrap.env}"
+
 log() { echo "[k3s-bootstrap] $(date -Is) $*"; }
 
 # ---------------------------------------------------------------------------
@@ -29,6 +35,10 @@ done
 
 if [ -z "$IFACE" ]; then
   log "ERROR: private IP ${NODE_IP} never appeared on any interface"
+  # Print link state as well as addresses: an interface that is present but
+  # DOWN with no address means the network was hot-plugged after cloud-init
+  # configured networking, rather than attached at server creation.
+  ip -o link show
   ip -o -4 addr show
   exit 1
 fi
@@ -72,28 +82,28 @@ if [ "${JOIN_DELAY:-0}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Install k3s. All configuration comes from /etc/rancher/k3s/config.yaml,
-#    so the installer only needs the version and the role.
+# 3. Install k3s. Every node in this cluster is a server; all configuration
+#    comes from /etc/rancher/k3s/config.yaml, so the installer only needs the
+#    version.
 # ---------------------------------------------------------------------------
-log "installing k3s ${K3S_VERSION} (role: ${K3S_ROLE})"
+log "installing k3s ${K3S_VERSION}"
 curl -sfL https://get.k3s.io |
   INSTALL_K3S_VERSION="${K3S_VERSION}" \
-    INSTALL_K3S_EXEC="${K3S_ROLE}" \
+    INSTALL_K3S_EXEC="server" \
     sh -s -
 
 # ---------------------------------------------------------------------------
 # 4. Confirm the unit is actually healthy before declaring success.
 # ---------------------------------------------------------------------------
-UNIT="k3s${K3S_ROLE_SUFFIX}"
-log "waiting for ${UNIT}.service"
+log "waiting for k3s.service"
 for _ in $(seq 1 120); do
-  systemctl is-active --quiet "$UNIT" && break
+  systemctl is-active --quiet k3s && break
   sleep 5
 done
 
-if ! systemctl is-active --quiet "$UNIT"; then
-  log "ERROR: ${UNIT}.service did not start"
-  journalctl -u "$UNIT" -n 200 --no-pager || true
+if ! systemctl is-active --quiet k3s; then
+  log "ERROR: k3s.service did not start"
+  journalctl -u k3s -n 200 --no-pager || true
   exit 1
 fi
 

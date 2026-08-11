@@ -49,6 +49,18 @@ resource "hcloud_server" "server" {
     ipv6_enabled = false
   }
 
+  # Attach the private network as part of creating the server, NOT afterwards
+  # with a separate hcloud_server_network resource.
+  #
+  # A later attach is a hot-plug: the NIC appears after cloud-init has already
+  # run its network stage, so nothing configures it and it sits there DOWN with
+  # no address. The bootstrap script then waits for an IP that never arrives.
+  # Attaching here means the interface exists before the OS boots.
+  network {
+    network_id = hcloud_network.this.id
+    ip         = local.server_private_ips[count.index]
+  }
+
   lifecycle {
     # cloud-init only ever runs on the FIRST boot. Once a node is up, editing
     # user_data changes nothing on that node - but Terraform would still want to
@@ -59,6 +71,9 @@ resource "hcloud_server" "server" {
   }
 
   depends_on = [
+    # The Hetzner API cannot reference a subnet from a server, so Terraform
+    # would otherwise create both in parallel and the attach above could land
+    # before the subnet exists.
     hcloud_network_subnet.nodes,
     hcloud_load_balancer_service.api,
     # The firewall attaches by label selector, so it has no implicit dependency
@@ -66,12 +81,4 @@ resource "hcloud_server" "server" {
     # unfiltered public interface.
     hcloud_firewall_attachment.nodes,
   ]
-}
-
-resource "hcloud_server_network" "server" {
-  count = var.server_count
-
-  server_id = hcloud_server.server[count.index].id
-  subnet_id = hcloud_network_subnet.nodes.id
-  ip        = local.server_private_ips[count.index]
 }

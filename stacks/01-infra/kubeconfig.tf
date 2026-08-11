@@ -21,7 +21,7 @@ resource "null_resource" "kubeconfig" {
   }
 
   depends_on = [
-    hcloud_server_network.server,
+    hcloud_server.server,
     hcloud_load_balancer_target.nodes,
   ]
 }
