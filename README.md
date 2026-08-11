@@ -360,10 +360,25 @@ letsencrypt_environment = "production"
 ```
 
 ```bash
-# delete the staging cert so cert-manager reissues
-kubectl -n cattle-system delete secret tls-rancher-ingress
+# update Rancher's Issuer to the production ACME endpoint first
 make apply-platform
+
+# verify the live Issuer is production (the URL must not contain "staging")
+kubectl -n cattle-system get issuer rancher \
+  -o jsonpath='{.spec.acme.server}{"\n"}'
+
+# now remove the staging certificate so cert-manager reissues from production
+kubectl -n cattle-system delete secret tls-rancher-ingress
+
+# wait for the replacement certificate; READY should return to True and the
+# revision should increase
+kubectl -n cattle-system get certificate tls-rancher-ingress --watch
 ```
+
+The order matters: deleting the Secret before `make apply-platform` lets cert-manager
+immediately request another staging certificate from the still-staging Issuer. The Issuer may
+then switch to production while Traefik continues serving that valid-but-untrusted staging
+certificate, which causes Cloudflare **Full (strict)** to return `526 Invalid SSL certificate`.
 
 ### Step 6 — Log in
 
