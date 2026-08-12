@@ -30,13 +30,13 @@ ssh_allowed_cidrs = [
 # refuses the install.
 k3s_version = "v1.35.7+k3s1"
 
-# --- etcd snapshots to DigitalOcean Spaces ---------------------------------
-# Create the Space and a Spaces access key first:
-#   DigitalOcean -> Spaces Object Storage -> Create a Space  (region: fra1)
-#   DigitalOcean -> API -> Spaces Keys -> Generate New Key
-etcd_s3_endpoint   = "fra1.digitaloceanspaces.com"
-etcd_s3_region     = "fra1"
-etcd_s3_bucket     = "my-k3s-backups"
+# --- etcd snapshots to Hetzner Object Storage ------------------------------
+# Create a private bucket manually, then generate S3 credentials in the same
+# project: Object Storage -> Create Bucket; Security -> S3 credentials.
+# The hcloud API token cannot authenticate to Object Storage.
+etcd_s3_endpoint   = "nbg1.your-objectstorage.com"
+etcd_s3_region     = "nbg1"
+etcd_s3_bucket     = "my-globally-unique-k3s-backups"
 etcd_s3_folder     = "" # defaults to cluster_name
 etcd_s3_access_key = ""
 etcd_s3_secret_key = ""

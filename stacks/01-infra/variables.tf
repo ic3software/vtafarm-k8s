@@ -272,24 +272,19 @@ variable "etcd_snapshot_retention" {
 }
 
 variable "etcd_s3_endpoint" {
-  description = <<-EOT
-    S3 endpoint, WITHOUT the scheme and WITHOUT the bucket name.
-      DigitalOcean Spaces : fra1.digitaloceanspaces.com  (fra1 is closest to nbg1)
-      Hetzner Object Store: nbg1.your-objectstorage.com
-      AWS S3              : s3.eu-central-1.amazonaws.com
-  EOT
+  description = "Hetzner Object Storage endpoint, without the scheme or bucket name."
   type        = string
-  default     = "fra1.digitaloceanspaces.com"
+  default     = "nbg1.your-objectstorage.com"
 }
 
 variable "etcd_s3_region" {
-  description = "S3 region. For DigitalOcean Spaces this is the datacenter slug, e.g. fra1."
+  description = "Hetzner Object Storage location, e.g. nbg1."
   type        = string
-  default     = "fra1"
+  default     = "nbg1"
 }
 
 variable "etcd_s3_bucket" {
-  description = "Bucket (DigitalOcean calls it a Space) that receives etcd snapshots."
+  description = "Private Hetzner Object Storage bucket that receives etcd snapshots."
   type        = string
 }
 
@@ -300,13 +295,13 @@ variable "etcd_s3_folder" {
 }
 
 variable "etcd_s3_access_key" {
-  description = "S3 access key. DigitalOcean: API -> Spaces Keys -> Generate New Key."
+  description = "Hetzner S3 access key (Project -> Security -> S3 credentials)."
   type        = string
   sensitive   = true
 }
 
 variable "etcd_s3_secret_key" {
-  description = "S3 secret key (shown only once when the Spaces key is created)."
+  description = "Hetzner S3 secret key, shown only once when the credential pair is created."
   type        = string
   sensitive   = true
 }
@@ -325,7 +320,7 @@ variable "etcd_s3_retention" {
       360       / (3 * 4)                                        = 30 days
 
     Compressed snapshots of a Rancher management cluster run tens of MB, so 360
-    is well inside a 250 GB DigitalOcean Space.
+    is well within the included capacity of Hetzner Object Storage.
   EOT
   type        = number
   default     = 360

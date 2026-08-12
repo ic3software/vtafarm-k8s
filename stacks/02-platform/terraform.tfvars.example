@@ -18,11 +18,12 @@ rancher_replicas      = 3
 rancher_chart_version = "2.14.3"
 cert_manager_version  = "v1.21.1"
 
-# --- Rancher backups to DigitalOcean Spaces --------------------------------
-# Same Space as the etcd snapshots; a different folder keeps them apart.
-backup_s3_endpoint   = "fra1.digitaloceanspaces.com"
-backup_s3_region     = "fra1"
-backup_s3_bucket     = "my-k3s-backups"
+# --- Rancher backups to Hetzner Object Storage -----------------------------
+# Reuse the private bucket and S3 credentials from stack 01; this folder keeps
+# Rancher backups separate from the etcd snapshots.
+backup_s3_endpoint   = "nbg1.your-objectstorage.com"
+backup_s3_region     = "nbg1"
+backup_s3_bucket     = "my-globally-unique-k3s-backups"
 backup_s3_folder     = "rancher-backup"
 backup_s3_access_key = ""
 backup_s3_secret_key = ""

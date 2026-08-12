@@ -129,19 +129,19 @@ variable "rancher_backup_retention" {
 }
 
 variable "backup_s3_endpoint" {
-  description = "S3 endpoint for Rancher backups, e.g. fra1.digitaloceanspaces.com"
+  description = "Hetzner Object Storage endpoint for Rancher backups."
   type        = string
-  default     = "fra1.digitaloceanspaces.com"
+  default     = "nbg1.your-objectstorage.com"
 }
 
 variable "backup_s3_region" {
-  description = "S3 region, e.g. fra1"
+  description = "Hetzner Object Storage location, e.g. nbg1."
   type        = string
-  default     = "fra1"
+  default     = "nbg1"
 }
 
 variable "backup_s3_bucket" {
-  description = "Bucket / Space that stores Rancher backups."
+  description = "Private Hetzner Object Storage bucket that stores Rancher backups."
   type        = string
 }
 

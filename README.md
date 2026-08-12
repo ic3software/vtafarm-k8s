@@ -52,7 +52,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
   └────────────────────────────┬───────────────────────────┘
                                │
                                ▼  etcd snapshot every 6h
-                     DigitalOcean Spaces (S3)
+                  Hetzner Object Storage (S3)
 ```
 
 ### Design decisions worth knowing about
@@ -195,12 +195,21 @@ ssh-keygen -t ed25519 -C "k3s-hetzner" -f ~/.ssh/id_ed25519
 Rancher **requires a DNS hostname** — it cannot be reached by IP. Have something like
 `rancher.yourdomain.com` ready, on a zone you can edit.
 
-### 5. DigitalOcean Spaces (for etcd snapshots)
+### 5. Hetzner Object Storage (for backups)
 
-- DigitalOcean → **Spaces Object Storage** → Create a Space, region **`fra1`** (Frankfurt is
-  closest to `nbg1`, so uploads are fast)
-- DigitalOcean → **API** → **Spaces Keys** → Generate New Key. Note the access key and secret
-  key — the secret is shown once.
+Object Storage is created manually because the `hcloud` Terraform provider does not manage S3
+buckets or S3 credentials. In the same Hetzner project as the cluster:
+
+1. Open **Object Storage** → **Create Bucket**.
+2. Choose location **`nbg1`**, enter a globally unique bucket name, and keep visibility
+   **Private**.
+3. Open **Security** → **S3 credentials** and generate a credential pair.
+4. Immediately save both the access key and secret key in a password manager. The secret is
+   shown only once and is required during disaster recovery.
+
+The Hetzner Cloud API token from prerequisite 2 cannot authenticate to Object Storage. The same
+S3 credential pair and private bucket are used by both stacks; separate folder prefixes keep
+the etcd snapshots and Rancher backups apart.
 
 ---
 
@@ -228,10 +237,10 @@ ssh_allowed_cidrs = [
 ]
 
 
-# etcd snapshots to DigitalOcean Spaces (required - there is no local-only mode)
-etcd_s3_endpoint   = "fra1.digitaloceanspaces.com"
-etcd_s3_region     = "fra1"
-etcd_s3_bucket     = "your-space-name"
+# etcd snapshots to Hetzner Object Storage (required - there is no local-only mode)
+etcd_s3_endpoint   = "nbg1.your-objectstorage.com"
+etcd_s3_region     = "nbg1"
+etcd_s3_bucket     = "your-globally-unique-bucket-name"
 etcd_s3_access_key = "..."
 etcd_s3_secret_key = "..."
 ```
@@ -326,7 +335,7 @@ letsencrypt_email = "you@yourdomain.com"
 # Start with staging — see the note below
 letsencrypt_environment = "staging"
 
-backup_s3_bucket     = "your-space-name"
+backup_s3_bucket     = "your-globally-unique-bucket-name"
 backup_s3_access_key = "..."
 backup_s3_secret_key = "..."
 ```
@@ -471,7 +480,8 @@ Two layers. Both are configured, and neither substitutes for the other:
 | **etcd snapshot** | built into k3s | the entire Kubernetes datastore (every resource, including all of Rancher) | the cluster is broken, something was deleted by mistake, or you need to roll back |
 | **Rancher backup** | rancher-backup operator | only Rancher's own CRDs, users and downstream cluster registrations | migrating Rancher to a different cluster |
 
-Both upload to your DigitalOcean Space on a schedule.
+Both upload to the same private Hetzner Object Storage bucket on a schedule, under different
+folder prefixes.
 
 ### etcd snapshots
 
@@ -643,11 +653,9 @@ Monthly cost for `nbg1` with the defaults:
 | `cx23` (2 vCPU / 4 GB / 40 GB NVMe) | €6.59 | 3 | €19.77 |
 | Load Balancer `lb11` | €8.99 | 1 | €8.99 |
 | Public IPv4 | €0.60 | 3 | €1.80 |
-| **Hetzner total** | | | **€30.56** |
-| DigitalOcean Spaces | $5.00 | 1 | ~$5 |
-
-Unit prices are the gross figures shown in the Hetzner Console (German VAT included);
-the net list prices are about 19% lower.
+| **Hetzner compute total** | | | **€30.56** |
+| Hetzner Object Storage | €7.79 | 1 account | €7.79 |
+| **Estimated total** | | | **€38.35** |
 
 Ways to trim it:
 
