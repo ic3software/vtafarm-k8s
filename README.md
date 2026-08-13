@@ -201,11 +201,18 @@ Object Storage is created manually because the `hcloud` Terraform provider does 
 buckets or S3 credentials. In the same Hetzner project as the cluster:
 
 1. Open **Object Storage** → **Create Bucket**.
-2. Choose location **`nbg1`**, enter a globally unique bucket name, and keep visibility
-   **Private**.
-3. Open **Security** → **S3 credentials** and generate a credential pair.
-4. Immediately save both the access key and secret key in a password manager. The secret is
+2. **Location:** pick **Nuremberg**. The dialog lists cities, not codes — `nbg1` is Nuremberg
+   (the default, Falkenstein, is `fsn1`). The suffix next to the name field should read
+   `.nbg1.your-objectstorage.com`.
+3. **Name:** must be globally unique, so suffix it with something of your own —
+   `k3s-rancher-backups-<yourorg>`. Object Lock **Disabled**, Visibility **Private**.
+4. Open **Security** → **S3 credentials** and generate a credential pair.
+5. Immediately save both the access key and secret key in a password manager. The secret is
    shown only once and is required during disaster recovery.
+
+Use Nuremberg unless you have a reason not to — it is where the cluster is created, and the
+`*_s3_endpoint` / `*_s3_region` defaults in both stacks already point at `nbg1`. A different
+location means changing all four of them, and the mismatch only surfaces at the first upload.
 
 The Hetzner Cloud API token from prerequisite 2 cannot authenticate to Object Storage. The same
 S3 credential pair and private bucket are used by both stacks; separate folder prefixes keep
