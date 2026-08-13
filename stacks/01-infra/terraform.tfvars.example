@@ -11,6 +11,7 @@ location     = "nbg1" # Nuremberg
 # also runs workloads, Rancher included.
 server_count = 3
 server_type  = "cx23" # 2 vCPU / 4 GB / 40 GB NVMe - see the note in variables.tf
+os_image     = "ubuntu-24.04" # change this when following the OS upgrade runbook
 
 # --- Access ----------------------------------------------------------------
 # Point these at the SSH key you already use - no need to generate a new one.
@@ -36,7 +37,7 @@ k3s_version = "v1.35.7+k3s1"
 # The hcloud API token cannot authenticate to Object Storage.
 etcd_s3_endpoint   = "nbg1.your-objectstorage.com"
 etcd_s3_region     = "nbg1"
-etcd_s3_bucket     = "my-globally-unique-k3s-backups"
+etcd_s3_bucket     = "firstperson-backup"
 etcd_s3_folder     = "" # defaults to cluster_name
 etcd_s3_access_key = ""
 etcd_s3_secret_key = ""

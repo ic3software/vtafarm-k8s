@@ -90,6 +90,11 @@ snapshot: ## Take an on-demand etcd snapshot on the first server
 snapshots: ## List etcd snapshots (local + S3)
 	@bash $(ROOT)/scripts/etcd-snapshot.sh list
 
+.PHONY: upgrade-os
+export TARGET_IMAGE
+upgrade-os: ## Replace nodes one at a time with TARGET_IMAGE (for example ubuntu-26.04)
+	@bash $(ROOT)/scripts/upgrade-os.sh
+
 .PHONY: ssh
 ssh: ## SSH into the first control-plane node
 	@$$(terraform -chdir=$(INFRA) output -raw ssh_command)

@@ -181,54 +181,14 @@ kubectl -n cattle-system describe certificate tls-rancher-ingress | tail -20
 
 ## 4. Operating system updates
 
-`unattended-upgrades` installs security patches automatically but deliberately never reboots —
-auto-rebooting control-plane nodes is a bad idea.
-
-### Which nodes need a reboot
+Upgrade to the next supported Ubuntu LTS with:
 
 ```bash
-for ip in $(terraform -chdir=stacks/01-infra output -json server_nodes | jq -r '.[].public_ip'); do
-  echo -n "$ip: "
-  ssh -o StrictHostKeyChecking=accept-new root@$ip \
-    'test -f /var/run/reboot-required && echo "reboot needed" || echo OK'
-done
+make upgrade-os TARGET_IMAGE=ubuntu-26.04
 ```
 
-### Reboot one node at a time
-
-```bash
-NODE=k3s-rancher-server-2
-IP=<public ip of that node>
-
-# 1. move workloads off
-kubectl drain $NODE --ignore-daemonsets --delete-emptydir-data --timeout=300s
-
-# 2. patch and reboot
-ssh root@$IP 'apt-get update && apt-get -y upgrade && reboot'
-
-# 3. wait for it to come back (about a minute)
-until kubectl get node $NODE \
-  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do
-  echo "waiting for $NODE ..."; sleep 10
-done
-
-# 4. allow scheduling again
-kubectl uncordon $NODE
-```
-
-**Leave at least five minutes between nodes** and confirm etcd has fully recovered before
-touching the next one:
-
-```bash
-kubectl get nodes
-ssh root@$IP 'k3s kubectl get --raw "/healthz?verbose"' | grep etcd
-```
-
-### Automating it
-
-[kured](https://kured.dev/) (Kubernetes Reboot Daemon) watches for
-`/var/run/reboot-required` and performs exactly this drain/reboot/uncordon cycle, one node at a
-time.
+It snapshots etcd, rejects bound `local-path` volumes, then replaces and verifies one node at a
+time from the highest-numbered server to server-1. Any failed check stops the upgrade.
 
 ---
 
@@ -262,5 +222,5 @@ control plane. Stop and read the provider CHANGELOG before continuing.
 [ ] upgrade Rancher; rollout completes
 [ ] make status is clean
 [ ] Rancher UI reachable, downstream clusters Active
-[ ] OS updates, one node at a time, five minutes apart
+[ ] make upgrade-os completes successfully
 ```

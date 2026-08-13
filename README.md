@@ -206,7 +206,11 @@ buckets or S3 credentials. In the same Hetzner project as the cluster:
    `.nbg1.your-objectstorage.com`.
 3. **Name:** must be globally unique. Use a `firstperson`-related name, for example
    `firstperson-backup-<unique-suffix>`. Object Lock **Disabled**, Visibility **Private**.
-4. Open **Security** → **S3 credentials** and generate a credential pair.
+4. Open **Security** → **S3 credentials** and generate a credential pair. The dialog asks for a
+   **Description** — it is the only label the pair ever gets. Name it after the bucket rather
+   than the cluster, for example `firstperson-backup`: the credentials are scoped to the whole
+   Object Storage account, and this bucket holds more than just the k3s and Rancher backups.
+   Unlike the bucket name it does not have to be globally unique.
 5. Immediately save both the access key and secret key in a password manager. The secret is
    shown only once and is required during disaster recovery.
 
@@ -573,16 +577,10 @@ Rancher cannot skip minor versions (no 2.12 → 2.14; go 2.12 → 2.13 → 2.14)
 
 ### 3. Operating system
 
-`unattended-upgrades` installs security patches automatically but deliberately never reboots.
-Reboot one node at a time:
+Upgrade to the next Ubuntu LTS with a rolling replacement:
 
 ```bash
-ssh root@<node-ip> 'test -f /var/run/reboot-required && echo "reboot needed"'
-
-kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
-ssh root@<node-ip> 'reboot'
-# wait for the node to return
-kubectl uncordon <node-name>
+make upgrade-os TARGET_IMAGE=ubuntu-26.04
 ```
 
 Full procedures and a checklist: **[docs/upgrade.md](docs/upgrade.md)**.

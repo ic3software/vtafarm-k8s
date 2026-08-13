@@ -31,12 +31,24 @@ locals {
   ]
 }
 
+# Existing servers make a replacement server-1 join instead of running cluster-init.
+data "hcloud_servers" "existing_cluster" {
+  with_selector = "cluster=${var.cluster_name},managed=terraform"
+  with_status   = ["running"]
+}
+
+# Fail during planning if the target image does not exist.
+data "hcloud_image" "os" {
+  name              = var.os_image
+  with_architecture = "x86"
+}
+
 resource "hcloud_server" "server" {
   count = var.server_count
 
   name               = "${var.cluster_name}-server-${count.index + 1}"
   server_type        = var.server_type
-  image              = var.os_image
+  image              = data.hcloud_image.os.name
   location           = var.location
   ssh_keys           = [hcloud_ssh_key.this.id]
   placement_group_id = hcloud_placement_group.servers.id
