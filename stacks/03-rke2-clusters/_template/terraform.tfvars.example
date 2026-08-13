@@ -7,6 +7,15 @@ rancher_token_key = "token-REPLACE_ME:REPLACE_ME"
 # ash = Ashburn, hil = Hillsboro, sin = Singapore.
 location = "nbg1"
 
+# RKE2 server-node shape. server_count must be odd: 3, 5, 7, or 9.
+# Common x86 types include cx23, cx33, cx43, cx53, cpx22, and cpx32.
+server_count = 3
+server_type  = "cx23"
+
+# Optional dedicated workers use their own count and server type.
+worker_count = 0
+worker_type  = "cx23"
+
 # Reuse an existing SSH key from this Hetzner project.
 ssh_key_name = "k3s-rancher-admin"
 

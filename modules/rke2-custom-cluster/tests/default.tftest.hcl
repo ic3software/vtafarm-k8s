@@ -4,6 +4,16 @@ mock_provider "rancher2" {}
 run "default_ha_topology" {
   command = plan
 
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
   variables {
     config = {
       cluster_name = "production"
@@ -62,11 +72,23 @@ run "default_ha_topology" {
 run "worker_scale_does_not_renumber_servers" {
   command = plan
 
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
   variables {
     config = {
       cluster_name = "production"
       ssh_key_name = "k3s-rancher-admin"
+      server_type  = "cx33"
       worker_count = 2
+      worker_type  = "cx43"
     }
     hcloud_token = "test-token"
   }
@@ -102,4 +124,56 @@ run "worker_scale_does_not_renumber_servers" {
     error_message = "Server and worker address ranges must stay independent."
   }
 
+  assert {
+    condition = (
+      hcloud_server.node["server-1"].server_type == "cx33" &&
+      hcloud_server.node["worker-1"].server_type == "cx43"
+    )
+    error_message = "Server and worker node types must honor their independent configuration values."
+  }
+}
+
+run "rejects_strict_tls_without_cacerts" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "strict" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name = "production"
+      ssh_key_name = "k3s-rancher-admin"
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/production"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "production-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  expect_failures = [rancher2_cluster_v2.this]
 }

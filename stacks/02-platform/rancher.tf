@@ -59,6 +59,11 @@ resource "helm_release" "rancher" {
   }
 
   set {
+    name  = "agentTLSMode"
+    value = "system-store"
+  }
+
+  set {
     name  = "ingress.ingressClassName"
     value = var.ingress_class
   }

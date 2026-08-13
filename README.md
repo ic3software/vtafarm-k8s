@@ -415,6 +415,10 @@ rancher_token_key = "token-xxxxx:xxxxx"
 # ash = Ashburn, hil = Hillsboro, sin = Singapore.
 location = "nbg1"
 
+# Hetzner server type for all RKE2 control-plane/etcd nodes.
+server_count = 3
+server_type  = "cx33"
+
 # Reuse an existing SSH key from this Hetzner project.
 ssh_key_name = "k3s-rancher-admin"
 
@@ -457,10 +461,6 @@ Or merge it into `~/.kube/config` alongside your other clusters:
 ```bash
 make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
 ```
-
-The command backs up the existing kubeconfig and prints the context name and
-the corresponding `kubectl config use-context` command. It does not change the
-current context automatically.
 
 #### Optional — Create more RKE2 clusters
 
@@ -741,6 +741,16 @@ Scaling options:
 ---
 
 ## Teardown
+
+Destroy only stack 02 (cert-manager, Rancher, backups, and the upgrade
+controller) while keeping the stack 01 k3s infrastructure and independently
+managed RKE2 infrastructure:
+
+```bash
+make destroy-platform
+```
+
+Destroy both stack 02 and stack 01:
 
 ```bash
 make destroy

@@ -1,3 +1,11 @@
+data "rancher2_setting" "agent_tls_mode" {
+  name = "agent-tls-mode"
+}
+
+data "rancher2_setting" "cacerts" {
+  name = "cacerts"
+}
+
 resource "rancher2_cluster_v2" "this" {
   name                  = var.config.cluster_name
   kubernetes_version    = var.config.rke2_version
@@ -38,5 +46,15 @@ resource "rancher2_cluster_v2" "this" {
     create = "30m"
     update = "30m"
     delete = "30m"
+  }
+
+  lifecycle {
+    precondition {
+      condition = (
+        trimspace(data.rancher2_setting.agent_tls_mode.value) == "system-store" ||
+        trimspace(data.rancher2_setting.cacerts.value) != ""
+      )
+      error_message = "Rancher agent TLS is strict but the cacerts setting is empty. Apply stack 02 with agentTLSMode=system-store for a public CA, or configure the private CA in Rancher, before creating RKE2 nodes."
+    }
   }
 }

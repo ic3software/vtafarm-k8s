@@ -84,6 +84,10 @@ plan-platform: ## Show what stack 02 would change
 apply-platform: ## Install/upgrade cert-manager, Rancher, backups, upgrade controller
 	terraform -chdir=$(PLATFORM) apply
 
+.PHONY: destroy-platform
+destroy-platform: ## Destroy stack 02 only; keep stack 01 and RKE2 infrastructure
+	terraform -chdir=$(PLATFORM) destroy
+
 .PHONY: rancher-password
 rancher-password: ## Print the Rancher bootstrap password
 	@terraform -chdir=$(PLATFORM) output -raw rancher_bootstrap_password; echo
@@ -124,8 +128,17 @@ outputs-rke2: check-rke2-cluster ## Print one RKE2 cluster's outputs (CLUSTER=na
 
 .PHONY: kubeconfig-rke2
 kubeconfig-rke2: check-rke2-cluster ## Write one RKE2 kubeconfig to its ignored directory
-	@terraform -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >$(RKE2_KUBECONFIG_FILE)
-	@echo "wrote $(RKE2_KUBECONFIG_FILE)"
+	@temporary_file="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.yaml.XXXXXX")"; \
+	trap 'rm -f "$$temporary_file"' EXIT; \
+	terraform -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >"$$temporary_file"; \
+	if [[ ! -s "$$temporary_file" ]] || \
+	   [[ -z "$$(KUBECONFIG="$$temporary_file" kubectl config view -o jsonpath='{.contexts[*].name}' 2>/dev/null)" ]]; then \
+		echo "ERROR: Rancher has not returned a usable kubeconfig yet." >&2; \
+		echo "Wait for the cluster to become Active, then refresh its Terraform state." >&2; \
+		exit 1; \
+	fi; \
+	install -m 600 "$$temporary_file" "$(RKE2_KUBECONFIG_FILE)"; \
+	echo "wrote $(RKE2_KUBECONFIG_FILE)"
 
 .PHONY: kubeconfig-merge-rke2
 kubeconfig-merge-rke2: kubeconfig-rke2 ## Merge one RKE2 kubeconfig into ~/.kube/config
