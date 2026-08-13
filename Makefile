@@ -2,6 +2,10 @@ SHELL      := /usr/bin/env bash
 ROOT       := $(shell pwd)
 INFRA      := $(ROOT)/stacks/01-infra
 PLATFORM   := $(ROOT)/stacks/02-platform
+RKE2_ROOT  := $(ROOT)/stacks/03-rke2-clusters
+RKE2_TEMPLATE := $(RKE2_ROOT)/_template
+RKE2_CLUSTER_DIR := $(RKE2_ROOT)/$(CLUSTER)
+RKE2_KUBECONFIG_FILE := $(RKE2_CLUSTER_DIR)/kubeconfig.yaml
 KUBECONFIG_FILE := $(ROOT)/kubeconfig
 
 export KUBECONFIG := $(KUBECONFIG_FILE)
@@ -10,7 +14,7 @@ export KUBECONFIG := $(KUBECONFIG_FILE)
 
 .PHONY: help
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 # --- stack 01: infrastructure + k3s ----------------------------------------
@@ -19,20 +23,28 @@ help: ## Show this help
 lint: ## Check Terraform formatting and Markdown style
 	terraform -chdir=$(INFRA) fmt -recursive -check
 	terraform -chdir=$(PLATFORM) fmt -recursive -check
+	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive -check
+	terraform -chdir=$(RKE2_TEMPLATE) fmt -recursive -check
 	terraform -chdir=$(INFRA) validate
 	terraform -chdir=$(PLATFORM) validate
+	terraform -chdir=$(RKE2_TEMPLATE) validate
+	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	markdownlint-cli2
 
 .PHONY: fmt
 fmt: ## Auto-format Terraform and Markdown in place
 	terraform -chdir=$(INFRA) fmt -recursive
 	terraform -chdir=$(PLATFORM) fmt -recursive
+	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive
+	terraform -chdir=$(RKE2_TEMPLATE) fmt -recursive
 	markdownlint-cli2 --fix
 
 .PHONY: init
-init: ## Download providers for both stacks
+init: ## Download providers for all stacks and module tests
 	terraform -chdir=$(INFRA) init
 	terraform -chdir=$(PLATFORM) init
+	terraform -chdir=$(RKE2_TEMPLATE) init -backend=false
+	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster init -backend=false
 
 .PHONY: plan
 plan: ## Show what stack 01 would change
@@ -75,6 +87,53 @@ apply-platform: ## Install/upgrade cert-manager, Rancher, backups, upgrade contr
 .PHONY: rancher-password
 rancher-password: ## Print the Rancher bootstrap password
 	@terraform -chdir=$(PLATFORM) output -raw rancher_bootstrap_password; echo
+
+# --- stack 03: Rancher-provisioned downstream RKE2 clusters ---------------
+
+.PHONY: new-rke2-cluster
+new-rke2-cluster: ## Scaffold an independent RKE2 root (CLUSTER=name)
+	@bash $(ROOT)/scripts/new-rke2-cluster.sh "$(CLUSTER)"
+
+.PHONY: check-rke2-cluster
+check-rke2-cluster:
+	@if [[ ! "$(CLUSTER)" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$$ ]]; then \
+	  echo "set a DNS-safe cluster name, for example: make plan-rke2 CLUSTER=production" >&2; \
+	  exit 2; \
+	fi
+	@test -d "$(RKE2_CLUSTER_DIR)" || { \
+	  echo "cluster root does not exist: $(RKE2_CLUSTER_DIR)" >&2; \
+	  echo "create it with: make new-rke2-cluster CLUSTER=$(CLUSTER)" >&2; \
+	  exit 2; \
+	}
+
+.PHONY: init-rke2
+init-rke2: check-rke2-cluster ## Initialize one RKE2 cluster (CLUSTER=name)
+	terraform -chdir=$(RKE2_CLUSTER_DIR) init
+
+.PHONY: plan-rke2
+plan-rke2: check-rke2-cluster ## Plan one RKE2 cluster (CLUSTER=name)
+	terraform -chdir=$(RKE2_CLUSTER_DIR) plan
+
+.PHONY: apply-rke2
+apply-rke2: check-rke2-cluster ## Apply one RKE2 cluster (CLUSTER=name)
+	terraform -chdir=$(RKE2_CLUSTER_DIR) apply
+
+.PHONY: outputs-rke2
+outputs-rke2: check-rke2-cluster ## Print one RKE2 cluster's outputs (CLUSTER=name)
+	terraform -chdir=$(RKE2_CLUSTER_DIR) output
+
+.PHONY: kubeconfig-rke2
+kubeconfig-rke2: check-rke2-cluster ## Write one RKE2 kubeconfig to its ignored directory
+	@terraform -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >$(RKE2_KUBECONFIG_FILE)
+	@echo "wrote $(RKE2_KUBECONFIG_FILE)"
+
+.PHONY: kubeconfig-merge-rke2
+kubeconfig-merge-rke2: kubeconfig-rke2 ## Merge one RKE2 kubeconfig into ~/.kube/config
+	@bash $(ROOT)/scripts/merge-kubeconfig.sh $(RKE2_KUBECONFIG_FILE)
+
+.PHONY: destroy-rke2
+destroy-rke2: check-rke2-cluster ## Destroy one RKE2 cluster only (CLUSTER=name)
+	terraform -chdir=$(RKE2_CLUSTER_DIR) destroy
 
 # --- day-2 ------------------------------------------------------------------
 

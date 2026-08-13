@@ -1,4 +1,4 @@
-# k3s HA + Rancher on Hetzner Cloud
+# k3s HA + Rancher + downstream RKE2 on Hetzner Cloud
 
 Terraform for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
 Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one.
@@ -77,7 +77,10 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ├── Makefile                    # every common task is a make target
 ├── stacks/
 │   ├── 01-infra/               # Hetzner resources + the k3s cluster
-│   └── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
+│   ├── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
+│   └── 03-rke2-clusters/       # one independent Terraform root per downstream cluster
+├── modules/
+│   └── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
@@ -94,6 +97,11 @@ Terraform must be able to configure a provider *before* it starts running. The `
 `kubernetes` providers need a kubeconfig — which only exists after stack 01 has finished.
 Putting both in one stack creates a chicken-and-egg problem. Split apart, stack 01 builds the
 cluster and emits a kubeconfig, stack 02 consumes it. This is the standard pattern.
+
+Downstream RKE2 clusters add a third layer. Rancher must already be reachable before its
+provider can create a custom cluster and return the node registration command. Every cluster
+under `stacks/03-rke2-clusters/<name>` calls the same shared module but keeps a separate state,
+so creating or destroying a second RKE2 cluster cannot replace the first cluster's state.
 
 ---
 
@@ -371,6 +379,82 @@ open https://rancher.yourdomain.com
 ```
 
 User `admin`, with that password. Rancher forces a change on first login.
+
+### Step 6 — Create an RKE2 cluster
+
+First, create a Rancher API key from the user menu under **Account & API Keys**.
+Then scaffold a Terraform root for the new cluster:
+
+```bash
+make new-rke2-cluster CLUSTER=rke2-vtafarm-production
+```
+
+This name is also used as the cluster name in Rancher and as its Terraform
+directory name.
+
+Edit the generated configuration:
+
+```bash
+code stacks/03-rke2-clusters/rke2-vtafarm-production/terraform.tfvars
+```
+
+At minimum, replace the Hetzner and Rancher credentials and restrict SSH
+access:
+
+```hcl
+hcloud_token      = "your Hetzner token"
+rancher_api_url   = "https://rancher.yourdomain.com"
+rancher_token_key = "token-xxxxx:xxxxx"
+
+cluster = {
+  ssh_allowed_cidrs = [
+    "203.0.113.7/32"
+  ]
+}
+```
+
+The directory name supplies `cluster_name`. Other settings use defaults,
+including a dedicated Hetzner network, three `cx23` nodes, Ubuntu 24.04, and
+RKE2 with Canal and Traefik. If stack 01 uses a cluster name other than
+`k3s-rancher`, set `ssh_key_name` to the SSH key name created by that stack.
+
+Create the RKE2 cluster and its Hetzner hosts:
+
+```bash
+make init-rke2 CLUSTER=rke2-vtafarm-production
+make plan-rke2 CLUSTER=rke2-vtafarm-production
+make apply-rke2 CLUSTER=rke2-vtafarm-production
+```
+
+The default creates three nodes with the etcd, control-plane, and worker roles.
+Wait for `rke2-vtafarm-production` to become **Active** in Rancher Cluster
+Management before continuing.
+
+Write its Rancher-generated kubeconfig when it is Active and use it directly:
+
+```bash
+make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/rke2-vtafarm-production/kubeconfig.yaml
+kubectl get nodes
+```
+
+Or merge it into `~/.kube/config` alongside your other clusters:
+
+```bash
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
+```
+
+The command backs up the existing kubeconfig and prints the context name and
+the corresponding `kubectl config use-context` command. It does not change the
+current context automatically.
+
+#### Optional — Create more RKE2 clusters
+
+Repeat Step 6 with a different unique name:
+
+```bash
+make new-rke2-cluster CLUSTER=rke2-vtafarm-staging
+```
 
 ---
 
