@@ -410,9 +410,13 @@ hcloud_token      = "your Hetzner token"
 rancher_api_url   = "https://rancher.yourdomain.com"
 rancher_token_key = "token-xxxxx:xxxxx"
 
-# Hetzner location for all servers and the load balancer.
-# Supported values: fsn1, nbg1, hel1, ash, hil, sin.
+# Hetzner location for all servers and the load balancer:
+# fsn1 = Falkenstein, nbg1 = Nuremberg, hel1 = Helsinki,
+# ash = Ashburn, hil = Hillsboro, sin = Singapore.
 location = "nbg1"
+
+# Reuse an existing SSH key from this Hetzner project.
+ssh_key_name = "k3s-rancher-admin"
 
 ssh_allowed_cidrs = [
   "203.0.113.7/32"
@@ -422,8 +426,8 @@ ssh_allowed_cidrs = [
 The directory name supplies `cluster_name`. `location` controls the Hetzner
 location of every server and the cluster load balancer. Other settings use defaults,
 including a dedicated Hetzner network, three `cx23` nodes, Ubuntu 24.04, and
-RKE2 with Canal and Traefik. If stack 01 uses a cluster name other than
-`k3s-rancher`, set `ssh_key_name` to the SSH key name created by that stack.
+RKE2 with Canal and Traefik. `ssh_key_name` selects an existing SSH key from
+the same Hetzner project; this stack does not upload or duplicate the key.
 
 Create the RKE2 cluster and its Hetzner hosts:
 
@@ -434,6 +438,9 @@ make apply-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
 The default creates three nodes with the etcd, control-plane, and worker roles.
+Its Terraform-managed load balancer forwards `80`, `443`, `6443`, and `9345`
+to all server nodes over their private addresses. RKE2's default ingress
+configuration binds the standard HTTP and HTTPS ports on those nodes.
 Wait for `rke2-vtafarm-production` to become **Active** in Rancher Cluster
 Management before continuing.
 
@@ -461,6 +468,13 @@ Repeat Step 6 with a different unique name:
 
 ```bash
 make new-rke2-cluster CLUSTER=rke2-vtafarm-staging
+```
+
+Destroy one downstream cluster without touching stack 01, stack 02, or other
+RKE2 clusters:
+
+```bash
+make destroy-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
 ---

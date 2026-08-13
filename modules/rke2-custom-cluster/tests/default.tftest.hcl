@@ -7,7 +7,7 @@ run "default_ha_topology" {
   variables {
     config = {
       cluster_name = "production"
-      ssh_key_name = "existing-admin-key"
+      ssh_key_name = "k3s-rancher-admin"
     }
     hcloud_token = "test-token"
   }
@@ -47,6 +47,16 @@ run "default_ha_topology" {
     condition     = local.nodes["server-1"].private_ip == "10.10.1.101"
     error_message = "Server private addresses must remain deterministic."
   }
+
+  assert {
+    condition = (
+      hcloud_load_balancer_service.ingress_http.listen_port == 80 &&
+      hcloud_load_balancer_service.ingress_http.destination_port == 80 &&
+      hcloud_load_balancer_service.ingress_https.listen_port == 443 &&
+      hcloud_load_balancer_service.ingress_https.destination_port == 443
+    )
+    error_message = "The load balancer must expose standard HTTP and HTTPS ports to the ingress controller."
+  }
 }
 
 run "worker_scale_does_not_renumber_servers" {
@@ -55,7 +65,7 @@ run "worker_scale_does_not_renumber_servers" {
   variables {
     config = {
       cluster_name = "production"
-      ssh_key_name = "existing-admin-key"
+      ssh_key_name = "k3s-rancher-admin"
       worker_count = 2
     }
     hcloud_token = "test-token"
@@ -91,4 +101,5 @@ run "worker_scale_does_not_renumber_servers" {
     condition     = local.nodes["server-1"].private_ip == "10.10.1.101" && local.nodes["worker-1"].private_ip == "10.10.1.151"
     error_message = "Server and worker address ranges must stay independent."
   }
+
 }

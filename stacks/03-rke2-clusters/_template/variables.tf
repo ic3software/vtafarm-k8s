@@ -69,7 +69,7 @@ variable "os_image" {
 }
 
 variable "ssh_key_name" {
-  description = "Name of an existing Hetzner SSH key installed on every node."
+  description = "Name of an existing SSH key in the Hetzner project."
   type        = string
   default     = "k3s-rancher-admin"
 }

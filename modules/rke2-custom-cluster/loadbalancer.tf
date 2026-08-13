@@ -56,3 +56,33 @@ resource "hcloud_load_balancer_service" "rke2_supervisor" {
     retries  = 3
   }
 }
+
+resource "hcloud_load_balancer_service" "ingress_http" {
+  load_balancer_id = hcloud_load_balancer.api.id
+  protocol         = "tcp"
+  listen_port      = 80
+  destination_port = 80
+
+  health_check {
+    protocol = "tcp"
+    port     = 80
+    interval = 10
+    timeout  = 5
+    retries  = 3
+  }
+}
+
+resource "hcloud_load_balancer_service" "ingress_https" {
+  load_balancer_id = hcloud_load_balancer.api.id
+  protocol         = "tcp"
+  listen_port      = 443
+  destination_port = 443
+
+  health_check {
+    protocol = "tcp"
+    port     = 443
+    interval = 10
+    timeout  = 5
+    retries  = 3
+  }
+}
