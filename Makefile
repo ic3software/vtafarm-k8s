@@ -154,6 +154,21 @@ kubeconfig-merge-rke2: kubeconfig-rke2 ## Merge one RKE2 kubeconfig into ~/.kube
 destroy-rke2: check-rke2-cluster ## Destroy one RKE2 cluster only (CLUSTER=name)
 	terraform -chdir=$(RKE2_CLUSTER_DIR) destroy
 
+.PHONY: destroy-all-rke2
+destroy-all-rke2: ## Destroy every generated RKE2 cluster before Rancher
+	@set -euo pipefail; \
+	shopt -s nullglob; \
+	found_cluster=false; \
+	for cluster_dir in "$(RKE2_ROOT)"/*; do \
+		[[ -d "$$cluster_dir" ]] || continue; \
+		found_cluster=true; \
+		echo "==> destroying RKE2 cluster $${cluster_dir##*/}"; \
+		terraform -chdir="$$cluster_dir" destroy; \
+	done; \
+	if [[ "$$found_cluster" == false ]]; then \
+		echo "==> no generated RKE2 cluster roots found under $(RKE2_ROOT)"; \
+	fi
+
 # --- day-2 ------------------------------------------------------------------
 
 .PHONY: status
@@ -182,6 +197,7 @@ ssh: ## SSH into the first control-plane node
 	@$$(terraform -chdir=$(INFRA) output -raw ssh_command)
 
 .PHONY: destroy
-destroy: ## Tear everything down (platform first, then infrastructure)
-	-terraform -chdir=$(PLATFORM) destroy
+destroy: ## Tear down RKE2 clusters, platform, then infrastructure
+	@$(MAKE) --no-print-directory destroy-all-rke2
+	@$(MAKE) --no-print-directory destroy-platform
 	terraform -chdir=$(INFRA) destroy

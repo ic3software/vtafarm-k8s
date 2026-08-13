@@ -774,17 +774,21 @@ managed RKE2 infrastructure:
 make destroy-platform
 ```
 
-Destroy both stack 02 and stack 01:
+Destroy every generated RKE2 cluster, then stack 02, then stack 01:
 
 ```bash
 make destroy
 ```
 
-Destroys stack 02 (Helm releases) first, then stack 01 (Hetzner resources).
+The command scans `stacks/03-rke2-clusters/clusters/*` and runs Terraform
+destroy for every cluster root before removing Rancher. Only after every RKE2
+destroy succeeds does it destroy stack 02 and finally stack 01. If any step
+fails, the command stops without deleting the layers that the failed step
+depends on.
 
-> The order matters. Destroying the infrastructure first leaves stack 02's state believing its
-> releases still exist. If that happens, clear the entries with
-> `terraform -chdir=stacks/02-platform state rm <resource>`.
+> The order matters. Keep each generated RKE2 directory and its Terraform state
+> until its cluster has been destroyed. Without that state, `make destroy`
+> cannot discover or safely remove those Rancher and Hetzner resources.
 
 Afterwards, check the Hetzner Console for leftover Volumes. PVs created by the CSI driver are
 not Terraform-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
