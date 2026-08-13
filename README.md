@@ -204,8 +204,8 @@ buckets or S3 credentials. In the same Hetzner project as the cluster:
 2. **Location:** pick **Nuremberg**. The dialog lists cities, not codes — `nbg1` is Nuremberg
    (the default, Falkenstein, is `fsn1`). The suffix next to the name field should read
    `.nbg1.your-objectstorage.com`.
-3. **Name:** must be globally unique, so suffix it with something of your own —
-   `k3s-rancher-backups-<yourorg>`. Object Lock **Disabled**, Visibility **Private**.
+3. **Name:** must be globally unique. Use a `firstperson`-related name, for example
+   `firstperson-backup-<unique-suffix>`. Object Lock **Disabled**, Visibility **Private**.
 4. Open **Security** → **S3 credentials** and generate a credential pair.
 5. Immediately save both the access key and secret key in a password manager. The secret is
    shown only once and is required during disaster recovery.
