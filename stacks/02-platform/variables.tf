@@ -28,11 +28,7 @@ variable "letsencrypt_email" {
 }
 
 variable "letsencrypt_environment" {
-  description = <<-EOT
-    "production" or "staging". Let's Encrypt rate-limits production to 5 failed
-    orders per hostname per hour, so use "staging" while you are still testing
-    DNS - staging certificates are untrusted but unlimited.
-  EOT
+  description = "Let's Encrypt ACME environment; defaults to production."
   type        = string
   default     = "production"
 
@@ -129,19 +125,19 @@ variable "rancher_backup_retention" {
 }
 
 variable "backup_s3_endpoint" {
-  description = "S3 endpoint for Rancher backups, e.g. fra1.digitaloceanspaces.com"
+  description = "Hetzner Object Storage endpoint for Rancher backups."
   type        = string
-  default     = "fra1.digitaloceanspaces.com"
+  default     = "nbg1.your-objectstorage.com"
 }
 
 variable "backup_s3_region" {
-  description = "S3 region, e.g. fra1"
+  description = "Hetzner Object Storage location, e.g. nbg1."
   type        = string
-  default     = "fra1"
+  default     = "nbg1"
 }
 
 variable "backup_s3_bucket" {
-  description = "Bucket / Space that stores Rancher backups."
+  description = "Private Hetzner Object Storage bucket that stores Rancher backups."
   type        = string
 }
 

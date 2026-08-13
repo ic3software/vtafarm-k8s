@@ -9,8 +9,8 @@
 
 | Layer | By | Contents | Frequency | Destination |
 | --- | --- | --- | --- | --- |
-| etcd snapshot | k3s built-in | the whole Kubernetes datastore | every 6h, on each server | 12 per server locally (3 days) + 360 in DigitalOcean Spaces (30 days) |
-| Rancher backup | rancher-backup operator | Rancher CRDs, users, downstream cluster registrations | daily 03:00 | 30 in DigitalOcean Spaces |
+| etcd snapshot | k3s built-in | the whole Kubernetes datastore | every 6h, on each server | 12 per server locally (3 days) + 360 in Hetzner Object Storage (30 days) |
+| Rancher backup | rancher-backup operator | Rancher CRDs, users, downstream cluster registrations | daily 03:00 | 30 in Hetzner Object Storage |
 
 Configured in:
 
@@ -46,13 +46,13 @@ Consider a remote backend (add `backend "s3"` to `versions.tf`), or at minimum c
 regularly:
 
 ```bash
-s3cmd put stacks/*/terraform.tfstate s3://your-space/tfstate/
+s3cmd put stacks/*/terraform.tfstate s3://your-bucket/tfstate/
 ```
 
 ### (c) The S3 credentials
 
-The DigitalOcean Spaces access key and secret. If they only live in a `terraform.tfvars` that
-gets lost, so do the backups you carefully took.
+The Hetzner S3 access key and secret key. If they only live in a `terraform.tfvars` that gets
+lost, so do the backups you carefully took. The Hetzner Cloud API token cannot replace them.
 
 ---
 
@@ -221,8 +221,8 @@ k3s server \
 > ```bash
 > k3s server --cluster-reset --etcd-s3 \
 >   --cluster-reset-restore-path=<snapshot-file> \
->   --etcd-s3-endpoint=fra1.digitaloceanspaces.com \
->   --etcd-s3-region=fra1 \
+>   --etcd-s3-endpoint=nbg1.your-objectstorage.com \
+>   --etcd-s3-region=nbg1 \
 >   --etcd-s3-bucket=<bucket> \
 >   --etcd-s3-access-key=<key> \
 >   --etcd-s3-secret-key=<secret> \
@@ -270,8 +270,8 @@ ssh root@<new server-1>
 systemctl stop k3s
 k3s server --cluster-reset --etcd-s3 \
   --cluster-reset-restore-path=<snapshot-file> \
-  --etcd-s3-endpoint=fra1.digitaloceanspaces.com \
-  --etcd-s3-region=fra1 \
+  --etcd-s3-endpoint=nbg1.your-objectstorage.com \
+  --etcd-s3-region=nbg1 \
   --etcd-s3-bucket=<bucket> \
   --etcd-s3-access-key=<key> \
   --etcd-s3-secret-key=<secret> \

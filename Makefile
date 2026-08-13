@@ -50,6 +50,10 @@ kubeconfig: ## Re-fetch the kubeconfig from the first server
 kubeconfig-merge: ## Merge the cluster into ~/.kube/config so you can switch contexts
 	@bash $(ROOT)/scripts/merge-kubeconfig.sh $(KUBECONFIG_FILE)
 
+.PHONY: kubeconfig-delete
+kubeconfig-delete: ## Delete the merged cluster context from ~/.kube/config
+	@bash $(ROOT)/scripts/delete-kube-context.sh $(KUBECONFIG_FILE)
+
 .PHONY: outputs
 outputs: ## Print stack 01 outputs (LB IPs, node IPs, DNS records)
 	terraform -chdir=$(INFRA) output
@@ -89,6 +93,11 @@ snapshot: ## Take an on-demand etcd snapshot on the first server
 .PHONY: snapshots
 snapshots: ## List etcd snapshots (local + S3)
 	@bash $(ROOT)/scripts/etcd-snapshot.sh list
+
+.PHONY: upgrade-os
+export TARGET_IMAGE
+upgrade-os: ## Replace nodes one at a time with TARGET_IMAGE (for example ubuntu-26.04)
+	@bash $(ROOT)/scripts/upgrade-os.sh
 
 .PHONY: ssh
 ssh: ## SSH into the first control-plane node

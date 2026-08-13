@@ -52,7 +52,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
   └────────────────────────────┬───────────────────────────┘
                                │
                                ▼  etcd snapshot every 6h
-                     DigitalOcean Spaces (S3)
+                  Hetzner Object Storage (S3)
 ```
 
 ### Design decisions worth knowing about
@@ -81,6 +81,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
+│   ├── delete-kube-context.sh  # remove it from ~/.kube/config
 │   └── etcd-snapshot.sh        # take / list etcd snapshots
 └── docs/
     ├── backup-restore.md       # disaster-recovery runbook (includes a drill)
@@ -195,12 +196,32 @@ ssh-keygen -t ed25519 -C "k3s-hetzner" -f ~/.ssh/id_ed25519
 Rancher **requires a DNS hostname** — it cannot be reached by IP. Have something like
 `rancher.yourdomain.com` ready, on a zone you can edit.
 
-### 5. DigitalOcean Spaces (for etcd snapshots)
+### 5. Hetzner Object Storage (for backups)
 
-- DigitalOcean → **Spaces Object Storage** → Create a Space, region **`fra1`** (Frankfurt is
-  closest to `nbg1`, so uploads are fast)
-- DigitalOcean → **API** → **Spaces Keys** → Generate New Key. Note the access key and secret
-  key — the secret is shown once.
+Object Storage is created manually because the `hcloud` Terraform provider does not manage S3
+buckets or S3 credentials. In the same Hetzner project as the cluster:
+
+1. Open **Object Storage** → **Create Bucket**.
+2. **Location:** pick **Nuremberg**. The dialog lists cities, not codes — `nbg1` is Nuremberg
+   (the default, Falkenstein, is `fsn1`). The suffix next to the name field should read
+   `.nbg1.your-objectstorage.com`.
+3. **Name:** must be globally unique. Use a `firstperson`-related name, for example
+   `firstperson-backup-<unique-suffix>`. Object Lock **Disabled**, Visibility **Private**.
+4. Open **Security** → **S3 credentials** and generate a credential pair. The dialog asks for a
+   **Description** — it is the only label the pair ever gets. Name it after the bucket rather
+   than the cluster, for example `firstperson-backup`: the credentials are scoped to the whole
+   Object Storage account, and this bucket holds more than just the k3s and Rancher backups.
+   Unlike the bucket name it does not have to be globally unique.
+5. Immediately save both the access key and secret key in a password manager. The secret is
+   shown only once and is required during disaster recovery.
+
+Use Nuremberg unless you have a reason not to — it is where the cluster is created, and the
+`*_s3_endpoint` / `*_s3_region` defaults in both stacks already point at `nbg1`. A different
+location means changing all four of them, and the mismatch only surfaces at the first upload.
+
+The Hetzner Cloud API token from prerequisite 2 cannot authenticate to Object Storage. The same
+S3 credential pair and private bucket are used by both stacks; separate folder prefixes keep
+the etcd snapshots and Rancher backups apart.
 
 ---
 
@@ -228,10 +249,10 @@ ssh_allowed_cidrs = [
 ]
 
 
-# etcd snapshots to DigitalOcean Spaces (required - there is no local-only mode)
-etcd_s3_endpoint   = "fra1.digitaloceanspaces.com"
-etcd_s3_region     = "fra1"
-etcd_s3_bucket     = "your-space-name"
+# etcd snapshots to Hetzner Object Storage (required - there is no local-only mode)
+etcd_s3_endpoint   = "nbg1.your-objectstorage.com"
+etcd_s3_region     = "nbg1"
+etcd_s3_bucket     = "your-globally-unique-bucket-name"
 etcd_s3_access_key = "..."
 etcd_s3_secret_key = "..."
 ```
@@ -323,18 +344,10 @@ code terraform.tfvars
 rancher_hostname  = "rancher.yourdomain.com"
 letsencrypt_email = "you@yourdomain.com"
 
-# Start with staging — see the note below
-letsencrypt_environment = "staging"
-
-backup_s3_bucket     = "your-space-name"
+backup_s3_bucket     = "your-globally-unique-bucket-name"
 backup_s3_access_key = "..."
 backup_s3_secret_key = "..."
 ```
-
-> **Why staging first?** Let's Encrypt production allows only **5 failed orders per hostname
-> per hour**. A DNS typo or a blocked port 80 burns through that quota fast, and then you wait.
-> Staging has no such limit; its certificates are simply untrusted by browsers. Prove the whole
-> path works, then switch.
 
 ```bash
 cd ../..
@@ -350,37 +363,7 @@ kubectl -n cattle-system get certificate
 # READY should be True
 ```
 
-### Step 5 — Switch to a real certificate
-
-Once staging works:
-
-```hcl
-# stacks/02-platform/terraform.tfvars
-letsencrypt_environment = "production"
-```
-
-```bash
-# update Rancher's Issuer to the production ACME endpoint first
-make apply-platform
-
-# verify the live Issuer is production (the URL must not contain "staging")
-kubectl -n cattle-system get issuer rancher \
-  -o jsonpath='{.spec.acme.server}{"\n"}'
-
-# now remove the staging certificate so cert-manager reissues from production
-kubectl -n cattle-system delete secret tls-rancher-ingress
-
-# wait for the replacement certificate; READY should return to True and the
-# revision should increase
-kubectl -n cattle-system get certificate tls-rancher-ingress --watch
-```
-
-The order matters: deleting the Secret before `make apply-platform` lets cert-manager
-immediately request another staging certificate from the still-staging Issuer. The Issuer may
-then switch to production while Traefik continues serving that valid-but-untrusted staging
-certificate, which causes Cloudflare **Full (strict)** to return `526 Invalid SSL certificate`.
-
-### Step 6 — Log in
+### Step 5 — Log in
 
 ```bash
 make rancher-password
@@ -471,7 +454,8 @@ Two layers. Both are configured, and neither substitutes for the other:
 | **etcd snapshot** | built into k3s | the entire Kubernetes datastore (every resource, including all of Rancher) | the cluster is broken, something was deleted by mistake, or you need to roll back |
 | **Rancher backup** | rancher-backup operator | only Rancher's own CRDs, users and downstream cluster registrations | migrating Rancher to a different cluster |
 
-Both upload to your DigitalOcean Space on a schedule.
+Both upload to the same private Hetzner Object Storage bucket on a schedule, under different
+folder prefixes.
 
 ### etcd snapshots
 
@@ -556,16 +540,10 @@ Rancher cannot skip minor versions (no 2.12 → 2.14; go 2.12 → 2.13 → 2.14)
 
 ### 3. Operating system
 
-`unattended-upgrades` installs security patches automatically but deliberately never reboots.
-Reboot one node at a time:
+Upgrade to the next Ubuntu LTS with a rolling replacement:
 
 ```bash
-ssh root@<node-ip> 'test -f /var/run/reboot-required && echo "reboot needed"'
-
-kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
-ssh root@<node-ip> 'reboot'
-# wait for the node to return
-kubectl uncordon <node-name>
+make upgrade-os TARGET_IMAGE=ubuntu-26.04
 ```
 
 Full procedures and a checklist: **[docs/upgrade.md](docs/upgrade.md)**.
@@ -585,6 +563,7 @@ make snapshot            # on-demand etcd snapshot
 make snapshots           # list snapshots
 make kubeconfig          # re-fetch the kubeconfig
 make kubeconfig-merge    # merge it into ~/.kube/config as a switchable context
+make kubeconfig-delete   # delete it from ~/.kube/config
 ```
 
 ### Growing the cluster
@@ -643,13 +622,11 @@ Monthly cost for `nbg1` with the defaults:
 | `cx23` (2 vCPU / 4 GB / 40 GB NVMe) | €6.59 | 3 | €19.77 |
 | Load Balancer `lb11` | €8.99 | 1 | €8.99 |
 | Public IPv4 | €0.60 | 3 | €1.80 |
-| **Hetzner total** | | | **€30.56** |
-| DigitalOcean Spaces | $5.00 | 1 | ~$5 |
+| **Hetzner compute total** | | | **€30.56** |
+| Hetzner Object Storage | €7.79 | 1 account | €7.79 |
+| **Estimated total** | | | **€38.35** |
 
-Unit prices are the gross figures shown in the Hetzner Console (German VAT included);
-the net list prices are about 19% lower.
-
-Ways to trim it:
+Scaling options:
 
 - moving up to `cx33` (4 vCPU / 8 GB) costs about €11/month more in total and removes the
   memory pressure described above — the obvious first step if Rancher starts getting OOMKilled
@@ -673,6 +650,24 @@ Destroys stack 02 (Helm releases) first, then stack 01 (Hetzner resources).
 Afterwards, check the Hetzner Console for leftover Volumes. PVs created by the CSI driver are
 not Terraform-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
 volumes stay and keep billing.
+
+---
+
+## Kubeconfig context
+
+Merge the generated kubeconfig into `~/.kube/config`:
+
+```bash
+make kubeconfig-merge
+```
+
+Delete it later:
+
+```bash
+make kubeconfig-delete
+```
+
+Deletion creates a backup first and preserves cluster/user entries still used by other contexts.
 
 ---
 

@@ -78,8 +78,7 @@ locals {
     etcd-s3-retention  = var.etcd_s3_retention
   }
 
-  # Per-server config. Index 0 initialises the etcd cluster, the rest join it
-  # through the load balancer.
+  # Initialise server-1 only for a new cluster; replacements join the existing cluster.
   k3s_server_configs = [
     for i in range(var.server_count) : yamlencode(merge(
       local.k3s_common,
@@ -87,7 +86,8 @@ locals {
         etcd-s3-bucket-lookup-type = var.etcd_s3_bucket_lookup_type
       },
       { node-ip = local.server_private_ips[i] },
-      i == 0 ? { cluster-init = true } : { server = local.registration_address },
+      i == 0 && length(data.hcloud_servers.existing_cluster.servers) == 0 ?
+      { cluster-init = true } : { server = local.registration_address },
     ))
   ]
 
