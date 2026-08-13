@@ -5,7 +5,7 @@ variable "config" {
 
     location            = optional(string, "nbg1")
     server_count        = optional(number, 3)
-    server_type         = optional(string, "cx23")
+    server_type         = optional(string, "cx33")
     servers_are_workers = optional(bool, true)
     worker_count        = optional(number, 0)
     worker_type         = optional(string, "cx23")

@@ -429,7 +429,7 @@ ssh_allowed_cidrs = [
 
 The directory name supplies `cluster_name`. `location` controls the Hetzner
 location of every server and the cluster load balancer. Other settings use defaults,
-including a dedicated Hetzner network, three `cx23` nodes, Ubuntu 24.04, and
+including a dedicated Hetzner network, three `cx33` nodes, Ubuntu 24.04, and
 RKE2 with Canal and Traefik. `ssh_key_name` selects an existing SSH key from
 the same Hetzner project; this stack does not upload or duplicate the key.
 

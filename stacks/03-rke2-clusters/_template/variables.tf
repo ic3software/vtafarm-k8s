@@ -41,7 +41,7 @@ variable "server_count" {
 variable "server_type" {
   description = "Hetzner server type for RKE2 server nodes."
   type        = string
-  default     = "cx23"
+  default     = "cx33"
 }
 
 variable "servers_are_workers" {

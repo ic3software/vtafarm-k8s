@@ -49,6 +49,11 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition     = alltrue([for node in hcloud_server.node : node.server_type == "cx33"])
+    error_message = "The default RKE2 server type must be cx33."
+  }
+
+  assert {
     condition     = alltrue([for node in local.server_nodes : node.roles == ["etcd", "controlplane", "worker"]])
     error_message = "Default server nodes must carry all three Rancher roles."
   }

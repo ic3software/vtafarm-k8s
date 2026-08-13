@@ -10,7 +10,7 @@ location = "nbg1"
 # RKE2 server-node shape. server_count must be odd: 3, 5, 7, or 9.
 # Common x86 types include cx23, cx33, cx43, cx53, cpx22, and cpx32.
 server_count = 3
-server_type  = "cx23"
+server_type  = "cx33"
 
 # Optional dedicated workers use their own count and server type.
 worker_count = 0
