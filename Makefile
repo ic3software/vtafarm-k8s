@@ -50,6 +50,10 @@ kubeconfig: ## Re-fetch the kubeconfig from the first server
 kubeconfig-merge: ## Merge the cluster into ~/.kube/config so you can switch contexts
 	@bash $(ROOT)/scripts/merge-kubeconfig.sh $(KUBECONFIG_FILE)
 
+.PHONY: kubeconfig-delete
+kubeconfig-delete: ## Delete the merged cluster context from ~/.kube/config
+	@bash $(ROOT)/scripts/delete-kube-context.sh $(KUBECONFIG_FILE)
+
 .PHONY: outputs
 outputs: ## Print stack 01 outputs (LB IPs, node IPs, DNS records)
 	terraform -chdir=$(INFRA) output

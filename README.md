@@ -81,6 +81,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
+│   ├── delete-kube-context.sh  # remove it from ~/.kube/config
 │   └── etcd-snapshot.sh        # take / list etcd snapshots
 └── docs/
     ├── backup-restore.md       # disaster-recovery runbook (includes a drill)
@@ -600,6 +601,7 @@ make snapshot            # on-demand etcd snapshot
 make snapshots           # list snapshots
 make kubeconfig          # re-fetch the kubeconfig
 make kubeconfig-merge    # merge it into ~/.kube/config as a switchable context
+make kubeconfig-delete   # delete it from ~/.kube/config
 ```
 
 ### Growing the cluster
@@ -662,7 +664,7 @@ Monthly cost for `nbg1` with the defaults:
 | Hetzner Object Storage | €7.79 | 1 account | €7.79 |
 | **Estimated total** | | | **€38.35** |
 
-Ways to trim it:
+Scaling options:
 
 - moving up to `cx33` (4 vCPU / 8 GB) costs about €11/month more in total and removes the
   memory pressure described above — the obvious first step if Rancher starts getting OOMKilled
@@ -686,6 +688,24 @@ Destroys stack 02 (Helm releases) first, then stack 01 (Hetzner resources).
 Afterwards, check the Hetzner Console for leftover Volumes. PVs created by the CSI driver are
 not Terraform-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
 volumes stay and keep billing.
+
+---
+
+## Kubeconfig context
+
+Merge the generated kubeconfig into `~/.kube/config`:
+
+```bash
+make kubeconfig-merge
+```
+
+Delete it later:
+
+```bash
+make kubeconfig-delete
+```
+
+Deletion creates a backup first and preserves cluster/user entries still used by other contexts.
 
 ---
 
