@@ -344,18 +344,10 @@ code terraform.tfvars
 rancher_hostname  = "rancher.yourdomain.com"
 letsencrypt_email = "you@yourdomain.com"
 
-# Start with staging — see the note below
-letsencrypt_environment = "staging"
-
 backup_s3_bucket     = "your-globally-unique-bucket-name"
 backup_s3_access_key = "..."
 backup_s3_secret_key = "..."
 ```
-
-> **Why staging first?** Let's Encrypt production allows only **5 failed orders per hostname
-> per hour**. A DNS typo or a blocked port 80 burns through that quota fast, and then you wait.
-> Staging has no such limit; its certificates are simply untrusted by browsers. Prove the whole
-> path works, then switch.
 
 ```bash
 cd ../..
@@ -371,37 +363,7 @@ kubectl -n cattle-system get certificate
 # READY should be True
 ```
 
-### Step 5 — Switch to a real certificate
-
-Once staging works:
-
-```hcl
-# stacks/02-platform/terraform.tfvars
-letsencrypt_environment = "production"
-```
-
-```bash
-# update Rancher's Issuer to the production ACME endpoint first
-make apply-platform
-
-# verify the live Issuer is production (the URL must not contain "staging")
-kubectl -n cattle-system get issuer rancher \
-  -o jsonpath='{.spec.acme.server}{"\n"}'
-
-# now remove the staging certificate so cert-manager reissues from production
-kubectl -n cattle-system delete secret tls-rancher-ingress
-
-# wait for the replacement certificate; READY should return to True and the
-# revision should increase
-kubectl -n cattle-system get certificate tls-rancher-ingress --watch
-```
-
-The order matters: deleting the Secret before `make apply-platform` lets cert-manager
-immediately request another staging certificate from the still-staging Issuer. The Issuer may
-then switch to production while Traefik continues serving that valid-but-untrusted staging
-certificate, which causes Cloudflare **Full (strict)** to return `526 Invalid SSL certificate`.
-
-### Step 6 — Log in
+### Step 5 — Log in
 
 ```bash
 make rancher-password

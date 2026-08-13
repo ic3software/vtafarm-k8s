@@ -6,10 +6,6 @@
 rancher_hostname  = "rancher.example.com"
 letsencrypt_email = "you@example.com"
 
-# Use "staging" until DNS resolves correctly, then switch to "production".
-# Let's Encrypt only allows 5 failed production orders per hostname per hour.
-letsencrypt_environment = "staging"
-
 # Leave empty to have Terraform generate one:
 #   terraform output -raw rancher_bootstrap_password
 rancher_bootstrap_password = ""

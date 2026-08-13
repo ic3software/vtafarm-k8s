@@ -28,11 +28,7 @@ variable "letsencrypt_email" {
 }
 
 variable "letsencrypt_environment" {
-  description = <<-EOT
-    "production" or "staging". Let's Encrypt rate-limits production to 5 failed
-    orders per hostname per hour, so use "staging" while you are still testing
-    DNS - staging certificates are untrusted but unlimited.
-  EOT
+  description = "Let's Encrypt ACME environment; defaults to production."
   type        = string
   default     = "production"
 

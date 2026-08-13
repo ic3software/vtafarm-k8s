@@ -106,7 +106,7 @@ error is usually on the `Challenge`.
 | --- | --- | --- |
 | `Waiting for HTTP-01 challenge propagation` forever | DNS does not resolve to the ingress LB | `dig +short rancher.yourdomain.com` must return `load_balancer_ipv4` |
 | connection timeout to `http://…/.well-known/acme-challenge/…` | Port 80 does not reach Traefik | See the load balancer section below |
-| `too many failed authorizations` | You burned the production rate limit (5 failures/hostname/hour) | Switch `letsencrypt_environment = "staging"`, fix the real problem, then switch back after the hour |
+| `too many failed authorizations` | You hit the production rate limit | Fix DNS or port 80, then retry after the rate-limit window |
 | `urn:ietf:params:acme:error:unauthorized` | The challenge is being answered by something else on that hostname | Make sure no other ingress claims the same host |
 
 Test the challenge path by hand:
