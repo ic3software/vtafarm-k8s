@@ -14,13 +14,15 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE_DIR="${REPO_ROOT}/stacks/03-rke2-clusters/_template"
-TARGET_DIR="${REPO_ROOT}/stacks/03-rke2-clusters/${CLUSTER_NAME}"
+CLUSTERS_DIR="${REPO_ROOT}/clusters"
+TARGET_DIR="${CLUSTERS_DIR}/${CLUSTER_NAME}"
 
 if [ -e "$TARGET_DIR" ]; then
   echo "refusing to overwrite existing path: ${TARGET_DIR}" >&2
   exit 1
 fi
 
+mkdir -p "$CLUSTERS_DIR"
 mkdir "$TARGET_DIR"
 cp "$TEMPLATE_DIR"/*.tf "$TARGET_DIR/"
 cp "$TEMPLATE_DIR"/*.example "$TARGET_DIR/"
@@ -29,9 +31,11 @@ if [ -f "${TEMPLATE_DIR}/.terraform.lock.hcl" ]; then
 fi
 cp "${TARGET_DIR}/terraform.tfvars.example" "${TARGET_DIR}/terraform.tfvars"
 
-for config_file in backend.tf.example; do
+for config_file in backend.tf.example main.tf; do
   temporary_file="$(mktemp "${TARGET_DIR}/.${config_file}.XXXXXX")"
-  sed "s/REPLACE_CLUSTER_NAME/${CLUSTER_NAME}/g" \
+  sed \
+    -e "s/REPLACE_CLUSTER_NAME/${CLUSTER_NAME}/g" \
+    -e 's|source = "../../../modules/rke2-custom-cluster"|source = "../../modules/rke2-custom-cluster"|' \
     "${TARGET_DIR}/${config_file}" >"$temporary_file"
   mv "$temporary_file" "${TARGET_DIR}/${config_file}"
 done

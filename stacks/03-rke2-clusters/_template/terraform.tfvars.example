@@ -2,9 +2,11 @@ hcloud_token      = "REPLACE_ME"
 rancher_api_url   = "https://rancher.example.com"
 rancher_token_key = "token-REPLACE_ME:REPLACE_ME"
 
-cluster = {
-  # Replace with your workstation address, for example 203.0.113.7/32.
-  ssh_allowed_cidrs = [
-    "0.0.0.0/0"
-  ]
-}
+# Hetzner location for every server and the cluster load balancer.
+# Supported values: fsn1, nbg1, hel1, ash, hil, sin.
+location = "nbg1"
+
+# Replace with your workstation address, for example 203.0.113.7/32.
+ssh_allowed_cidrs = [
+  "0.0.0.0/0"
+]

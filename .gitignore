@@ -19,6 +19,7 @@ terraform.rc
 modules/**/.terraform.lock.hcl
 
 # Secrets / generated artefacts
+/clusters/
 kubeconfig
 kubeconfig.yaml
 *.pem

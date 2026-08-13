@@ -75,10 +75,11 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ```text
 .
 ├── Makefile                    # every common task is a make target
+├── clusters/                   # generated RKE2 roots (entire directory is gitignored)
 ├── stacks/
 │   ├── 01-infra/               # Hetzner resources + the k3s cluster
 │   ├── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
-│   └── 03-rke2-clusters/       # one independent Terraform root per downstream cluster
+│   └── 03-rke2-clusters/       # tracked template for downstream clusters
 ├── modules/
 │   └── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
 ├── scripts/
@@ -100,7 +101,8 @@ cluster and emits a kubeconfig, stack 02 consumes it. This is the standard patte
 
 Downstream RKE2 clusters add a third layer. Rancher must already be reachable before its
 provider can create a custom cluster and return the node registration command. Every cluster
-under `stacks/03-rke2-clusters/<name>` calls the same shared module but keeps a separate state,
+under `clusters/<name>` calls the same shared module but keeps a separate state. The entire
+`clusters/` directory is gitignored because it contains generated configuration and state,
 so creating or destroying a second RKE2 cluster cannot replace the first cluster's state.
 
 ---
@@ -395,7 +397,7 @@ directory name.
 Edit the generated configuration:
 
 ```bash
-code stacks/03-rke2-clusters/rke2-vtafarm-production/terraform.tfvars
+code clusters/rke2-vtafarm-production/terraform.tfvars
 ```
 
 At minimum, replace the Hetzner and Rancher credentials and restrict SSH
@@ -406,14 +408,17 @@ hcloud_token      = "your Hetzner token"
 rancher_api_url   = "https://rancher.yourdomain.com"
 rancher_token_key = "token-xxxxx:xxxxx"
 
-cluster = {
-  ssh_allowed_cidrs = [
-    "203.0.113.7/32"
-  ]
-}
+# Hetzner location for all servers and the load balancer.
+# Supported values: fsn1, nbg1, hel1, ash, hil, sin.
+location = "nbg1"
+
+ssh_allowed_cidrs = [
+  "203.0.113.7/32"
+]
 ```
 
-The directory name supplies `cluster_name`. Other settings use defaults,
+The directory name supplies `cluster_name`. `location` controls the Hetzner
+location of every server and the cluster load balancer. Other settings use defaults,
 including a dedicated Hetzner network, three `cx23` nodes, Ubuntu 24.04, and
 RKE2 with Canal and Traefik. If stack 01 uses a cluster name other than
 `k3s-rancher`, set `ssh_key_name` to the SSH key name created by that stack.
@@ -434,7 +439,7 @@ Write its Rancher-generated kubeconfig when it is Active and use it directly:
 
 ```bash
 make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
-export KUBECONFIG=$PWD/stacks/03-rke2-clusters/rke2-vtafarm-production/kubeconfig.yaml
+export KUBECONFIG=$PWD/clusters/rke2-vtafarm-production/kubeconfig.yaml
 kubectl get nodes
 ```
 
