@@ -14,7 +14,7 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE_DIR="${REPO_ROOT}/stacks/03-rke2-clusters/_template"
-CLUSTERS_DIR="${REPO_ROOT}/clusters"
+CLUSTERS_DIR="${REPO_ROOT}/stacks/03-rke2-clusters/clusters"
 TARGET_DIR="${CLUSTERS_DIR}/${CLUSTER_NAME}"
 
 if [ -e "$TARGET_DIR" ]; then
@@ -35,7 +35,7 @@ for config_file in backend.tf.example main.tf; do
   temporary_file="$(mktemp "${TARGET_DIR}/.${config_file}.XXXXXX")"
   sed \
     -e "s/REPLACE_CLUSTER_NAME/${CLUSTER_NAME}/g" \
-    -e 's|source = "../../../modules/rke2-custom-cluster"|source = "../../modules/rke2-custom-cluster"|' \
+    -e 's|source = "../../../modules/rke2-custom-cluster"|source = "../../../../modules/rke2-custom-cluster"|' \
     "${TARGET_DIR}/${config_file}" >"$temporary_file"
   mv "$temporary_file" "${TARGET_DIR}/${config_file}"
 done

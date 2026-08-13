@@ -75,11 +75,12 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ```text
 .
 ├── Makefile                    # every common task is a make target
-├── clusters/                   # generated RKE2 roots (entire directory is gitignored)
 ├── stacks/
 │   ├── 01-infra/               # Hetzner resources + the k3s cluster
 │   ├── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
-│   └── 03-rke2-clusters/       # tracked template for downstream clusters
+│   └── 03-rke2-clusters/
+│       ├── _template/          # tracked template for downstream clusters
+│       └── clusters/           # generated RKE2 roots (entire directory is gitignored)
 ├── modules/
 │   └── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
 ├── scripts/
@@ -101,8 +102,9 @@ cluster and emits a kubeconfig, stack 02 consumes it. This is the standard patte
 
 Downstream RKE2 clusters add a third layer. Rancher must already be reachable before its
 provider can create a custom cluster and return the node registration command. Every cluster
-under `clusters/<name>` calls the same shared module but keeps a separate state. The entire
-`clusters/` directory is gitignored because it contains generated configuration and state,
+under `stacks/03-rke2-clusters/clusters/<name>` calls the same shared module but keeps a
+separate state. The generated `clusters/` directory is gitignored because it contains
+configuration and state,
 so creating or destroying a second RKE2 cluster cannot replace the first cluster's state.
 
 ---
@@ -397,7 +399,7 @@ directory name.
 Edit the generated configuration:
 
 ```bash
-code clusters/rke2-vtafarm-production/terraform.tfvars
+code stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/terraform.tfvars
 ```
 
 At minimum, replace the Hetzner and Rancher credentials and restrict SSH
@@ -439,7 +441,7 @@ Write its Rancher-generated kubeconfig when it is Active and use it directly:
 
 ```bash
 make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
-export KUBECONFIG=$PWD/clusters/rke2-vtafarm-production/kubeconfig.yaml
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/kubeconfig.yaml
 kubectl get nodes
 ```
 
