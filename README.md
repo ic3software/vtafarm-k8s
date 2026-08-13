@@ -446,9 +446,18 @@ Its Terraform-managed load balancer forwards `80`, `443`, `6443`, and `9345`
 to all server nodes over their private addresses. RKE2's default ingress
 configuration binds the standard HTTP and HTTPS ports on those nodes.
 Wait for `rke2-vtafarm-production` to become **Active** in Rancher Cluster
-Management before continuing.
 
-Write its Rancher-generated kubeconfig when it is Active and use it directly:
+Management before continuing. The initial Terraform apply may have stored an
+empty `kube_config` while Rancher was still provisioning the cluster. Refresh
+the Terraform state after the cluster becomes Active:
+
+```bash
+terraform \
+  -chdir=stacks/03-rke2-clusters/clusters/rke2-vtafarm-production \
+  apply -refresh-only
+```
+
+Then write its Rancher-generated kubeconfig and use it directly:
 
 ```bash
 make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
@@ -456,10 +465,25 @@ export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/
 kubectl get nodes
 ```
 
+Rancher also generates direct contexts for each control-plane server. This
+target intentionally keeps only Rancher's current cluster context, so kubectl
+shows one `rke2-vtafarm-production` entry instead of one entry per server.
+
 Or merge it into `~/.kube/config` alongside your other clusters:
 
 ```bash
 make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
+```
+
+The merge target automatically writes the YAML by running `kubeconfig-rke2`
+first, but it does not refresh Terraform state. Run the refresh command above
+once after Rancher reports the cluster Active.
+
+Remove only this cluster's local kubeconfig context without deleting any
+Rancher or Hetzner resources:
+
+```bash
+make kubeconfig-delete CLUSTER=rke2-vtafarm-production
 ```
 
 #### Optional — Create more RKE2 clusters

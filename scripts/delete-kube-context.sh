@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
-# Delete contexts found in a source kubeconfig from ~/.kube/config.
-# Usage: delete-kube-context.sh <source-kubeconfig> [destination]
+# Delete contexts found in a source kubeconfig, or one explicitly named
+# context, from ~/.kube/config.
+# Usage:
+#   delete-kube-context.sh <source-kubeconfig> [destination]
+#   delete-kube-context.sh --context <context-name> [destination]
 set -euo pipefail
 
-SRC="${1:?usage: delete-kube-context.sh <source-kubeconfig> [destination]}"
-DEST="${2:-${HOME}/.kube/config}"
+if [ "${1:-}" = "--context" ]; then
+  NAMED_CONTEXT="${2:?usage: delete-kube-context.sh --context <context-name> [destination]}"
+  DEST="${3:-${HOME}/.kube/config}"
+  SRC=""
+else
+  SRC="${1:?usage: delete-kube-context.sh <source-kubeconfig> [destination]}"
+  DEST="${2:-${HOME}/.kube/config}"
+  NAMED_CONTEXT=""
+fi
 
 command -v kubectl >/dev/null 2>&1 || {
   echo "ERROR: kubectl not found in PATH" >&2
@@ -14,10 +24,12 @@ command -v jq >/dev/null 2>&1 || {
   echo "ERROR: jq not found in PATH" >&2
   exit 1
 }
-[ -f "$SRC" ] || {
-  echo "ERROR: source kubeconfig not found: ${SRC}" >&2
-  exit 1
-}
+if [ -z "$NAMED_CONTEXT" ]; then
+  [ -f "$SRC" ] || {
+    echo "ERROR: source kubeconfig not found: ${SRC}" >&2
+    exit 1
+  }
+fi
 [ -f "$DEST" ] || {
   echo "ERROR: destination kubeconfig not found: ${DEST}" >&2
   exit 1
@@ -27,7 +39,11 @@ context_names() {
   kubectl --kubeconfig "$1" config get-contexts -o name 2>/dev/null
 }
 
-SOURCE_CONTEXTS="$(context_names "$SRC")"
+if [ -n "$NAMED_CONTEXT" ]; then
+  SOURCE_CONTEXTS="$NAMED_CONTEXT"
+else
+  SOURCE_CONTEXTS="$(context_names "$SRC")"
+fi
 EXISTING_CONTEXTS="$(context_names "$DEST")"
 TARGET_CONTEXTS=""
 

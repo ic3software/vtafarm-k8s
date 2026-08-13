@@ -63,8 +63,12 @@ kubeconfig-merge: ## Merge the cluster into ~/.kube/config so you can switch con
 	@bash $(ROOT)/scripts/merge-kubeconfig.sh $(KUBECONFIG_FILE)
 
 .PHONY: kubeconfig-delete
-kubeconfig-delete: ## Delete the merged cluster context from ~/.kube/config
-	@bash $(ROOT)/scripts/delete-kube-context.sh $(KUBECONFIG_FILE)
+kubeconfig-delete: ## Delete context from ~/.kube/config (CLUSTER=name for RKE2)
+	@if [[ -n "$(CLUSTER)" ]]; then \
+		bash $(ROOT)/scripts/delete-kube-context.sh --context "$(CLUSTER)"; \
+	else \
+		bash $(ROOT)/scripts/delete-kube-context.sh $(KUBECONFIG_FILE); \
+	fi
 
 .PHONY: outputs
 outputs: ## Print stack 01 outputs (LB IPs, node IPs, DNS records)
@@ -128,16 +132,18 @@ outputs-rke2: check-rke2-cluster ## Print one RKE2 cluster's outputs (CLUSTER=na
 
 .PHONY: kubeconfig-rke2
 kubeconfig-rke2: check-rke2-cluster ## Write one RKE2 kubeconfig to its ignored directory
-	@temporary_file="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.yaml.XXXXXX")"; \
-	trap 'rm -f "$$temporary_file"' EXIT; \
-	terraform -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >"$$temporary_file"; \
-	if [[ ! -s "$$temporary_file" ]] || \
-	   [[ -z "$$(KUBECONFIG="$$temporary_file" kubectl config view -o jsonpath='{.contexts[*].name}' 2>/dev/null)" ]]; then \
+	@raw_kubeconfig="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.raw.yaml.XXXXXX")"; \
+	filtered_kubeconfig="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.filtered.yaml.XXXXXX")"; \
+	trap 'rm -f "$$raw_kubeconfig" "$$filtered_kubeconfig"' EXIT; \
+	terraform -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >"$$raw_kubeconfig"; \
+	if [[ ! -s "$$raw_kubeconfig" ]] || \
+	   ! kubectl --kubeconfig="$$raw_kubeconfig" config view --minify --flatten >"$$filtered_kubeconfig" 2>/dev/null || \
+	   [[ -z "$$(kubectl --kubeconfig="$$filtered_kubeconfig" config current-context 2>/dev/null)" ]]; then \
 		echo "ERROR: Rancher has not returned a usable kubeconfig yet." >&2; \
 		echo "Wait for the cluster to become Active, then refresh its Terraform state." >&2; \
 		exit 1; \
 	fi; \
-	install -m 600 "$$temporary_file" "$(RKE2_KUBECONFIG_FILE)"; \
+	install -m 600 "$$filtered_kubeconfig" "$(RKE2_KUBECONFIG_FILE)"; \
 	echo "wrote $(RKE2_KUBECONFIG_FILE)"
 
 .PHONY: kubeconfig-merge-rke2
