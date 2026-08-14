@@ -15,8 +15,11 @@ override.tf.json
 .terraformrc
 terraform.rc
 .terraform.lock.hcl.bak
+# Reusable modules do not own provider selections; root modules do.
+modules/**/.terraform.lock.hcl
 
 # Secrets / generated artefacts
+/stacks/03-rke2-clusters/clusters/
 kubeconfig
 kubeconfig.yaml
 *.pem

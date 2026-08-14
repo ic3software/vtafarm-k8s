@@ -1,4 +1,4 @@
-# k3s HA + Rancher on Hetzner Cloud
+# k3s HA + Rancher + downstream RKE2 on Hetzner Cloud
 
 Terraform for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
 Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one.
@@ -77,7 +77,12 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ├── Makefile                    # every common task is a make target
 ├── stacks/
 │   ├── 01-infra/               # Hetzner resources + the k3s cluster
-│   └── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
+│   ├── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
+│   └── 03-rke2-clusters/
+│       ├── _template/          # tracked template for downstream clusters
+│       └── clusters/           # generated RKE2 roots (entire directory is gitignored)
+├── modules/
+│   └── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
@@ -94,6 +99,13 @@ Terraform must be able to configure a provider *before* it starts running. The `
 `kubernetes` providers need a kubeconfig — which only exists after stack 01 has finished.
 Putting both in one stack creates a chicken-and-egg problem. Split apart, stack 01 builds the
 cluster and emits a kubeconfig, stack 02 consumes it. This is the standard pattern.
+
+Downstream RKE2 clusters add a third layer. Rancher must already be reachable before its
+provider can create a custom cluster and return the node registration command. Every cluster
+under `stacks/03-rke2-clusters/clusters/<name>` calls the same shared module but keeps a
+separate state. The generated `clusters/` directory is gitignored because it contains
+configuration and state,
+so creating or destroying a second RKE2 cluster cannot replace the first cluster's state.
 
 ---
 
@@ -372,6 +384,123 @@ open https://rancher.yourdomain.com
 
 User `admin`, with that password. Rancher forces a change on first login.
 
+### Step 6 — Create an RKE2 cluster
+
+First, create a Rancher API key from the user menu under **Account & API Keys**.
+Then scaffold a Terraform root for the new cluster:
+
+```bash
+make new-rke2-cluster CLUSTER=rke2-vtafarm-production
+```
+
+This name is also used as the cluster name in Rancher and as its Terraform
+directory name.
+
+Edit the generated configuration:
+
+```bash
+code stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/terraform.tfvars
+```
+
+At minimum, replace the Hetzner and Rancher credentials and restrict SSH
+access:
+
+```hcl
+hcloud_token      = "your Hetzner token"
+rancher_api_url   = "https://rancher.yourdomain.com"
+rancher_token_key = "token-xxxxx:xxxxx"
+
+# Hetzner location for all servers and the load balancer:
+# fsn1 = Falkenstein, nbg1 = Nuremberg, hel1 = Helsinki,
+# ash = Ashburn, hil = Hillsboro, sin = Singapore.
+location = "nbg1"
+
+# Hetzner server type for all RKE2 control-plane/etcd nodes.
+server_count = 3
+server_type  = "cx33"
+
+# Reuse an existing SSH key from this Hetzner project.
+ssh_key_name = "k3s-rancher-admin"
+
+ssh_allowed_cidrs = [
+  "203.0.113.7/32"
+]
+```
+
+The directory name supplies `cluster_name`. `location` controls the Hetzner
+location of every server and the cluster load balancer. Other settings use defaults,
+including a dedicated Hetzner network, three `cx33` nodes, Ubuntu 24.04, and
+RKE2 with Canal and Traefik. `ssh_key_name` selects an existing SSH key from
+the same Hetzner project; this stack does not upload or duplicate the key.
+
+Create the RKE2 cluster and its Hetzner hosts:
+
+```bash
+make init-rke2 CLUSTER=rke2-vtafarm-production
+make plan-rke2 CLUSTER=rke2-vtafarm-production
+make apply-rke2 CLUSTER=rke2-vtafarm-production
+```
+
+The default creates three nodes with the etcd, control-plane, and worker roles.
+Its Terraform-managed load balancer forwards `80`, `443`, `6443`, and `9345`
+to all server nodes over their private addresses. RKE2's default ingress
+configuration binds the standard HTTP and HTTPS ports on those nodes.
+Wait for `rke2-vtafarm-production` to become **Active** in Rancher Cluster
+
+Management before continuing. The initial Terraform apply may have stored an
+empty `kube_config` while Rancher was still provisioning the cluster. Refresh
+the Terraform state after the cluster becomes Active:
+
+```bash
+terraform \
+  -chdir=stacks/03-rke2-clusters/clusters/rke2-vtafarm-production \
+  apply -refresh-only
+```
+
+Then write its Rancher-generated kubeconfig and use it directly:
+
+```bash
+make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/kubeconfig.yaml
+kubectl get nodes
+```
+
+Rancher also generates direct contexts for each control-plane server. This
+target intentionally keeps only Rancher's current cluster context, so kubectl
+shows one `rke2-vtafarm-production` entry instead of one entry per server.
+
+Or merge it into `~/.kube/config` alongside your other clusters:
+
+```bash
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
+```
+
+The merge target automatically writes the YAML by running `kubeconfig-rke2`
+first, but it does not refresh Terraform state. Run the refresh command above
+once after Rancher reports the cluster Active.
+
+Remove only this cluster's local kubeconfig context without deleting any
+Rancher or Hetzner resources:
+
+```bash
+make kubeconfig-delete CLUSTER=rke2-vtafarm-production
+```
+
+#### Optional — Create more RKE2 clusters
+
+Repeat Step 6 with a different unique name:
+
+```bash
+make new-rke2-cluster CLUSTER=rke2-vtafarm-staging
+```
+
+Destroy one downstream cluster without touching stack 01, stack 02, or other
+RKE2 clusters:
+
+```bash
+make destroy-rke2 CLUSTER=rke2-vtafarm-production
+```
+
 ---
 
 ## Testing
@@ -637,15 +766,29 @@ Scaling options:
 
 ## Teardown
 
+Destroy only stack 02 (cert-manager, Rancher, backups, and the upgrade
+controller) while keeping the stack 01 k3s infrastructure and independently
+managed RKE2 infrastructure:
+
+```bash
+make destroy-platform
+```
+
+Destroy every generated RKE2 cluster, then stack 02, then stack 01:
+
 ```bash
 make destroy
 ```
 
-Destroys stack 02 (Helm releases) first, then stack 01 (Hetzner resources).
+The command scans `stacks/03-rke2-clusters/clusters/*` and runs Terraform
+destroy for every cluster root before removing Rancher. Only after every RKE2
+destroy succeeds does it destroy stack 02 and finally stack 01. If any step
+fails, the command stops without deleting the layers that the failed step
+depends on.
 
-> The order matters. Destroying the infrastructure first leaves stack 02's state believing its
-> releases still exist. If that happens, clear the entries with
-> `terraform -chdir=stacks/02-platform state rm <resource>`.
+> The order matters. Keep each generated RKE2 directory and its Terraform state
+> until its cluster has been destroyed. Without that state, `make destroy`
+> cannot discover or safely remove those Rancher and Hetzner resources.
 
 Afterwards, check the Hetzner Console for leftover Volumes. PVs created by the CSI driver are
 not Terraform-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
