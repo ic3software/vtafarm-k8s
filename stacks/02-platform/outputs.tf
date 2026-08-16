@@ -6,7 +6,7 @@ output "rancher_url" {
 output "rancher_bootstrap_password" {
   description = <<-EOT
     Password for the initial admin login. Read it with:
-      terraform output -raw rancher_bootstrap_password
+      tofu output -raw rancher_bootstrap_password
     Rancher forces you to change it on first login.
   EOT
   value       = local.rancher_bootstrap_password

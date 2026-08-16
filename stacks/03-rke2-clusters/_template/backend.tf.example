@@ -1,4 +1,4 @@
-# Copy this file to backend.tf before the first `terraform init` when remote
+# Copy this file to backend.tf before the first `tofu init` when remote
 # state is desired. Each cluster MUST use a unique key. Credentials belong in
 # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, not in this file.
 terraform {

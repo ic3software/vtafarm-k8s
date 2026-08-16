@@ -135,7 +135,7 @@ persist_target_image() {
 
 current_image() {
   local index="$1"
-  terraform -chdir="$INFRA" state show "hcloud_server.server[${index}]" |
+  tofu -chdir="$INFRA" state show "hcloud_server.server[${index}]" |
     sed -n 's/^[[:space:]]*image[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' |
     head -n 1
 }
@@ -149,25 +149,25 @@ esac
 case "$WAIT_TIMEOUT_SECONDS" in '' | *[!0-9]*) die "UPGRADE_OS_WAIT_TIMEOUT_SECONDS must be a non-negative integer" ;; esac
 case "$BETWEEN_NODES_SECONDS" in '' | *[!0-9]*) die "UPGRADE_OS_BETWEEN_NODES_SECONDS must be a non-negative integer" ;; esac
 
-for command in terraform kubectl jq ssh grep sed awk mktemp; do
+for command in tofu kubectl jq ssh grep sed awk mktemp; do
   require_command "$command"
 done
 
 [ -f "$TFVARS" ] || die "missing ${TFVARS}; copy terraform.tfvars.example and fill it in first"
 [ -f "$KUBECONFIG" ] || die "missing kubeconfig at ${KUBECONFIG}; deploy the cluster before upgrading it"
 
-SERVER_NODES_JSON="$(terraform -chdir="$INFRA" output -json server_nodes 2>/dev/null)" ||
-  die "cannot read Terraform server_nodes output; deploy stack 01 first"
+SERVER_NODES_JSON="$(tofu -chdir="$INFRA" output -json server_nodes 2>/dev/null)" ||
+  die "cannot read OpenTofu server_nodes output; deploy stack 01 first"
 SERVER_COUNT="$(printf '%s' "$SERVER_NODES_JSON" | jq 'length')"
-[ "$SERVER_COUNT" -ge 3 ] || die "expected at least three Terraform-managed server nodes"
+[ "$SERVER_COUNT" -ge 3 ] || die "expected at least three OpenTofu-managed server nodes"
 
-STATE_SERVER_COUNT="$(terraform -chdir="$INFRA" state list |
+STATE_SERVER_COUNT="$(tofu -chdir="$INFRA" state list |
   grep -Ec '^hcloud_server\.server\[[0-9]+\]$' || true)"
 [ "$STATE_SERVER_COUNT" -eq "$SERVER_COUNT" ] ||
-  die "Terraform state has ${STATE_SERVER_COUNT} servers but the output has ${SERVER_COUNT}"
+  die "OpenTofu state has ${STATE_SERVER_COUNT} servers but the output has ${SERVER_COUNT}"
 
-SSH_KEY="$(terraform -chdir="$INFRA" output -raw ssh_private_key_path 2>/dev/null)" ||
-  die "cannot read ssh_private_key_path from Terraform"
+SSH_KEY="$(tofu -chdir="$INFRA" output -raw ssh_private_key_path 2>/dev/null)" ||
+  die "cannot read ssh_private_key_path from OpenTofu"
 [ -f "$SSH_KEY" ] || die "SSH private key not found: ${SSH_KEY}"
 
 kubectl version --request-timeout=10s >/dev/null 2>&1 ||
@@ -193,9 +193,9 @@ if [ "$NEEDS_REPLACEMENT" -eq 0 ]; then
   exit 0
 fi
 
-log "validating the target image and checking for unrelated Terraform changes"
+log "validating the target image and checking for unrelated OpenTofu changes"
 set +e
-terraform -chdir="$INFRA" plan \
+tofu -chdir="$INFRA" plan \
   -input=false \
   -detailed-exitcode \
   -var="os_image=${TARGET_IMAGE}"
@@ -203,9 +203,9 @@ PLAN_STATUS=$?
 set -e
 case "$PLAN_STATUS" in
 0) ;;
-1) die "Terraform could not plan the OS replacement" ;;
-2) die "Terraform has unrelated pending changes; apply or resolve them before upgrading the OS" ;;
-*) die "Terraform plan returned unexpected exit status ${PLAN_STATUS}" ;;
+1) die "OpenTofu could not plan the OS replacement" ;;
+2) die "OpenTofu has unrelated pending changes; apply or resolve them before upgrading the OS" ;;
+*) die "OpenTofu plan returned unexpected exit status ${PLAN_STATUS}" ;;
 esac
 
 persist_target_image
@@ -217,7 +217,7 @@ SNAPSHOT_NAME="before-os-${TARGET_IMAGE#ubuntu-}-$(date +%Y%m%d-%H%M%S)"
   die "snapshot ${SNAPSHOT_NAME} was not visible after it was created"
 
 for ((index = SERVER_COUNT - 1; index >= 0; index--)); do
-  SERVER_NODES_JSON="$(terraform -chdir="$INFRA" output -json server_nodes)"
+  SERVER_NODES_JSON="$(tofu -chdir="$INFRA" output -json server_nodes)"
   NODE="$(printf '%s' "$SERVER_NODES_JSON" | jq -r ".[${index}].name")"
   OLD_IP="$(printf '%s' "$SERVER_NODES_JSON" | jq -r ".[${index}].public_ip")"
   OLD_IMAGE="$(current_image "$index")"
@@ -238,11 +238,11 @@ for ((index = SERVER_COUNT - 1; index >= 0; index--)); do
   ssh_node "$OLD_IP" 'systemctl stop k3s || true; /usr/local/bin/k3s-killall.sh || true'
   kubectl delete node "$NODE" --wait=true --timeout=60s
 
-  terraform -chdir="$INFRA" apply \
+  tofu -chdir="$INFRA" apply \
     -replace="hcloud_server.server[${index}]" \
     -auto-approve
 
-  SERVER_NODES_JSON="$(terraform -chdir="$INFRA" output -json server_nodes)"
+  SERVER_NODES_JSON="$(tofu -chdir="$INFRA" output -json server_nodes)"
   NEW_IP="$(printf '%s' "$SERVER_NODES_JSON" | jq -r ".[${index}].public_ip")"
 
   wait_for_new_node "$NODE" ||

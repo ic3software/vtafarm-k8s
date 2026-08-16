@@ -31,7 +31,7 @@ output "k3s_token" {
   description = <<-EOT
     The k3s join token. It also encrypts confidential data inside etcd, so an
     etcd snapshot is useless without it. Keep a copy somewhere safe:
-      terraform output -raw k3s_token
+      tofu output -raw k3s_token
   EOT
   value       = random_password.k3s_token.result
   sensitive   = true

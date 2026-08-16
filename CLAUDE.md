@@ -1,13 +1,14 @@
 # CLAUDE.md
 
-Terraform for live Hetzner infrastructure (HA k3s + Rancher + downstream RKE2). See `README.md`
+OpenTofu for live Hetzner infrastructure (HA k3s + Rancher + downstream RKE2). See `README.md`
 for architecture. A careless change costs money or downs a production cluster.
 
 ## Branch
 
-Never work on `main`. Before the first edit of any task, `git checkout -b <type>/<kebab-desc>`
-(`feat/`, `fix/`, `chore/`, `docs/`) and say the name. Already on a fitting non-`main` branch:
-stay there.
+Never work on `main`. Only when the current branch is `main` do you create one, before the
+first edit of any task: `git checkout -b <type>/<kebab-desc>` (`feat/`, `fix/`, `chore/`,
+`docs/`) and say the name. On any other branch, stay there — even if the task looks unrelated
+to what the branch is named. Ask before branching if you think a split is warranted.
 
 ## Commit
 
@@ -26,14 +27,14 @@ stay there.
 
 ## Finish
 
-Run `make fmt` then `make lint` (fmt, validate, `terraform test`, markdownlint) — that is the
+Run `make fmt` then `make lint` (fmt, validate, `tofu test`, markdownlint) — that is the
 whole verification story here; `make init` first in a fresh checkout. Then read `git diff` and
 delete anything unearned: debug leftovers, narrating comments, stray files, single-caller
 abstractions. If a check fails or was skipped, say so with the output.
 
 ## Never run unprompted
 
-`terraform apply`/`destroy` and the make targets wrapping them, including `kubeconfig`
+`tofu apply`/`destroy` and the make targets wrapping them, including `kubeconfig`
 (`-replace -auto-approve`) and `upgrade-os`; writing `kubectl`/`helm` verbs; mutating `scripts/`.
 Propose the command instead. Read-only (`plan`, `output`, `make status`, `kubectl get`) is fine.
 

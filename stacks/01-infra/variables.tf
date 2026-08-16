@@ -182,8 +182,8 @@ variable "ssh_public_key_path" {
     Path to an existing SSH public key. Point this at whatever key you already
     use; there is no need to generate a new one.
 
-    Terraform owns the key object in Hetzner: it uploads the key, servers get it
-    written into root's authorized_keys at creation, and `terraform destroy`
+    OpenTofu owns the key object in Hetzner: it uploads the key, servers get it
+    written into root's authorized_keys at creation, and `tofu destroy`
     removes it again. If this same public key is already in the project (Console
     -> Security -> SSH keys), delete it there first - the API rejects a second
     key with the same fingerprint (uniqueness_error). Removing a key object does

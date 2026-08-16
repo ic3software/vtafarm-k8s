@@ -9,7 +9,7 @@ output "cluster_v1_id" {
 }
 
 output "kubernetes_api_endpoint" {
-  description = "Direct RKE2 API endpoint through the Terraform-managed load balancer."
+  description = "Direct RKE2 API endpoint through the OpenTofu-managed load balancer."
   value       = "https://${var.config.api_hostname != "" ? var.config.api_hostname : hcloud_load_balancer.api.ipv4}:6443"
 }
 

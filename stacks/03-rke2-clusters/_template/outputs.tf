@@ -19,7 +19,7 @@ output "nodes" {
 }
 
 output "kube_config" {
-  description = "Read after Rancher reports Active: terraform output -raw kube_config > kubeconfig.yaml"
+  description = "Read after Rancher reports Active: tofu output -raw kube_config > kubeconfig.yaml"
   value       = module.rke2.kube_config
   sensitive   = true
 }

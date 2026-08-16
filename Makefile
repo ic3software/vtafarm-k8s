@@ -20,43 +20,43 @@ help: ## Show this help
 # --- stack 01: infrastructure + k3s ----------------------------------------
 
 .PHONY: lint
-lint: ## Check Terraform formatting and Markdown style
-	terraform -chdir=$(INFRA) fmt -recursive -check
-	terraform -chdir=$(PLATFORM) fmt -recursive -check
-	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive -check
-	terraform -chdir=$(RKE2_TEMPLATE) fmt -recursive -check
-	terraform -chdir=$(INFRA) validate
-	terraform -chdir=$(PLATFORM) validate
-	terraform -chdir=$(RKE2_TEMPLATE) validate
-	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster test
+lint: ## Check OpenTofu formatting and Markdown style
+	tofu -chdir=$(INFRA) fmt -recursive -check
+	tofu -chdir=$(PLATFORM) fmt -recursive -check
+	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive -check
+	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive -check
+	tofu -chdir=$(INFRA) validate
+	tofu -chdir=$(PLATFORM) validate
+	tofu -chdir=$(RKE2_TEMPLATE) validate
+	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	markdownlint-cli2
 
 .PHONY: fmt
-fmt: ## Auto-format Terraform and Markdown in place
-	terraform -chdir=$(INFRA) fmt -recursive
-	terraform -chdir=$(PLATFORM) fmt -recursive
-	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive
-	terraform -chdir=$(RKE2_TEMPLATE) fmt -recursive
+fmt: ## Auto-format OpenTofu and Markdown in place
+	tofu -chdir=$(INFRA) fmt -recursive
+	tofu -chdir=$(PLATFORM) fmt -recursive
+	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive
+	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive
 	markdownlint-cli2 --fix
 
 .PHONY: init
 init: ## Download providers for all stacks and module tests
-	terraform -chdir=$(INFRA) init
-	terraform -chdir=$(PLATFORM) init
-	terraform -chdir=$(RKE2_TEMPLATE) init -backend=false
-	terraform -chdir=$(ROOT)/modules/rke2-custom-cluster init -backend=false
+	tofu -chdir=$(INFRA) init
+	tofu -chdir=$(PLATFORM) init
+	tofu -chdir=$(RKE2_TEMPLATE) init -backend=false
+	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster init -backend=false
 
 .PHONY: plan
 plan: ## Show what stack 01 would change
-	terraform -chdir=$(INFRA) plan
+	tofu -chdir=$(INFRA) plan
 
 .PHONY: apply
 apply: ## Create/update the cluster (stack 01)
-	terraform -chdir=$(INFRA) apply
+	tofu -chdir=$(INFRA) apply
 
 .PHONY: kubeconfig
 kubeconfig: ## Re-fetch the kubeconfig from the first server
-	terraform -chdir=$(INFRA) apply -replace=null_resource.kubeconfig -auto-approve
+	tofu -chdir=$(INFRA) apply -replace=null_resource.kubeconfig -auto-approve
 
 .PHONY: kubeconfig-merge
 kubeconfig-merge: ## Merge the cluster into ~/.kube/config so you can switch contexts
@@ -72,29 +72,29 @@ kubeconfig-delete: ## Delete context from ~/.kube/config (CLUSTER=name for RKE2)
 
 .PHONY: outputs
 outputs: ## Print stack 01 outputs (LB IPs, node IPs, DNS records)
-	terraform -chdir=$(INFRA) output
+	tofu -chdir=$(INFRA) output
 
 .PHONY: token
 token: ## Print the k3s join/encryption token - store this somewhere safe
-	@terraform -chdir=$(INFRA) output -raw k3s_token; echo
+	@tofu -chdir=$(INFRA) output -raw k3s_token; echo
 
 # --- stack 02: cert-manager + Rancher --------------------------------------
 
 .PHONY: plan-platform
 plan-platform: ## Show what stack 02 would change
-	terraform -chdir=$(PLATFORM) plan
+	tofu -chdir=$(PLATFORM) plan
 
 .PHONY: apply-platform
 apply-platform: ## Install/upgrade cert-manager, Rancher, backups, upgrade controller
-	terraform -chdir=$(PLATFORM) apply
+	tofu -chdir=$(PLATFORM) apply
 
 .PHONY: destroy-platform
 destroy-platform: ## Destroy stack 02 only; keep stack 01 and RKE2 infrastructure
-	terraform -chdir=$(PLATFORM) destroy
+	tofu -chdir=$(PLATFORM) destroy
 
 .PHONY: rancher-password
 rancher-password: ## Print the Rancher bootstrap password
-	@terraform -chdir=$(PLATFORM) output -raw rancher_bootstrap_password; echo
+	@tofu -chdir=$(PLATFORM) output -raw rancher_bootstrap_password; echo
 
 # --- stack 03: Rancher-provisioned downstream RKE2 clusters ---------------
 
@@ -116,31 +116,35 @@ check-rke2-cluster:
 
 .PHONY: init-rke2
 init-rke2: check-rke2-cluster ## Initialize one RKE2 cluster (CLUSTER=name)
-	terraform -chdir=$(RKE2_CLUSTER_DIR) init
+	tofu -chdir=$(RKE2_CLUSTER_DIR) init
 
 .PHONY: plan-rke2
 plan-rke2: check-rke2-cluster ## Plan one RKE2 cluster (CLUSTER=name)
-	terraform -chdir=$(RKE2_CLUSTER_DIR) plan
+	tofu -chdir=$(RKE2_CLUSTER_DIR) plan
 
 .PHONY: apply-rke2
 apply-rke2: check-rke2-cluster ## Apply one RKE2 cluster (CLUSTER=name)
-	terraform -chdir=$(RKE2_CLUSTER_DIR) apply
+	tofu -chdir=$(RKE2_CLUSTER_DIR) apply
+
+.PHONY: refresh-rke2
+refresh-rke2: check-rke2-cluster ## Re-read one RKE2 cluster's state from Rancher (CLUSTER=name)
+	tofu -chdir=$(RKE2_CLUSTER_DIR) apply -refresh-only
 
 .PHONY: outputs-rke2
 outputs-rke2: check-rke2-cluster ## Print one RKE2 cluster's outputs (CLUSTER=name)
-	terraform -chdir=$(RKE2_CLUSTER_DIR) output
+	tofu -chdir=$(RKE2_CLUSTER_DIR) output
 
 .PHONY: kubeconfig-rke2
 kubeconfig-rke2: check-rke2-cluster ## Write one RKE2 kubeconfig to its ignored directory
 	@raw_kubeconfig="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.raw.yaml.XXXXXX")"; \
 	filtered_kubeconfig="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.filtered.yaml.XXXXXX")"; \
 	trap 'rm -f "$$raw_kubeconfig" "$$filtered_kubeconfig"' EXIT; \
-	terraform -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >"$$raw_kubeconfig"; \
+	tofu -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >"$$raw_kubeconfig"; \
 	if [[ ! -s "$$raw_kubeconfig" ]] || \
 	   ! kubectl --kubeconfig="$$raw_kubeconfig" config view --minify --flatten >"$$filtered_kubeconfig" 2>/dev/null || \
 	   [[ -z "$$(kubectl --kubeconfig="$$filtered_kubeconfig" config current-context 2>/dev/null)" ]]; then \
 		echo "ERROR: Rancher has not returned a usable kubeconfig yet." >&2; \
-		echo "Wait for the cluster to become Active, then refresh its Terraform state." >&2; \
+		echo "Wait for the cluster to become Active, then: make refresh-rke2 CLUSTER=$(CLUSTER)" >&2; \
 		exit 1; \
 	fi; \
 	install -m 600 "$$filtered_kubeconfig" "$(RKE2_KUBECONFIG_FILE)"; \
@@ -152,7 +156,7 @@ kubeconfig-merge-rke2: kubeconfig-rke2 ## Merge one RKE2 kubeconfig into ~/.kube
 
 .PHONY: destroy-rke2
 destroy-rke2: check-rke2-cluster ## Destroy one RKE2 cluster only (CLUSTER=name)
-	terraform -chdir=$(RKE2_CLUSTER_DIR) destroy
+	tofu -chdir=$(RKE2_CLUSTER_DIR) destroy
 
 .PHONY: destroy-all-rke2
 destroy-all-rke2: ## Destroy every generated RKE2 cluster before Rancher
@@ -163,7 +167,7 @@ destroy-all-rke2: ## Destroy every generated RKE2 cluster before Rancher
 		[[ -d "$$cluster_dir" ]] || continue; \
 		found_cluster=true; \
 		echo "==> destroying RKE2 cluster $${cluster_dir##*/}"; \
-		terraform -chdir="$$cluster_dir" destroy; \
+		tofu -chdir="$$cluster_dir" destroy; \
 	done; \
 	if [[ "$$found_cluster" == false ]]; then \
 		echo "==> no generated RKE2 cluster roots found under $(RKE2_ROOT)"; \
@@ -194,10 +198,15 @@ upgrade-os: ## Replace nodes one at a time with TARGET_IMAGE (for example ubuntu
 
 .PHONY: ssh
 ssh: ## SSH into the first control-plane node
-	@$$(terraform -chdir=$(INFRA) output -raw ssh_command)
+	@$$(tofu -chdir=$(INFRA) output -raw ssh_command)
 
+# Stack 02 is not destroyed here: every resource it owns lives inside the k3s
+# cluster, so destroying stack 01 removes them anyway and a helm uninstall pass
+# would only add minutes. Its state file must still go, or the next
+# apply-platform would refresh against a cluster that no longer exists.
 .PHONY: destroy
-destroy: ## Tear down RKE2 clusters, platform, then infrastructure
+destroy: ## Tear down RKE2 clusters, then infrastructure; drop the stale stack 02 state
 	@$(MAKE) --no-print-directory destroy-all-rke2
-	@$(MAKE) --no-print-directory destroy-platform
-	terraform -chdir=$(INFRA) destroy
+	tofu -chdir=$(INFRA) destroy
+	@rm -f $(PLATFORM)/terraform.tfstate $(PLATFORM)/terraform.tfstate.backup
+	@echo "==> removed stack 02 state (its resources died with the cluster)"

@@ -192,11 +192,11 @@ time from the highest-numbered server to server-1. Any failed check stops the up
 
 ---
 
-## 5. Upgrading Terraform providers
+## 5. Upgrading OpenTofu providers
 
 ```bash
-terraform -chdir=stacks/01-infra init -upgrade
-terraform -chdir=stacks/02-platform init -upgrade
+tofu -chdir=stacks/01-infra init -upgrade
+tofu -chdir=stacks/02-platform init -upgrade
 ```
 
 `.terraform.lock.hcl` changes — **commit it**.

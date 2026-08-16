@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Runs once at first boot, from cloud-init. Everything it needs is in
-# /etc/k3s-bootstrap.env, which Terraform renders per node.
+# /etc/k3s-bootstrap.env, which OpenTofu renders per node.
 #
 # Logs land in /var/log/cloud-init-output.log.
 set -euo pipefail
@@ -25,7 +25,7 @@ trap record_failure EXIT
 source /etc/k3s-bootstrap.env
 
 # Assert what the env file has to provide. Without this, a variable dropped from
-# the Terraform side surfaces as "unbound variable" on whichever line happens to
+# the OpenTofu side surfaces as "unbound variable" on whichever line happens to
 # use it first - which may be minutes into the run, after the node looks healthy.
 : "${NODE_IP:?not set in /etc/k3s-bootstrap.env}"
 : "${K3S_VERSION:?not set in /etc/k3s-bootstrap.env}"

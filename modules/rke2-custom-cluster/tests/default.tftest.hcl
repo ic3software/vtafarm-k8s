@@ -1,4 +1,24 @@
-mock_provider "hcloud" {}
+# Hetzner ids are numbers, and firewall_id/network_id/server_id/... are typed
+# that way. Left to itself the mock invents a random alphanumeric id for every
+# resource, which then fails to convert. Give it ids the API could return.
+mock_provider "hcloud" {
+  mock_resource "hcloud_firewall" {
+    defaults = { id = "1" }
+  }
+  mock_resource "hcloud_network" {
+    defaults = { id = "2" }
+  }
+  mock_resource "hcloud_load_balancer" {
+    defaults = { id = "3" }
+  }
+  mock_resource "hcloud_placement_group" {
+    defaults = { id = "4" }
+  }
+  mock_resource "hcloud_server" {
+    defaults = { id = "5" }
+  }
+}
+
 mock_provider "rancher2" {}
 
 run "default_ha_topology" {
@@ -71,6 +91,17 @@ run "default_ha_topology" {
       hcloud_load_balancer_service.ingress_https.destination_port == 443
     )
     error_message = "The load balancer must expose standard HTTP and HTTPS ports to the ingress controller."
+  }
+
+  # A public-NIC flannel binding is silent until pods land on different nodes,
+  # so pin it here rather than wait for cross-node traffic to fail.
+  assert {
+    condition = (
+      strcontains(local.additional_manifest, local.canal_manifest) &&
+      yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).flannel.iface == "rke2-private" &&
+      yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).calico.vethuMTU == 1400
+    )
+    error_message = "Canal must bind flannel to the private interface, with a pod MTU that matches its VXLAN tunnel."
   }
 }
 

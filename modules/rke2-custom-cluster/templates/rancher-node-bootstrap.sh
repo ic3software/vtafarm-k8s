@@ -21,6 +21,8 @@ trap record_failure EXIT
 # shellcheck disable=SC1091
 source /etc/rancher-node-bootstrap.env
 : "${NODE_PRIVATE_IP:?not set in /etc/rancher-node-bootstrap.env}"
+: "${PRIVATE_IFACE_NAME:?not set in /etc/rancher-node-bootstrap.env}"
+: "${PRIVATE_IFACE_MTU:?not set in /etc/rancher-node-bootstrap.env}"
 
 log() { echo "[rancher-node-bootstrap] $(date -Is) $*"; }
 
@@ -48,24 +50,28 @@ configure_private_interface() {
   interface="$1"
   mac_address="$(cat "/sys/class/net/${interface}/address")"
 
-  log "configuring private interface ${interface} (${mac_address})"
+  log "configuring private interface ${interface} (${mac_address}) as ${PRIVATE_IFACE_NAME}"
   cat >/etc/netplan/60-rke2-private-network.yaml <<EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    rke2-private:
+    ${PRIVATE_IFACE_NAME}:
       match:
         macaddress: "${mac_address}"
+      set-name: "${PRIVATE_IFACE_NAME}"
       dhcp4: true
       dhcp4-overrides:
         use-dns: false
       dhcp6: false
-      mtu: 1450
+      mtu: ${PRIVATE_IFACE_MTU}
       optional: true
 EOF
   chmod 0600 /etc/netplan/60-rke2-private-network.yaml
   netplan generate
+  # The kernel refuses to rename an interface that is up, and the hot-plugged
+  # NIC may already have been brought up by networkd's default handling.
+  ip link set dev "$interface" down || true
   netplan apply
 }
 
@@ -76,20 +82,20 @@ if [ -z "$PUBLIC_IFACE" ]; then
 fi
 
 IFACE=""
-PRIVATE_IFACE=""
+DETECTED_IFACE=""
 NETPLAN_CONFIGURED=0
 for _ in $(seq 1 60); do
   IFACE="$(interface_with_ip)"
   [ -n "$IFACE" ] && break
 
-  if [ -z "$PRIVATE_IFACE" ]; then
-    PRIVATE_IFACE="$(find_private_interface "$PUBLIC_IFACE" || true)"
+  if [ -z "$DETECTED_IFACE" ]; then
+    DETECTED_IFACE="$(find_private_interface "$PUBLIC_IFACE" || true)"
   fi
 
-  if [ -z "$PRIVATE_IFACE" ]; then
+  if [ -z "$DETECTED_IFACE" ]; then
     log "waiting for the private network interface"
   elif [ "$NETPLAN_CONFIGURED" -eq 0 ]; then
-    configure_private_interface "$PRIVATE_IFACE"
+    configure_private_interface "$DETECTED_IFACE"
     NETPLAN_CONFIGURED=1
   else
     log "waiting for private IP ${NODE_PRIVATE_IP}"
@@ -101,6 +107,14 @@ if [ -z "$IFACE" ]; then
   log "ERROR: private IP ${NODE_PRIVATE_IP} never appeared"
   ip -o link show || true
   ip -o -4 addr show || true
+  exit 1
+fi
+
+# Canal is told to bind flannel to this exact name. Failing here beats letting
+# the node join with a CNI that cannot find its interface.
+if [ "$IFACE" != "$PRIVATE_IFACE_NAME" ]; then
+  log "ERROR: private IP ${NODE_PRIVATE_IP} is on ${IFACE}, expected ${PRIVATE_IFACE_NAME}"
+  ip -o link show || true
   exit 1
 fi
 
