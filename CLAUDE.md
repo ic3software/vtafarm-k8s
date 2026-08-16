@@ -13,7 +13,8 @@ to what the branch is named. Ask before branching if you think a split is warran
 ## Commit
 
 - Never commit or push unless told to, each time. Always `--signoff`.
-- One logical commit per task, conventional-commit subject.
+- One logical commit per task, conventional-commit subject. Keep the body short and skimmable:
+  a line on why, a few bullets on what. Design rationale belongs in the code or in `docs/`.
 - Never stage `*.tfvars`, `*.tfstate*`, `kubeconfig*`, `*.pem`. New variables go in
   `terraform.tfvars.example`.
 

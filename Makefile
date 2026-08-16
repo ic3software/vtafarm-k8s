@@ -196,6 +196,15 @@ export TARGET_IMAGE
 upgrade-os: ## Replace nodes one at a time with TARGET_IMAGE (for example ubuntu-26.04)
 	@bash $(ROOT)/scripts/upgrade-os.sh
 
+.PHONY: upgrade-packages-check
+export CLUSTER
+upgrade-packages-check: ## Report pending Ubuntu updates per node (CLUSTER=name for RKE2)
+	@bash $(ROOT)/scripts/upgrade-packages.sh --check
+
+.PHONY: upgrade-packages
+upgrade-packages: ## apt upgrade every node, one at a time (CLUSTER=name for RKE2)
+	@bash $(ROOT)/scripts/upgrade-packages.sh
+
 .PHONY: ssh
 ssh: ## SSH into the first control-plane node
 	@$$(tofu -chdir=$(INFRA) output -raw ssh_command)
