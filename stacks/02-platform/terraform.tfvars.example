@@ -2,12 +2,12 @@
 
 # --- Rancher ---------------------------------------------------------------
 # The A record for this name must already point at the load balancer
-# (terraform -chdir=../01-infra output load_balancer_ipv4).
+# (tofu -chdir=../01-infra output load_balancer_ipv4).
 rancher_hostname  = "rancher.example.com"
 letsencrypt_email = "you@example.com"
 
-# Leave empty to have Terraform generate one:
-#   terraform output -raw rancher_bootstrap_password
+# Leave empty to have OpenTofu generate one:
+#   tofu output -raw rancher_bootstrap_password
 rancher_bootstrap_password = ""
 
 rancher_replicas      = 3

@@ -11,8 +11,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INFRA="${ROOT}/stacks/01-infra"
 
-HOST="$(terraform -chdir="$INFRA" output -json server_nodes | jq -r '.[0].public_ip')"
-KEY="$(terraform -chdir="$INFRA" output -raw ssh_private_key_path 2>/dev/null || echo "$HOME/.ssh/id_ed25519")"
+HOST="$(tofu -chdir="$INFRA" output -json server_nodes | jq -r '.[0].public_ip')"
+KEY="$(tofu -chdir="$INFRA" output -raw ssh_private_key_path 2>/dev/null || echo "$HOME/.ssh/id_ed25519")"
 
 SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 
@@ -38,7 +38,7 @@ cleanup() { rm -f "$snapshot_config"; }
 trap cleanup EXIT
 chmod 0600 "$snapshot_config"
 
-# Terraform renders these values as scalar, top-level YAML entries. Include
+# OpenTofu renders these values as scalar, top-level YAML entries. Include
 # data-dir/node-name as well so future overrides still point the CLI at the
 # correct local member and snapshot directory.
 if ! grep -E \

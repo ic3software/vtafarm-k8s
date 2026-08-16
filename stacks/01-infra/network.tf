@@ -1,7 +1,7 @@
 # The shared secret every node uses to join the cluster. k3s also derives the
 # key that encrypts confidential data inside etcd from it, so losing this token
-# means a snapshot can no longer be restored. It lives in the Terraform state
-# and is exposed via `terraform output -raw k3s_token`.
+# means a snapshot can no longer be restored. It lives in the OpenTofu state
+# and is exposed via `tofu output -raw k3s_token`.
 resource "random_password" "k3s_token" {
   length  = 48
   special = false
@@ -20,7 +20,7 @@ resource "hcloud_network_subnet" "nodes" {
   ip_range     = var.subnet_cidr
 }
 
-# Terraform owns this key. Hetzner rejects a second key with the same
+# OpenTofu owns this key. Hetzner rejects a second key with the same
 # fingerprint, so if the public key is already in the project by hand, delete it
 # there first.
 resource "hcloud_ssh_key" "this" {

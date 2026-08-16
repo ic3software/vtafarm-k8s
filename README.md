@@ -1,6 +1,6 @@
 # k3s HA + Rancher + downstream RKE2 on Hetzner Cloud
 
-Terraform for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
+OpenTofu for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
 Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one.
 
 The HA topology follows the [official k3s embedded-etcd HA guide](https://docs.k3s.io/datastore/ha-embedded):
@@ -12,7 +12,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ## Contents
 
 - [Architecture](#architecture)
-- [Terraform in three minutes](#terraform-in-three-minutes)
+- [OpenTofu in three minutes](#opentofu-in-three-minutes)
 - [Prerequisites](#prerequisites)
 - [Deploy](#deploy)
 - [Testing](#testing)
@@ -65,7 +65,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 | **One load balancer, three services** | A Hetzner load balancer serves up to 5 services and 10,000 concurrent connections. A management cluster whose ingress traffic is a couple of admins has nothing to gain from a second one, so :6443, :80 and :443 share it. Targets belong to the load balancer while health checks belong to each service, and every node runs both the API server and Traefik, so all three services report green. |
 | **All k3s traffic on the private network** | Hetzner Cloud Firewalls only filter the **public** interface — private network traffic is never inspected. So etcd (2379-2380), the API (6443), flannel's Virtual Extensible LAN tunnel (VXLAN, 8472) and the kubelet (10250) all bind to private IPs, and the public interface only exposes SSH. |
 | **Placement group `spread`** | Without it, three "HA" servers can land on the same physical host and one hardware failure costs you etcd quorum. |
-| **Hetzner cloud controller manager (CCM) manages nodes, Terraform manages load balancers** | The CCM sets `providerID`, topology labels and node lifecycle. Its load-balancer controller is switched off (`HCLOUD_LOAD_BALANCERS_ENABLED=false`) — otherwise it creates load balancers Terraform doesn't know about, which survive `terraform destroy` and keep billing you. |
+| **Hetzner cloud controller manager (CCM) manages nodes, OpenTofu manages load balancers** | The CCM sets `providerID`, topology labels and node lifecycle. Its load-balancer controller is switched off (`HCLOUD_LOAD_BALANCERS_ENABLED=false`) — otherwise it creates load balancers OpenTofu doesn't know about, which survive `tofu destroy` and keep billing you. |
 | **Traefik as a DaemonSet with hostPorts** | Installing an external CCM requires `--disable-cloud-controller`, which also removes k3s' built-in servicelb (klipper). Traefik binds directly to `:80`/`:443` on the host instead, so the load balancer has something to reach. |
 | **IPv4 only on the nodes** | One address family is one set of firewall rules to reason about. Hetzner still gives the load balancer an IPv6 address and offers no switch for that, but it reaches the nodes over private IPv4 regardless. |
 | **`cx23` on x86, not the ARM64 `cax` line** | `cx23` is 2 vCPU / 4 GB / 40 GB NVMe on shared AMD EPYC. The memory budget is deliberately tight — k3s with etcd takes ~1 GB, a Rancher replica 1–1.5 GB, the bundled add-ons ~0.5 GB — so watch for OOMKills during Rancher upgrades and step up to `cx33` if they appear. The `cax` (ARM64) line is cheaper still, but [Rancher documents ARM64 as experimental and not recommended for production](https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64). |
@@ -95,7 +95,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ```
 
 **Why two stacks?**
-Terraform must be able to configure a provider *before* it starts running. The `helm` and
+OpenTofu must be able to configure a provider *before* it starts running. The `helm` and
 `kubernetes` providers need a kubeconfig — which only exists after stack 01 has finished.
 Putting both in one stack creates a chicken-and-egg problem. Split apart, stack 01 builds the
 cluster and emits a kubeconfig, stack 02 consumes it. This is the standard pattern.
@@ -109,9 +109,9 @@ so creating or destroying a second RKE2 cluster cannot replace the first cluster
 
 ---
 
-## Terraform in three minutes
+## OpenTofu in three minutes
 
-**The core idea:** you *describe the desired end state* in `.tf` files. Terraform diffs that
+**The core idea:** you *describe the desired end state* in `.tf` files. OpenTofu diffs that
 against what actually exists in the cloud and works out what to change. It is not a script —
 there is no execution order, only a dependency graph it derives from how resources reference
 each other.
@@ -123,15 +123,15 @@ each other.
 | `variables.tf` | Declares which knobs exist (like a function signature) |
 | `terraform.tfvars` | The values you actually supply (**contains secrets, gitignored**) |
 | other `*.tf` | The resource definitions themselves |
-| `terraform.tfstate` | Terraform's ledger of what it has created. **Lose it and Terraform forgets everything and wants to rebuild it all** |
+| `terraform.tfstate` | OpenTofu's ledger of what it has created. **Lose it and OpenTofu forgets everything and wants to rebuild it all** |
 
 **Four commands:**
 
 ```bash
-terraform init      # download providers (first run, or after changing provider versions)
-terraform plan      # "what would happen if I ran this" — read-only, run it freely
-terraform apply     # actually do it; shows the plan first and asks you to type yes
-terraform destroy   # delete everything this stack created
+tofu init      # download providers (first run, or after changing provider versions)
+tofu plan      # "what would happen if I ran this" — read-only, run it freely
+tofu apply     # actually do it; shows the plan first and asks you to type yes
+tofu destroy   # delete everything this stack created
 ```
 
 **Reading a plan:**
@@ -143,17 +143,21 @@ terraform destroy   # delete everything this stack created
 - destroy     removed
 ```
 
-> ⚠️ The dangerous one here is `-/+ replace` on `hcloud_server.server` — that means Terraform
+> ⚠️ The dangerous one here is `-/+ replace` on `hcloud_server.server` — that means OpenTofu
 > wants to rebuild control-plane nodes, and all three at once wipes the cluster. This repo
 > guards against the common cause with
 > `lifecycle { ignore_changes = [user_data, ssh_keys, image] }`, because cloud-init only ever
 > runs on first boot: editing it changes nothing on a running node, yet would still trigger a
 > rebuild. When you genuinely want to roll a node, do it **one at a time**:
-> `terraform apply -replace='hcloud_server.server[2]'`
+> `tofu apply -replace='hcloud_server.server[2]'`
 
 **Where does state live?**
 Locally, in `stacks/*/terraform.tfstate`. Fine for a single operator, but **back it up**, or
-switch to a remote backend (S3 / Terraform Cloud). Losing state is painful to recover from.
+switch to a remote backend (S3-compatible object storage). Losing state is painful to
+recover from.
+
+> The `terraform.` prefixes are not a leftover: OpenTofu still reads `terraform.tfvars`,
+> writes `terraform.tfstate`, and keeps its plugin cache in `.terraform/`.
 
 ---
 
@@ -162,10 +166,10 @@ switch to a remote backend (S3 / Terraform Cloud). Losing state is painful to re
 ### 1. Tools
 
 ```bash
-brew install terraform kubectl helm jq
+brew install opentofu kubectl helm jq
 ```
 
-Terraform ≥ 1.6, kubectl, Helm 3, jq.
+OpenTofu ≥ 1.12, kubectl, Helm 3, jq.
 
 ### 2. A Hetzner API token
 
@@ -174,7 +178,7 @@ permission **Read & Write** → copy it (shown only once).
 
 ### 3. An SSH key
 
-**Use the key you already have.** Terraform needs two paths: the public key, which it uploads
+**Use the key you already have.** OpenTofu needs two paths: the public key, which it uploads
 to Hetzner and installs in root's `authorized_keys` on every node, and the matching private
 key, which never leaves your machine — only `scripts/fetch-kubeconfig.sh` and
 `scripts/etcd-snapshot.sh` use it to reach the nodes.
@@ -210,8 +214,8 @@ Rancher **requires a DNS hostname** — it cannot be reached by IP. Have somethi
 
 ### 5. Hetzner Object Storage (for backups)
 
-Object Storage is created manually because the `hcloud` Terraform provider does not manage S3
-buckets or S3 credentials. In the same Hetzner project as the cluster:
+Object Storage is created manually because the `hcloud` provider does not manage S3 buckets
+or S3 credentials. In the same Hetzner project as the cluster:
 
 1. Open **Object Storage** → **Create Bucket**.
 2. **Location:** pick **Nuremberg**. The dialog lists cities, not codes — `nbg1` is Nuremberg
@@ -278,7 +282,7 @@ make plan           # read what it intends to do
 make apply          # type yes
 ```
 
-Takes roughly **5–8 minutes**. Terraform will appear to hang on
+Takes roughly **5–8 minutes**. OpenTofu will appear to hang on
 `null_resource.kubeconfig` — that is it waiting for the first server to finish bootstrapping.
 This is expected.
 
@@ -387,13 +391,13 @@ User `admin`, with that password. Rancher forces a change on first login.
 ### Step 6 — Create an RKE2 cluster
 
 First, create a Rancher API key from the user menu under **Account & API Keys**.
-Then scaffold a Terraform root for the new cluster:
+Then scaffold an OpenTofu root for the new cluster:
 
 ```bash
 make new-rke2-cluster CLUSTER=rke2-vtafarm-production
 ```
 
-This name is also used as the cluster name in Rancher and as its Terraform
+This name is also used as the cluster name in Rancher and as its OpenTofu
 directory name.
 
 Edit the generated configuration:
@@ -442,17 +446,17 @@ make apply-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
 The default creates three nodes with the etcd, control-plane, and worker roles.
-Its Terraform-managed load balancer forwards `80`, `443`, `6443`, and `9345`
+Its OpenTofu-managed load balancer forwards `80`, `443`, `6443`, and `9345`
 to all server nodes over their private addresses. RKE2's default ingress
 configuration binds the standard HTTP and HTTPS ports on those nodes.
 Wait for `rke2-vtafarm-production` to become **Active** in Rancher Cluster
 
-Management before continuing. The initial Terraform apply may have stored an
+Management before continuing. The initial OpenTofu apply may have stored an
 empty `kube_config` while Rancher was still provisioning the cluster. Refresh
-the Terraform state after the cluster becomes Active:
+the OpenTofu state after the cluster becomes Active:
 
 ```bash
-terraform \
+tofu \
   -chdir=stacks/03-rke2-clusters/clusters/rke2-vtafarm-production \
   apply -refresh-only
 ```
@@ -476,7 +480,7 @@ make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
 The merge target automatically writes the YAML by running `kubeconfig-rke2`
-first, but it does not refresh Terraform state. Run the refresh command above
+first, but it does not refresh OpenTofu state. Run the refresh command above
 once after Rancher reports the cluster Active.
 
 Remove only this cluster's local kubeconfig context without deleting any
@@ -603,7 +607,7 @@ make snapshot             # take one right now
 A snapshot file on its own is not enough. Store these in a password manager or separate backup:
 
 1. **The k3s token** — `make token`. It decrypts the bootstrap data inside every snapshot.
-2. **Terraform state** — `stacks/*/terraform.tfstate`.
+2. **OpenTofu state** — `stacks/*/terraform.tfstate`.
 3. **The S3 credentials** — otherwise you cannot reach the backups you took.
 
 ### Restoring
@@ -736,7 +740,7 @@ ssh root@<node-ip> 'journalctl -u k3s -n 200 --no-pager'
 - nodes stuck `NotReady` with the `uninitialized` taint (CCM did not start)
 - Let's Encrypt certificate never issued
 - the second and third servers fail to join
-- `terraform plan` wants to replace server nodes
+- `tofu plan` wants to replace server nodes
 - Rancher pods in `CrashLoopBackOff`
 - load balancer targets reported unhealthy
 
@@ -780,18 +784,18 @@ Destroy every generated RKE2 cluster, then stack 02, then stack 01:
 make destroy
 ```
 
-The command scans `stacks/03-rke2-clusters/clusters/*` and runs Terraform
+The command scans `stacks/03-rke2-clusters/clusters/*` and runs OpenTofu
 destroy for every cluster root before removing Rancher. Only after every RKE2
 destroy succeeds does it destroy stack 02 and finally stack 01. If any step
 fails, the command stops without deleting the layers that the failed step
 depends on.
 
-> The order matters. Keep each generated RKE2 directory and its Terraform state
+> The order matters. Keep each generated RKE2 directory and its OpenTofu state
 > until its cluster has been destroyed. Without that state, `make destroy`
 > cannot discover or safely remove those Rancher and Hetzner resources.
 
 Afterwards, check the Hetzner Console for leftover Volumes. PVs created by the CSI driver are
-not Terraform-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
+not OpenTofu-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
 volumes stay and keep billing.
 
 ---
@@ -823,5 +827,5 @@ Deletion creates a backup first and preserves cluster/user entries still used by
 - [k3s — Automated Upgrades](https://docs.k3s.io/upgrades/automated)
 - [Rancher — Install on a Kubernetes Cluster](https://ranchermanager.docs.rancher.com/getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster)
 - [Rancher — Support Matrix](https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/)
-- [Hetzner Cloud Terraform Provider](https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs)
+- [Hetzner Cloud provider](https://search.opentofu.org/provider/hetznercloud/hcloud/latest)
 - [hcloud-cloud-controller-manager](https://github.com/hetznercloud/hcloud-cloud-controller-manager)

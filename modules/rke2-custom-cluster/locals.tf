@@ -10,7 +10,7 @@ locals {
 
   common_labels = {
     cluster = var.config.cluster_name
-    managed = "terraform"
+    managed = "opentofu"
     distro  = "rke2"
   }
 

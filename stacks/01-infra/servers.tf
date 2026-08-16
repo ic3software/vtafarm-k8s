@@ -33,7 +33,7 @@ locals {
 
 # Existing servers make a replacement server-1 join instead of running cluster-init.
 data "hcloud_servers" "existing_cluster" {
-  with_selector = "cluster=${var.cluster_name},managed=terraform"
+  with_selector = "cluster=${var.cluster_name},managed=opentofu"
   with_status   = ["running"]
 }
 
@@ -61,7 +61,7 @@ resource "hcloud_server" "server" {
     ipv6_enabled = false
   }
 
-  # Keep the network attachment inline so Terraform owns it together with the
+  # Keep the network attachment inline so OpenTofu owns it together with the
   # server instead of through a competing hcloud_server_network resource.
   #
   # Even an inline network is attached after server creation by the hcloud
@@ -75,15 +75,15 @@ resource "hcloud_server" "server" {
 
   lifecycle {
     # cloud-init only ever runs on the FIRST boot. Once a node is up, editing
-    # user_data changes nothing on that node - but Terraform would still want to
+    # user_data changes nothing on that node - but OpenTofu would still want to
     # destroy and recreate it, which for count.index 0..2 means wiping the whole
     # control plane in one apply. Roll nodes deliberately instead:
-    #   terraform apply -replace='hcloud_server.server[2]'
+    #   tofu apply -replace='hcloud_server.server[2]'
     ignore_changes = [user_data, ssh_keys, image]
   }
 
   depends_on = [
-    # The Hetzner API cannot reference a subnet from a server, so Terraform
+    # The Hetzner API cannot reference a subnet from a server, so OpenTofu
     # would otherwise create both in parallel and the attach above could land
     # before the subnet exists.
     hcloud_network_subnet.nodes,

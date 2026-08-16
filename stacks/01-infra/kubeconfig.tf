@@ -1,4 +1,4 @@
-# Terraform has no native "copy a file off a host" primitive, so the kubeconfig
+# OpenTofu has no native "copy a file off a host" primitive, so the kubeconfig
 # is pulled with a small script. It also doubles as the readiness gate: the
 # apply does not finish until the first server reports a completed bootstrap.
 resource "null_resource" "kubeconfig" {

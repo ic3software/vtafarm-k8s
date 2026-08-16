@@ -33,14 +33,14 @@ make token
 This token encrypts the bootstrap data inside etcd. **Without it a snapshot cannot be
 decrypted.**
 
-### (b) Terraform state
+### (b) OpenTofu state
 
 ```text
 stacks/01-infra/terraform.tfstate
 stacks/02-platform/terraform.tfstate
 ```
 
-Lose it and Terraform forgets everything it built; the next apply tries to recreate the world.
+Lose it and OpenTofu forgets everything it built; the next apply tries to recreate the world.
 
 Consider a remote backend (add `backend "s3"` to `versions.tf`), or at minimum copy it
 regularly:
@@ -110,7 +110,7 @@ kubectl get nodes
 ssh root@<healthy-node> 'k3s kubectl get --raw "/healthz?verbose"' | grep etcd
 
 # 3. rebuild that one server
-terraform -chdir=stacks/01-infra apply -replace='hcloud_server.server[1]'
+tofu -chdir=stacks/01-infra apply -replace='hcloud_server.server[1]'
 ```
 
 The replacement boots, waits for the load balancer to be serving, and joins by itself.
@@ -119,7 +119,7 @@ The replacement boots, waits for the load balancer to be serving, and joins by i
 kubectl get nodes -w
 ```
 
-> **Why index `[1]`?** Terraform's `count` is zero-based, so `server-2` is
+> **Why index `[1]`?** OpenTofu's `count` is zero-based, so `server-2` is
 > `hcloud_server.server[1]`.
 
 ---
@@ -263,7 +263,7 @@ Worst case: all you have left is the S3 snapshots, the k3s token, and this git r
 ```bash
 # 1. Rebuild infrastructure with a single server first
 #    (temporarily set server_count = 1 in stacks/01-infra/terraform.tfvars)
-terraform -chdir=stacks/01-infra apply
+tofu -chdir=stacks/01-infra apply
 
 # 2. Restore onto the new server-1 — the --token flag is mandatory here
 ssh root@<new server-1>
@@ -279,10 +279,10 @@ k3s server --cluster-reset --etcd-s3 \
 # wait for the message → Ctrl-C → systemctl start k3s
 
 # 3. Set server_count back to 3 and apply so the other two join
-terraform -chdir=stacks/01-infra apply
+tofu -chdir=stacks/01-infra apply
 ```
 
-> ⚠️ **Token mismatch is the trap here.** A fresh `terraform apply` generates a *new*
+> ⚠️ **Token mismatch is the trap here.** A fresh `tofu apply` generates a *new*
 > `random_password.k3s_token`, but the restored cluster runs on the *old* token from the
 > snapshot. New nodes would be handed the new token and fail to join.
 >

@@ -2,7 +2,7 @@ locals {
   # ---------------------------------------------------------------------------
   # Deterministic private addressing.
   # Fixing the IPs up-front means cloud-init can reference the load balancer and
-  # the peer servers without Terraform having to create them first, which is what
+  # the peer servers without OpenTofu having to create them first, which is what
   # would otherwise produce a dependency cycle.
   # ---------------------------------------------------------------------------
   lb_private_ip      = cidrhost(var.subnet_cidr, 10)
@@ -31,7 +31,7 @@ locals {
 
   common_labels = {
     cluster = var.cluster_name
-    managed = "terraform"
+    managed = "opentofu"
   }
 
   # ---------------------------------------------------------------------------
@@ -152,9 +152,9 @@ locals {
           # responsibility that this cluster deliberately leaves to Flannel.
           HCLOUD_NETWORK_ROUTES_ENABLED = { value = "false" }
 
-          # Load balancers are owned by Terraform in this repo. Without this the
+          # Load balancers are owned by OpenTofu in this repo. Without this the
           # CCM would create a second, untracked LB for every Service of type
-          # LoadBalancer and `terraform destroy` would silently leave it behind.
+          # LoadBalancer and `tofu destroy` would silently leave it behind.
           HCLOUD_LOAD_BALANCERS_ENABLED = { value = "false" }
         }
       })

@@ -1,4 +1,24 @@
-mock_provider "hcloud" {}
+# Hetzner ids are numbers, and firewall_id/network_id/server_id/... are typed
+# that way. Left to itself the mock invents a random alphanumeric id for every
+# resource, which then fails to convert. Give it ids the API could return.
+mock_provider "hcloud" {
+  mock_resource "hcloud_firewall" {
+    defaults = { id = "1" }
+  }
+  mock_resource "hcloud_network" {
+    defaults = { id = "2" }
+  }
+  mock_resource "hcloud_load_balancer" {
+    defaults = { id = "3" }
+  }
+  mock_resource "hcloud_placement_group" {
+    defaults = { id = "4" }
+  }
+  mock_resource "hcloud_server" {
+    defaults = { id = "5" }
+  }
+}
+
 mock_provider "rancher2" {}
 
 run "default_ha_topology" {

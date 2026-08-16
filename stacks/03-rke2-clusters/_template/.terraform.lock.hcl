@@ -1,11 +1,23 @@
-# This file is maintained automatically by "terraform init".
+# This file is maintained automatically by "tofu init".
 # Manual edits may be lost in future updates.
 
-provider "registry.terraform.io/hetznercloud/hcloud" {
+provider "registry.opentofu.org/hetznercloud/hcloud" {
   version     = "1.68.0"
-  constraints = "~> 1.68"
+  constraints = ">= 1.68.0, ~> 1.68, < 2.0.0"
   hashes = [
+    "h1:226Z1Y5A30w6lKA7/EG6vzPn8inyZ9XYbnmpIzZcA58=",
     "h1:2MU8gDe67KjqALpvzzRfWONH2c/8djL+yxTnym9/FjY=",
+    "h1:6PW+TynH6Po3bSEZ+3+qSeKN/KvuH3N3fWrm9t8HNcc=",
+    "h1:8zYaD/LRDEAJDwyZx/gbbBL01b9oeGr1mhQeBCNmuhM=",
+    "h1:BrgHGuh9WEMd8CQefgdSqhcePf4CZPdovwlHNdo3h70=",
+    "h1:CPBOIltDqRCFo99PHVgt/8z5r+P3JyyiJygsbIozZC4=",
+    "h1:KOFp1JbzZ6Xj2K80QL7HGJM6oG+oEo7tx3lIx3d5POM=",
+    "h1:KvAWG1HTh3EO8PNymwQQ9+zpAQa3wRvzLvRjRM5jxq4=",
+    "h1:Zxdt/lmDDS+Uty9kViYoYNxYRlC3CUk2v4l3+XPcibo=",
+    "h1:gWVxkXIPIJcwAl74VMTz0hgaiJ/2feZIo4KMRQ+l9io=",
+    "h1:oxpWvl0qfZplr759glEx537EqkkAgtagBtNsI8V13H8=",
+    "h1:vXPWFLMNZzSEutr1Z66zicXVx4QAzUXqm3LCYXQH81U=",
+    "h1:ynTUfNuk5ppK9aniyVQi9HcQ+pdYmoGFX9U2LJgfzd0=",
     "zh:0c3c2eb5bad6e2853da46dd83ed9c93c547b79f2abe977d492da9cf9d7236a62",
     "zh:0ccae6bb2daee7c30b55672645b31c50920839a8aadac502d187f105352c1b37",
     "zh:11559d821030e5f4657b81153419f3c5e4f6389e8cc6f8086db2ebeb7aade6bc",
@@ -22,10 +34,18 @@ provider "registry.terraform.io/hetznercloud/hcloud" {
   ]
 }
 
-provider "registry.terraform.io/rancher/rancher2" {
+provider "registry.opentofu.org/rancher/rancher2" {
   version     = "14.1.1"
-  constraints = "~> 14.1"
+  constraints = "~> 14.1, >= 14.1.1, < 15.0.0"
   hashes = [
+    "h1:751MPGOhzawweO8e2TS6wyZrzTXAqHPloSiX0sEbTvs=",
+    "h1:SD0B/LZfmI+2FeWgVXEHQIead3b7cyopzRzXrwsTPBo=",
+    "h1:VhppJs/74LaK+OhVZ1/DgkNpiKLfgG1QGETj0PQn6gI=",
+    "h1:XguC/YWN5PuuX+oQ9U7HZdrpLZ/z32XFTmWcTZTO/AY=",
+    "h1:bKL/7cYa+LzIPqjMsfac19bcjivHF7CteZtW36WO2Gs=",
+    "h1:gfmTW1LLsu1SpRmURcFOuoWlJA9Vi8EggKLqHMzWnco=",
+    "h1:pmUu+kc1Va9qeNzHNxEjVyoCjFTNnkwBk04AQDEB5Dc=",
+    "h1:qwtn8mKflLQg0yoOcC67ZVommD6hZwbdJV8/RlsNqGo=",
     "h1:rbEfIRw5srYsQs/PUY4Z6ywNEXf0hlfRdEBIj58Es74=",
     "zh:11c4c34ba996b633d116e83f48b0baecaa1e0cbf50562abdfd9424cd6f6141a4",
     "zh:205a3a4b5f078b2eeea06f4a13ab15bcf34864460f789568d384a03e47f0a009",

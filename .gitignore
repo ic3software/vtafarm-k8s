@@ -1,4 +1,4 @@
-# Terraform
+# OpenTofu (its plugin cache and state keep the terraform.* names)
 **/.terraform/*
 *.tfstate
 *.tfstate.*
@@ -14,6 +14,8 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+.tofurc
+tofu.rc
 .terraform.lock.hcl.bak
 # Reusable modules do not own provider selections; root modules do.
 modules/**/.terraform.lock.hcl
