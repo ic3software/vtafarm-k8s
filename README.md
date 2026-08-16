@@ -671,7 +671,17 @@ Rancher cannot skip minor versions (no 2.12 → 2.14; go 2.12 → 2.13 → 2.14)
 
 ### 3. Operating system
 
-Upgrade to the next Ubuntu LTS with a rolling replacement:
+Routine Ubuntu package updates are `apt update && apt upgrade`, sequenced one node at a time.
+A node is drained and rebooted only when the update actually requires it, so a month of
+userspace-only fixes costs no downtime:
+
+```bash
+make upgrade-packages-check                             # pending updates per node
+make upgrade-packages                                   # the k3s cluster
+make upgrade-packages CLUSTER=rke2-vtafarm-production   # a downstream RKE2 cluster
+```
+
+Moving to the next Ubuntu LTS is a rolling node replacement instead:
 
 ```bash
 make upgrade-os TARGET_IMAGE=ubuntu-26.04
@@ -692,6 +702,7 @@ make token               # the k3s token
 make rancher-password    # Rancher bootstrap password
 make snapshot            # on-demand etcd snapshot
 make snapshots           # list snapshots
+make upgrade-packages    # apt upgrade every node, one at a time
 make kubeconfig          # re-fetch the kubeconfig
 make kubeconfig-merge    # merge it into ~/.kube/config as a switchable context
 make kubeconfig-delete   # delete it from ~/.kube/config

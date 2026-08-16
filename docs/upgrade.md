@@ -179,9 +179,73 @@ kubectl -n cattle-system describe certificate tls-rancher-ingress | tail -20
 
 ---
 
-## 4. Operating system updates
+## 4. Operating system
 
-Upgrade to the next supported Ubuntu LTS with:
+Two different jobs: patching the Ubuntu you are on, and moving to the next Ubuntu.
+
+### Routine package updates
+
+`make upgrade-packages` is `apt update && apt upgrade`, sequenced across the cluster so a kernel
+update never reboots two etcd members at once. Per node:
+
+1. report what is pending, and skip the node entirely when nothing is
+2. install the packages **without draining** — apt cannot disturb the running kernel, and
+   neither k3s nor RKE2 takes its container runtime from apt
+3. only if `/var/run/reboot-required` now exists: drain, reboot, wait for `Ready`, re-check
+   etcd health, uncordon
+
+A month of userspace-only fixes therefore costs no downtime at all; a kernel fix costs one
+rolling reboot.
+
+#### Procedure
+
+```bash
+make upgrade-packages-check                             # read-only: pending updates per node
+make snapshot
+make upgrade-packages                                   # stack 01, the k3s control plane
+make upgrade-packages CLUSTER=rke2-vtafarm-production   # one downstream RKE2 cluster
+make status
+```
+
+A downstream cluster needs its kubeconfig on disk first:
+
+```bash
+make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
+```
+
+#### What it deliberately does not do
+
+- **It cannot move Kubernetes.** k3s, RKE2 and their bundled containerd are installed outside
+  apt. Kubernetes versions move through §1 and through Rancher, never through here.
+- **It never removes packages.** The upgrade is `apt-get --with-new-pkgs upgrade`, not
+  `dist-upgrade`. `--with-new-pkgs` is required rather than cosmetic: a kernel security update
+  arrives as a *new* `linux-image-*` package, and a plain `apt-get upgrade` holds it back
+  silently.
+- **It does not clear old kernels.** If `/boot` fills up, run `apt-get autoremove` on that node
+  yourself.
+
+#### When it gets stuck
+
+A node that fails mid-run stays cordoned on purpose — the run aborts there instead of moving on
+to the next etcd member.
+
+```bash
+kubectl get nodes            # look for SchedulingDisabled
+kubectl uncordon <node-name>
+```
+
+Ubuntu rolls some updates out in phases, so `upgrade-packages-check` can still report pending
+packages right after a clean run. Those land on a later pass.
+
+Knobs, when a node is slow to return or the cluster needs longer to settle between nodes:
+
+```bash
+UPGRADE_PACKAGES_WAIT_TIMEOUT_SECONDS=1800 make upgrade-packages
+UPGRADE_PACKAGES_BETWEEN_NODES_SECONDS=300 make upgrade-packages
+SSH_KEY=~/.ssh/other_key make upgrade-packages CLUSTER=rke2-vtafarm-production
+```
+
+### Moving to the next Ubuntu LTS
 
 ```bash
 make upgrade-os TARGET_IMAGE=ubuntu-26.04
@@ -222,5 +286,6 @@ control plane. Stop and read the provider CHANGELOG before continuing.
 [ ] upgrade Rancher; rollout completes
 [ ] make status is clean
 [ ] Rancher UI reachable, downstream clusters Active
+[ ] make upgrade-packages completes on every cluster
 [ ] make upgrade-os completes successfully
 ```
