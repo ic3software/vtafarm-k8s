@@ -196,8 +196,13 @@ upgrade-os: ## Replace nodes one at a time with TARGET_IMAGE (for example ubuntu
 ssh: ## SSH into the first control-plane node
 	@$$(tofu -chdir=$(INFRA) output -raw ssh_command)
 
+# Stack 02 is not destroyed here: every resource it owns lives inside the k3s
+# cluster, so destroying stack 01 removes them anyway and a helm uninstall pass
+# would only add minutes. Its state file must still go, or the next
+# apply-platform would refresh against a cluster that no longer exists.
 .PHONY: destroy
-destroy: ## Tear down RKE2 clusters, platform, then infrastructure
+destroy: ## Tear down RKE2 clusters, then infrastructure; drop the stale stack 02 state
 	@$(MAKE) --no-print-directory destroy-all-rke2
-	@$(MAKE) --no-print-directory destroy-platform
 	tofu -chdir=$(INFRA) destroy
+	@rm -f $(PLATFORM)/terraform.tfstate $(PLATFORM)/terraform.tfstate.backup
+	@echo "==> removed stack 02 state (its resources died with the cluster)"

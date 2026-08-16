@@ -778,17 +778,25 @@ managed RKE2 infrastructure:
 make destroy-platform
 ```
 
-Destroy every generated RKE2 cluster, then stack 02, then stack 01:
+Destroy every generated RKE2 cluster, then stack 01:
 
 ```bash
 make destroy
 ```
 
 The command scans `stacks/03-rke2-clusters/clusters/*` and runs OpenTofu
-destroy for every cluster root before removing Rancher. Only after every RKE2
-destroy succeeds does it destroy stack 02 and finally stack 01. If any step
-fails, the command stops without deleting the layers that the failed step
-depends on.
+destroy for every cluster root first, while Rancher is still up to accept the
+cluster deletions. Only after every RKE2 destroy succeeds does it destroy
+stack 01. If any step fails, the command stops without deleting the layers that
+the failed step depends on.
+
+Stack 02 is deliberately skipped: cert-manager, Rancher, the backup operator
+and the upgrade controller all live inside the k3s cluster, so stack 01's
+destroy removes them with the servers and a separate `helm uninstall` pass
+would only add minutes. Because those resources vanish without OpenTofu
+noticing, the command deletes `stacks/02-platform/terraform.tfstate` once
+stack 01 is gone — a stale state file there would make the next
+`make apply-platform` refresh against a cluster that no longer exists.
 
 > The order matters. Keep each generated RKE2 directory and its OpenTofu state
 > until its cluster has been destroyed. Without that state, `make destroy`
