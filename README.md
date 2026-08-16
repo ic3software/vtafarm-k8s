@@ -456,9 +456,7 @@ empty `kube_config` while Rancher was still provisioning the cluster. Refresh
 the OpenTofu state after the cluster becomes Active:
 
 ```bash
-tofu \
-  -chdir=stacks/03-rke2-clusters/clusters/rke2-vtafarm-production \
-  apply -refresh-only
+make refresh-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
 Then write its Rancher-generated kubeconfig and use it directly:

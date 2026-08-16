@@ -126,6 +126,10 @@ plan-rke2: check-rke2-cluster ## Plan one RKE2 cluster (CLUSTER=name)
 apply-rke2: check-rke2-cluster ## Apply one RKE2 cluster (CLUSTER=name)
 	tofu -chdir=$(RKE2_CLUSTER_DIR) apply
 
+.PHONY: refresh-rke2
+refresh-rke2: check-rke2-cluster ## Re-read one RKE2 cluster's state from Rancher (CLUSTER=name)
+	tofu -chdir=$(RKE2_CLUSTER_DIR) apply -refresh-only
+
 .PHONY: outputs-rke2
 outputs-rke2: check-rke2-cluster ## Print one RKE2 cluster's outputs (CLUSTER=name)
 	tofu -chdir=$(RKE2_CLUSTER_DIR) output
@@ -140,7 +144,7 @@ kubeconfig-rke2: check-rke2-cluster ## Write one RKE2 kubeconfig to its ignored 
 	   ! kubectl --kubeconfig="$$raw_kubeconfig" config view --minify --flatten >"$$filtered_kubeconfig" 2>/dev/null || \
 	   [[ -z "$$(kubectl --kubeconfig="$$filtered_kubeconfig" config current-context 2>/dev/null)" ]]; then \
 		echo "ERROR: Rancher has not returned a usable kubeconfig yet." >&2; \
-		echo "Wait for the cluster to become Active, then refresh its OpenTofu state." >&2; \
+		echo "Wait for the cluster to become Active, then: make refresh-rke2 CLUSTER=$(CLUSTER)" >&2; \
 		exit 1; \
 	fi; \
 	install -m 600 "$$filtered_kubeconfig" "$(RKE2_KUBECONFIG_FILE)"; \
