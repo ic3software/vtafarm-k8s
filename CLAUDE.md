@@ -5,9 +5,10 @@ for architecture. A careless change costs money or downs a production cluster.
 
 ## Branch
 
-Never work on `main`. Before the first edit of any task, `git checkout -b <type>/<kebab-desc>`
-(`feat/`, `fix/`, `chore/`, `docs/`) and say the name. Already on a fitting non-`main` branch:
-stay there.
+Never work on `main`. Only when the current branch is `main` do you create one, before the
+first edit of any task: `git checkout -b <type>/<kebab-desc>` (`feat/`, `fix/`, `chore/`,
+`docs/`) and say the name. On any other branch, stay there — even if the task looks unrelated
+to what the branch is named. Ask before branching if you think a split is warranted.
 
 ## Commit
 
