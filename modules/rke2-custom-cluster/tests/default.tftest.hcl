@@ -92,6 +92,17 @@ run "default_ha_topology" {
     )
     error_message = "The load balancer must expose standard HTTP and HTTPS ports to the ingress controller."
   }
+
+  # A public-NIC flannel binding is silent until pods land on different nodes,
+  # so pin it here rather than wait for cross-node traffic to fail.
+  assert {
+    condition = (
+      strcontains(local.additional_manifest, local.canal_manifest) &&
+      yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).flannel.iface == "rke2-private" &&
+      yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).calico.vethuMTU == 1400
+    )
+    error_message = "Canal must bind flannel to the private interface, with a pod MTU that matches its VXLAN tunnel."
+  }
 }
 
 run "worker_scale_does_not_renumber_servers" {
