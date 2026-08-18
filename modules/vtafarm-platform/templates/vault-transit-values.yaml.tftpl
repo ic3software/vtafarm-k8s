@@ -1,0 +1,72 @@
+# Transit Vault: single node, file storage, no seal stanza.
+#
+# Its only job is to hold the `autounseal` transit key the farm Vault unseals
+# against. It stores no tenant data. It is itself Shamir-sealed and unsealed by
+# hand - it is the root of the unseal chain, so something has to be.
+#
+# Being in-cluster does NOT protect against a full compromise of a running
+# cluster: the token that unwraps the farm's root key lives here too. It
+# protects data at rest and removes the manual unseal on every pod restart.
+
+# Pins the service to vault-transit.${namespace}.svc, which is what the farm
+# Vault's seal stanza points at.
+fullnameOverride: vault-transit
+
+global:
+  # This traffic effectively unwraps the farm's root key, so it gets the same
+  # protection as the farm Vault itself.
+  tlsDisable: false
+
+injector:
+  enabled: false
+
+ui:
+  enabled: true
+
+server:
+  # No Kubernetes auth here, so no TokenReview, so no delegation needed. This
+  # Vault answers exactly one caller, over token auth.
+  authDelegator:
+    enabled: false
+
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+      cpu: 500m
+
+  dataStorage:
+    enabled: true
+    size: ${data_size}
+%{ if storage_class != "" ~}
+    storageClass: ${storage_class}
+%{ endif ~}
+
+  extraEnvironmentVars:
+    VAULT_CACERT: /vault/userconfig/vault-transit-tls/ca.crt
+
+  volumes:
+    - name: userconfig-vault-transit-tls
+      secret:
+        secretName: vault-transit-tls
+  volumeMounts:
+    - name: userconfig-vault-transit-tls
+      mountPath: /vault/userconfig/vault-transit-tls
+      readOnly: true
+
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        address       = "[::]:8200"
+        tls_cert_file = "/vault/userconfig/vault-transit-tls/tls.crt"
+        tls_key_file  = "/vault/userconfig/vault-transit-tls/tls.key"
+      }
+
+      storage "file" {
+        path = "/vault/data"
+      }

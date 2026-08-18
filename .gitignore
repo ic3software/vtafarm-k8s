@@ -22,10 +22,13 @@ modules/**/.terraform.lock.hcl
 
 # Secrets / generated artefacts
 /stacks/03-rke2-clusters/clusters/
+/stacks/04-vtafarm-platform/clusters/
 kubeconfig
 kubeconfig.yaml
 *.pem
 .env
+# `vault operator init` output: recovery keys and the initial root token.
+vault-init*.json
 
 # Tooling
 node_modules/

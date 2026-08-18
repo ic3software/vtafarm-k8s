@@ -1,0 +1,137 @@
+# Farm Vault: HA + Raft + in-cluster TLS + transit auto-unseal.
+# Values map 1:1 to https://github.com/hashicorp/vault-helm/blob/v${chart_version}/values.yaml
+
+# Pin resource names to `vault` regardless of the release name, so the
+# in-cluster names are deterministic and match both the certificate SANs and
+# the retry_join peer hostnames below:
+#   service       vault           -> clients use https://vault.${namespace}.svc:8200
+#   headless svc  vault-internal
+#   pods          vault-0..N      -> peers vault-0.vault-internal, ...
+fullnameOverride: vault
+
+global:
+  # TLS is on and Vault is never exposed outside the cluster - there is no
+  # ingress. cert-manager issues the server certificate.
+  tlsDisable: false
+
+# Agent Injector off: the VTA pods authenticate to Vault natively through the
+# Kubernetes auth method and read their own seed. No sidecar, no annotations,
+# one less Deployment and one less attack surface.
+injector:
+  enabled: false
+
+ui:
+  enabled: true
+
+server:
+  # Binds Vault's ServiceAccount to system:auth-delegator so Vault can call
+  # TokenReview to validate the tenant pods' ServiceAccount JWTs.
+  authDelegator:
+    enabled: true
+
+  dataStorage:
+    enabled: true
+    size: ${data_size}
+%{ if storage_class != "" ~}
+    storageClass: ${storage_class}
+%{ endif ~}
+
+  # A secrets store needs a durable audit trail. Enable the device after init:
+  #   vault audit enable file file_path=/vault/audit/audit.log
+  auditStorage:
+    enabled: true
+    size: ${audit_size}
+%{ if storage_class != "" ~}
+    storageClass: ${storage_class}
+%{ endif ~}
+
+  # Right-sized for an early farm. HashiCorp's reference numbers (8Gi/16Gi) are
+  # for large-scale production; raise these as tenant count and load grow.
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: 2000m
+
+  readinessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+  livenessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true"
+    initialDelaySeconds: 60
+
+  extraEnvironmentVars:
+    VAULT_CACERT: /vault/userconfig/vault-tls/ca.crt
+
+  volumes:
+    - name: userconfig-vault-tls
+      secret:
+        secretName: vault-tls
+  volumeMounts:
+    - name: userconfig-vault-tls
+      mountPath: /vault/userconfig/vault-tls
+      readOnly: true
+
+  # The transit auto-unseal token, minted by scripts/vault-bootstrap.sh transit
+  # into the `vault-transit-token` secret. Until that secret exists these pods
+  # stay in CreateContainerConfigError - that is the documented bootstrap order,
+  # not a failure.
+  extraSecretEnvironmentVars:
+    - envName: VAULT_TOKEN
+      secretName: vault-transit-token
+      secretKey: token
+
+  ha:
+    enabled: true
+    replicas: ${replicas}
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+        cluster_name = "vtafarm-vault"
+
+        listener "tcp" {
+          address          = "[::]:8200"
+          cluster_address  = "[::]:8201"
+          tls_cert_file    = "/vault/userconfig/vault-tls/tls.crt"
+          tls_key_file     = "/vault/userconfig/vault-tls/tls.key"
+          tls_ca_cert_file = "/vault/userconfig/vault-tls/ca.crt"
+        }
+
+        storage "raft" {
+          path = "/vault/data"
+          # One stanza per replica, generated from server.ha.replicas so the
+          # two can never drift. Peers auto-join over TLS; no manual
+          # `vault operator raft join` is needed.
+%{ for index in range(replicas) ~}
+          retry_join {
+            leader_api_addr         = "https://vault-${index}.vault-internal:8200"
+            leader_ca_cert_file     = "/vault/userconfig/vault-tls/ca.crt"
+            leader_client_cert_file = "/vault/userconfig/vault-tls/tls.crt"
+            leader_client_key_file  = "/vault/userconfig/vault-tls/tls.key"
+          }
+%{ endfor ~}
+        }
+
+        service_registration "kubernetes" {}
+
+        # Auto-unseal against the standalone transit Vault. Without it every pod
+        # restart would block on a human pasting unseal keys.
+        # tls_skip_verify: the transit Vault has its own self-signed CA, which
+        # this Vault has no copy of.
+        seal "transit" {
+          address         = "https://vault-transit.${transit_namespace}.svc:8200"
+          key_name        = "autounseal"
+          mount_path      = "transit/"
+          disable_renewal = "false"
+          tls_skip_verify = "true"
+        }
+
+        # Moving to a cloud KMS later is a swap of the stanza above, and then
+        # the transit Vault can be deleted:
+        #   seal "gcpckms" { project=... key_ring=... crypto_key=... }
+        #   seal "awskms"  { region=... kms_key_id="alias/vault-unseal" }

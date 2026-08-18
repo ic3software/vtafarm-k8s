@@ -1,0 +1,15 @@
+apiVersion: v2
+name: vault-pki
+description: >-
+  cert-manager trust chain for one Vault instance: a self-signed Issuer, a
+  long-lived internal CA, a CA Issuer, and the auto-renewing server certificate
+  the Vault pods mount. Optionally the NetworkPolicy fronting that instance.
+
+  Delivered as a chart rather than kubernetes_manifest resources on purpose.
+  kubernetes_manifest resolves a resource's schema at PLAN time, so it cannot
+  describe a custom resource whose CRD the same apply is still installing -
+  the first plan fails and depends_on does not help. Helm renders client-side
+  and lets the API server validate, so cert-manager and its Certificates can
+  live in one stack.
+type: application
+version: 0.1.0
