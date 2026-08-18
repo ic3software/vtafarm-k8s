@@ -77,7 +77,7 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ├── Makefile                    # every common task is a make target
 ├── stacks/
 │   ├── 01-infra/               # Hetzner resources + the k3s cluster
-│   ├── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
+│   ├── 02-rancher/             # cert-manager + Rancher + backups + upgrade controller
 │   └── 03-rke2-clusters/
 │       ├── _template/          # tracked template for downstream clusters
 │       └── clusters/           # generated RKE2 roots (entire directory is gitignored)
@@ -351,7 +351,7 @@ dig +short rancher.yourdomain.com
 ### Step 4 — Install Rancher
 
 ```bash
-cd stacks/02-platform
+cd stacks/02-rancher
 cp terraform.tfvars.example terraform.tfvars
 code terraform.tfvars
 ```
@@ -367,7 +367,7 @@ backup_s3_secret_key = "..."
 
 ```bash
 cd ../..
-make apply-platform
+make apply-rancher
 ```
 
 Takes **5–10 minutes** (cert-manager → Rancher → certificate issuance).
@@ -628,13 +628,13 @@ Handled by `system-upgrade-controller` — the
 It is already installed and **pinned to an explicit version**, so nothing moves on its own.
 
 ```hcl
-# stacks/02-platform/terraform.tfvars
+# stacks/02-rancher/terraform.tfvars
 k3s_target_version = "v1.35.8+k3s1"
 ```
 
 ```bash
 make snapshot
-make apply-platform
+make apply-rancher
 ```
 
 The controller works **one node at a time**: cordon → swap the binary → restart → wait for
@@ -658,13 +658,13 @@ kubectl get nodes -w
 ### 2. Rancher
 
 ```hcl
-# stacks/02-platform/terraform.tfvars
+# stacks/02-rancher/terraform.tfvars
 rancher_chart_version = "2.14.4"
 ```
 
 ```bash
 make snapshot        # rollback for a failed Rancher upgrade IS the etcd snapshot
-make apply-platform
+make apply-rancher
 ```
 
 Rancher cannot skip minor versions (no 2.12 → 2.14; go 2.12 → 2.13 → 2.14).
@@ -784,7 +784,7 @@ controller) while keeping the stack 01 k3s infrastructure and independently
 managed RKE2 infrastructure:
 
 ```bash
-make destroy-platform
+make destroy-rancher
 ```
 
 Destroy every generated RKE2 cluster, then stack 01:
@@ -803,9 +803,9 @@ Stack 02 is deliberately skipped: cert-manager, Rancher, the backup operator
 and the upgrade controller all live inside the k3s cluster, so stack 01's
 destroy removes them with the servers and a separate `helm uninstall` pass
 would only add minutes. Because those resources vanish without OpenTofu
-noticing, the command deletes `stacks/02-platform/terraform.tfstate` once
+noticing, the command deletes `stacks/02-rancher/terraform.tfstate` once
 stack 01 is gone — a stale state file there would make the next
-`make apply-platform` refresh against a cluster that no longer exists.
+`make apply-rancher` refresh against a cluster that no longer exists.
 
 > The order matters. Keep each generated RKE2 directory and its OpenTofu state
 > until its cluster has been destroyed. Without that state, `make destroy`

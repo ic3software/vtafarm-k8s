@@ -121,7 +121,7 @@ Force a reissue:
 ```bash
 kubectl -n cattle-system delete secret tls-rancher-ingress
 kubectl -n cattle-system delete certificate tls-rancher-ingress
-make apply-platform
+make apply-rancher
 ```
 
 ---
@@ -228,7 +228,7 @@ kubectl get nodes -w
 
 ---
 
-## `make apply-platform` fails with "cannot load kubeconfig"
+## `make apply-rancher` fails with "cannot load kubeconfig"
 
 Stack 02 reads `../../kubeconfig`, which stack 01 writes.
 

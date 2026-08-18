@@ -15,7 +15,7 @@
 Configured in:
 
 - etcd: `etcd_snapshot_*` / `etcd_s3_*` in `stacks/01-infra/terraform.tfvars`
-- Rancher: `rancher_backup_*` / `backup_s3_*` in `stacks/02-platform/terraform.tfvars`
+- Rancher: `rancher_backup_*` / `backup_s3_*` in `stacks/02-rancher/terraform.tfvars`
 
 ---
 
@@ -37,7 +37,7 @@ decrypted.**
 
 ```text
 stacks/01-infra/terraform.tfstate
-stacks/02-platform/terraform.tfstate
+stacks/02-rancher/terraform.tfstate
 ```
 
 Lose it and OpenTofu forgets everything it built; the next apply tries to recreate the world.

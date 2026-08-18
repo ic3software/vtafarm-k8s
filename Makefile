@@ -1,7 +1,7 @@
 SHELL      := /usr/bin/env bash
 ROOT       := $(shell pwd)
 INFRA      := $(ROOT)/stacks/01-infra
-PLATFORM   := $(ROOT)/stacks/02-platform
+RANCHER    := $(ROOT)/stacks/02-rancher
 RKE2_ROOT  := $(ROOT)/stacks/03-rke2-clusters/clusters
 RKE2_TEMPLATE := $(ROOT)/stacks/03-rke2-clusters/_template
 RKE2_CLUSTER_DIR := $(RKE2_ROOT)/$(CLUSTER)
@@ -22,11 +22,11 @@ help: ## Show this help
 .PHONY: lint
 lint: ## Check OpenTofu formatting and Markdown style
 	tofu -chdir=$(INFRA) fmt -recursive -check
-	tofu -chdir=$(PLATFORM) fmt -recursive -check
+	tofu -chdir=$(RANCHER) fmt -recursive -check
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive -check
 	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive -check
 	tofu -chdir=$(INFRA) validate
-	tofu -chdir=$(PLATFORM) validate
+	tofu -chdir=$(RANCHER) validate
 	tofu -chdir=$(RKE2_TEMPLATE) validate
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	markdownlint-cli2
@@ -34,7 +34,7 @@ lint: ## Check OpenTofu formatting and Markdown style
 .PHONY: fmt
 fmt: ## Auto-format OpenTofu and Markdown in place
 	tofu -chdir=$(INFRA) fmt -recursive
-	tofu -chdir=$(PLATFORM) fmt -recursive
+	tofu -chdir=$(RANCHER) fmt -recursive
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive
 	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive
 	markdownlint-cli2 --fix
@@ -42,7 +42,7 @@ fmt: ## Auto-format OpenTofu and Markdown in place
 .PHONY: init
 init: ## Download providers for all stacks and module tests
 	tofu -chdir=$(INFRA) init
-	tofu -chdir=$(PLATFORM) init
+	tofu -chdir=$(RANCHER) init
 	tofu -chdir=$(RKE2_TEMPLATE) init -backend=false
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster init -backend=false
 
@@ -78,23 +78,23 @@ outputs: ## Print stack 01 outputs (LB IPs, node IPs, DNS records)
 token: ## Print the k3s join/encryption token - store this somewhere safe
 	@tofu -chdir=$(INFRA) output -raw k3s_token; echo
 
-# --- stack 02: cert-manager + Rancher --------------------------------------
+# --- stack 02: Rancher on the management cluster ---------------------------
 
-.PHONY: plan-platform
-plan-platform: ## Show what stack 02 would change
-	tofu -chdir=$(PLATFORM) plan
+.PHONY: plan-rancher
+plan-rancher: ## Show what stack 02 would change on the management cluster
+	tofu -chdir=$(RANCHER) plan
 
-.PHONY: apply-platform
-apply-platform: ## Install/upgrade cert-manager, Rancher, backups, upgrade controller
-	tofu -chdir=$(PLATFORM) apply
+.PHONY: apply-rancher
+apply-rancher: ## Install/upgrade Rancher, cert-manager, backups and the upgrade controller
+	tofu -chdir=$(RANCHER) apply
 
-.PHONY: destroy-platform
-destroy-platform: ## Destroy stack 02 only; keep stack 01 and RKE2 infrastructure
-	tofu -chdir=$(PLATFORM) destroy
+.PHONY: destroy-rancher
+destroy-rancher: ## Destroy stack 02 only; keep stack 01 and RKE2 infrastructure
+	tofu -chdir=$(RANCHER) destroy
 
 .PHONY: rancher-password
 rancher-password: ## Print the Rancher bootstrap password
-	@tofu -chdir=$(PLATFORM) output -raw rancher_bootstrap_password; echo
+	@tofu -chdir=$(RANCHER) output -raw rancher_bootstrap_password; echo
 
 # --- stack 03: Rancher-provisioned downstream RKE2 clusters ---------------
 
@@ -212,10 +212,10 @@ ssh: ## SSH into the first control-plane node
 # Stack 02 is not destroyed here: every resource it owns lives inside the k3s
 # cluster, so destroying stack 01 removes them anyway and a helm uninstall pass
 # would only add minutes. Its state file must still go, or the next
-# apply-platform would refresh against a cluster that no longer exists.
+# apply-rancher would refresh against a cluster that no longer exists.
 .PHONY: destroy
 destroy: ## Tear down RKE2 clusters, then infrastructure; drop the stale stack 02 state
 	@$(MAKE) --no-print-directory destroy-all-rke2
 	tofu -chdir=$(INFRA) destroy
-	@rm -f $(PLATFORM)/terraform.tfstate $(PLATFORM)/terraform.tfstate.backup
+	@rm -f $(RANCHER)/terraform.tfstate $(RANCHER)/terraform.tfstate.backup
 	@echo "==> removed stack 02 state (its resources died with the cluster)"

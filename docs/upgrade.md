@@ -55,13 +55,13 @@ curl -s https://update.k3s.io/v1-release/channels \
 ### Procedure
 
 ```hcl
-# stacks/02-platform/terraform.tfvars
+# stacks/02-rancher/terraform.tfvars
 k3s_target_version = "v1.35.8+k3s1"
 ```
 
 ```bash
 make snapshot
-make apply-platform
+make apply-rancher
 ```
 
 ### Watch it
@@ -124,13 +124,13 @@ Configuration lives in `/etc/rancher/k3s/config.yaml` and is not touched by a re
 ### Procedure
 
 ```hcl
-# stacks/02-platform/terraform.tfvars
+# stacks/02-rancher/terraform.tfvars
 rancher_chart_version = "2.14.4"
 ```
 
 ```bash
 make snapshot
-make apply-platform
+make apply-rancher
 ```
 
 ### Watch it
@@ -162,12 +162,12 @@ snapshot taken before the upgrade — see
 ## 3. Upgrading cert-manager
 
 ```hcl
-# stacks/02-platform/terraform.tfvars
+# stacks/02-rancher/terraform.tfvars
 cert_manager_version = "v1.22.0"
 ```
 
 ```bash
-make apply-platform
+make apply-rancher
 ```
 
 CRDs are managed by the chart (`crds.enabled=true`) and upgrade with it. Afterwards:
@@ -260,7 +260,7 @@ time from the highest-numbered server to server-1. Any failed check stops the up
 
 ```bash
 tofu -chdir=stacks/01-infra init -upgrade
-tofu -chdir=stacks/02-platform init -upgrade
+tofu -chdir=stacks/02-rancher init -upgrade
 ```
 
 `.terraform.lock.hcl` changes — **commit it**.
@@ -281,7 +281,7 @@ control plane. Stop and read the provider CHANGELOG before continuing.
 ```text
 [ ] target version is inside Rancher's support matrix
 [ ] make snapshot, and make snapshots shows it in S3
-[ ] make plan / make plan-platform show no unexpected replacements
+[ ] make plan / make plan-rancher show no unexpected replacements
 [ ] upgrade k3s; all three nodes report the new version
 [ ] upgrade Rancher; rollout completes
 [ ] make status is clean
