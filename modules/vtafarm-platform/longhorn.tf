@@ -31,6 +31,16 @@ resource "helm_release" "longhorn" {
     value = "false"
   }
 
+  # The chart's pre-delete hook job aborts with BackoffLimitExceeded unless this
+  # is true, which leaves `tofu destroy` unable to finish and the release stuck
+  # in `uninstalling`. It is the guard against deleting Longhorn while it still
+  # holds volumes - turning it on means a destroy takes the Vault Raft data with
+  # it, without a second prompt.
+  set {
+    name  = "defaultSettings.deletingConfirmationFlag"
+    value = "true"
+  }
+
   wait    = true
   timeout = 900
 }
