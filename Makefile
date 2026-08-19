@@ -200,6 +200,10 @@ destroy-all-rke2: ## Destroy every generated RKE2 cluster before Rancher
 
 # --- stack 04: the vtafarm platform on a downstream RKE2 cluster -----------
 
+# Stack 04 only reaches the cluster through Rancher's proxy, which rate-limits.
+# Concurrent helm_release discovery bursts come back 429, so serialize them.
+VTAFARM_PLATFORM_PARALLELISM := 1
+
 .PHONY: new-vtafarm-platform
 new-vtafarm-platform: ## Scaffold the platform root for an RKE2 cluster (CLUSTER=name)
 	@bash $(ROOT)/scripts/new-vtafarm-platform.sh "$(CLUSTER)"
@@ -227,11 +231,11 @@ init-vtafarm-platform: check-vtafarm-platform ## Initialize one platform root (C
 
 .PHONY: plan-vtafarm-platform
 plan-vtafarm-platform: check-vtafarm-platform ## Plan the downstream cluster's platform (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) plan
+	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) plan -parallelism=$(VTAFARM_PLATFORM_PARALLELISM)
 
 .PHONY: apply-vtafarm-platform
 apply-vtafarm-platform: check-vtafarm-platform ## Install cert-manager, Longhorn and Vault downstream (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) apply
+	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) apply -parallelism=$(VTAFARM_PLATFORM_PARALLELISM)
 
 .PHONY: outputs-vtafarm-platform
 outputs-vtafarm-platform: check-vtafarm-platform ## Print one platform root's outputs (CLUSTER=name)
@@ -239,7 +243,7 @@ outputs-vtafarm-platform: check-vtafarm-platform ## Print one platform root's ou
 
 .PHONY: destroy-vtafarm-platform
 destroy-vtafarm-platform: check-vtafarm-platform ## Destroy stack 04 only; keep the RKE2 cluster (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) destroy
+	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) destroy -parallelism=$(VTAFARM_PLATFORM_PARALLELISM)
 
 # Both Vaults come up sealed, and unsealing needs keys that must never reach
 # OpenTofu state - so init and unseal stay manual. See docs/vault.md.
