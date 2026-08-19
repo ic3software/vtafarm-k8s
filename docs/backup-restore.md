@@ -248,7 +248,7 @@ done
 ### Step 5 — verify
 
 ```bash
-export KUBECONFIG=$PWD/kubeconfig
+export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
 kubectl get nodes
 kubectl get pods -A
 kubectl -n cattle-system get pods

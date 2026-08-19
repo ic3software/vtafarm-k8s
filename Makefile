@@ -10,7 +10,7 @@ VTAFARM_PLATFORM_ROOT := $(ROOT)/stacks/04-vtafarm-platform/clusters
 VTAFARM_PLATFORM_TEMPLATE := $(ROOT)/stacks/04-vtafarm-platform/_template
 VTAFARM_PLATFORM_CLUSTER_DIR := $(VTAFARM_PLATFORM_ROOT)/$(CLUSTER)
 VTAFARM_PLATFORM_MODULE := $(ROOT)/modules/vtafarm-platform
-KUBECONFIG_FILE := $(ROOT)/kubeconfig
+KUBECONFIG_FILE := $(INFRA)/kubeconfig.yaml
 
 export KUBECONFIG := $(KUBECONFIG_FILE)
 

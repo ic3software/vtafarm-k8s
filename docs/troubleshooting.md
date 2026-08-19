@@ -230,10 +230,10 @@ kubectl get nodes -w
 
 ## `make apply-rancher` fails with "cannot load kubeconfig"
 
-Stack 02 reads `../../kubeconfig`, which stack 01 writes.
+Stack 02 reads `../01-infra/kubeconfig.yaml`, which stack 01 writes.
 
 ```bash
-ls -l kubeconfig
+ls -l stacks/01-infra/kubeconfig.yaml
 make kubeconfig        # re-fetch it
 kubectl get nodes      # confirm it works
 ```

@@ -1,7 +1,7 @@
 variable "kubeconfig_path" {
-  description = "Kubeconfig produced by stack 01."
+  description = "Kubeconfig produced by stack 01, relative to this stack directory."
   type        = string
-  default     = "../../kubeconfig"
+  default     = "../01-infra/kubeconfig.yaml"
 }
 
 # ---------------------------------------------------------------------------

@@ -346,10 +346,11 @@ Takes roughly **5–8 minutes**. OpenTofu will appear to hang on
 `null_resource.kubeconfig` — that is it waiting for the first server to finish bootstrapping.
 This is expected.
 
-The cluster's kubeconfig is now at `./kubeconfig`. Use it directly:
+The cluster's kubeconfig is now at `stacks/01-infra/kubeconfig.yaml`, beside the stack that
+produced it. Use it directly:
 
 ```bash
-export KUBECONFIG=$PWD/kubeconfig
+export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
 kubectl get nodes -o wide
 ```
 

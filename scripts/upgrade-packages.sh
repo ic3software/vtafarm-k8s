@@ -189,7 +189,7 @@ if [ -n "$CLUSTER" ]; then
   ')" || die "cannot read the OpenTofu nodes output for ${CLUSTER}"
 else
   STACK_DIR="$INFRA"
-  KUBECONFIG="${KUBECONFIG:-${ROOT}/kubeconfig}"
+  KUBECONFIG="${KUBECONFIG:-${STACK_DIR}/kubeconfig.yaml}"
   [ -f "$KUBECONFIG" ] ||
     die "missing kubeconfig at ${KUBECONFIG}; deploy the cluster before upgrading it"
 

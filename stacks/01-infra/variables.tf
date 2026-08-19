@@ -340,7 +340,13 @@ variable "etcd_s3_bucket_lookup_type" {
 # ---------------------------------------------------------------------------
 
 variable "kubeconfig_path" {
-  description = "Where to write the fetched kubeconfig on your workstation."
+  description = <<-EOT
+    Where to write the fetched kubeconfig, relative to this stack directory.
+
+    It lands beside the stack that produced it, the same way stack 03 writes
+    one per cluster root. Changing this replaces null_resource.kubeconfig,
+    which only re-runs the fetch - it does not touch the cluster.
+  EOT
   type        = string
-  default     = "../../kubeconfig"
+  default     = "kubeconfig.yaml"
 }
