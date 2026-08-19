@@ -1,0 +1,20 @@
+# Copy this file to backend.tf before the first `tofu init` when remote state is
+# desired. Each cluster MUST use a unique key. Credentials belong in
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, not in this file.
+terraform {
+  backend "s3" {
+    bucket = "REPLACE_WITH_STATE_BUCKET"
+    key    = "vtafarm-platform/REPLACE_CLUSTER_NAME/terraform.tfstate"
+    region = "nbg1"
+
+    endpoints = {
+      s3 = "https://nbg1.your-objectstorage.com"
+    }
+
+    use_path_style              = true
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+  }
+}

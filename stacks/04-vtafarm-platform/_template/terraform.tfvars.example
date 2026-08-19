@@ -1,0 +1,33 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+#
+# Every value below has a working default in variables.tf. The defaults match a
+# stack 03 cluster built with its own defaults (three cx33 nodes, all
+# schedulable), so an unedited copy is usually correct.
+
+# --- Where to install ------------------------------------------------------
+# Leave empty to read the kubeconfig stack 03 wrote for the cluster whose
+# directory name matches this one. Set it only if the file lives elsewhere.
+kubeconfig_path = ""
+
+# --- Storage ---------------------------------------------------------------
+# Longhorn replicates each volume across nodes and becomes the default class,
+# demoting the hcloud-volumes class the RKE2 module installs. Keep the replica
+# count at or below the number of schedulable nodes.
+longhorn_version       = "1.12.1"
+longhorn_replica_count = 3
+longhorn_default_class = true
+
+# --- Vault -----------------------------------------------------------------
+# vault_replicas must be odd and cannot exceed the schedulable node count: the
+# chart pins one Vault pod per node, so a fourth peer would stay Pending.
+vault_chart_version = "0.33.0"
+vault_replicas      = 3
+vault_data_size     = "10Gi"
+vault_audit_size    = "10Gi"
+transit_data_size   = "1Gi"
+storage_class       = "longhorn"
+
+# --- cert-manager ----------------------------------------------------------
+# Issues the internal Vault certificates. Unrelated to the cert-manager stack
+# 02 installs on the management cluster, but kept on the same version.
+cert_manager_version = "v1.21.1"

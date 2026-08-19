@@ -1,7 +1,9 @@
 # k3s HA + Rancher + downstream RKE2 on Hetzner Cloud
 
 OpenTofu for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
-Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one.
+Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one — and the
+downstream RKE2 clusters it provisions, each carrying the platform the vtafarm applications
+need: **cert-manager**, **Longhorn** and **HashiCorp Vault**.
 
 The HA topology follows the [official k3s embedded-etcd HA guide](https://docs.k3s.io/datastore/ha-embedded):
 an odd number of server nodes, the first started with `--cluster-init`, the rest joining through a
@@ -55,6 +57,42 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
                   Hetzner Object Storage (S3)
 ```
 
+Every downstream RKE2 cluster Rancher provisions carries its own platform layer. The farm
+Vault stores each VTA's master seed and auto-unseals against a second, single-node Vault that
+holds nothing but the key to unwrap it:
+
+```text
+                          internet
+                              │
+                ┌─────────────▼───────────────┐
+                │  Hetzner Load Balancer      │
+                │    :6443  Kubernetes API    │  → servers
+                │    :9345  RKE2 registration │  → servers
+                │    :80 :443  Traefik        │  → all nodes
+                └─────────────┬───────────────┘
+  ┌───────────────────────────┴─────────────────────────────┐
+  │         Hetzner private network 10.10.1.0/24            │
+  │                                                         │
+  │   server-1          server-2          server-3          │
+  │   ┌──────────┐      ┌──────────┐      ┌──────────┐      │
+  │   │ RKE2     │      │ RKE2     │      │ RKE2     │      │
+  │   │ + etcd   │◄────►│ + etcd   │◄────►│ + etcd   │      │
+  │   │ Longhorn │◄────►│ Longhorn │◄────►│ Longhorn │      │
+  │   │ vault-0  │◄────►│ vault-1  │◄────►│ vault-2  │      │
+  │   └──────────┘      └──────────┘      └──────────┘      │
+  │      namespace vault — Raft, HA, auto-unsealed          │
+  │                          │                              │
+  │                          │ seal "transit"               │
+  │                          ▼                              │
+  │   ┌───────────────────────────────────────────┐         │
+  │   │ namespace vault-transit                   │         │
+  │   │   vault-transit-0   holds `autounseal`    │         │
+  │   │   Shamir-sealed, unsealed by hand         │         │
+  │   │   NetworkPolicy: reachable from ns/vault  │         │
+  │   └───────────────────────────────────────────┘         │
+  └─────────────────────────────────────────────────────────┘
+```
+
 ### Design decisions worth knowing about
 
 | Decision | Why |
@@ -68,6 +106,8 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 | **Hetzner cloud controller manager (CCM) manages nodes, OpenTofu manages load balancers** | The CCM sets `providerID`, topology labels and node lifecycle. Its load-balancer controller is switched off (`HCLOUD_LOAD_BALANCERS_ENABLED=false`) — otherwise it creates load balancers OpenTofu doesn't know about, which survive `tofu destroy` and keep billing you. |
 | **Traefik as a DaemonSet with hostPorts** | Installing an external CCM requires `--disable-cloud-controller`, which also removes k3s' built-in servicelb (klipper). Traefik binds directly to `:80`/`:443` on the host instead, so the load balancer has something to reach. |
 | **IPv4 only on the nodes** | One address family is one set of firewall rules to reason about. Hetzner still gives the load balancer an IPv6 address and offers no switch for that, but it reaches the nodes over private IPv4 regardless. |
+| **A transit Vault for auto-unseal, not manual keys** | Without it every Vault pod restart blocks on a human pasting unseal keys. The transit Vault is the root of the chain, so it is the one thing still unsealed by hand — but it holds no tenant data, so losing it costs a re-key rather than the seeds. It buys unattended restarts, not protection against a compromise of a live cluster: the token that unwraps the farm's root key lives in the same cluster. Swapping the `seal` stanza moves it to a cloud KMS. |
+| **Longhorn owns the default StorageClass** | The RKE2 module already installs hcloud-csi, so the cluster has block storage — single-replica, separately billed, one volume attached to one node. Vault's Raft data wants replication across nodes, so Longhorn takes the default and `hcloud-volumes` is explicitly demoted. Two classes both claiming to be default is undefined behaviour: the API server picks one and PVCs land on the wrong storage silently. |
 | **`cx23` on x86, not the ARM64 `cax` line** | `cx23` is 2 vCPU / 4 GB / 40 GB NVMe on shared AMD EPYC. The memory budget is deliberately tight — k3s with etcd takes ~1 GB, a Rancher replica 1–1.5 GB, the bundled add-ons ~0.5 GB — so watch for OOMKills during Rancher upgrades and step up to `cx33` if they appear. The `cax` (ARM64) line is cheaper still, but [Rancher documents ARM64 as experimental and not recommended for production](https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64). |
 
 ### Repository layout
@@ -77,35 +117,55 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
 ├── Makefile                    # every common task is a make target
 ├── stacks/
 │   ├── 01-infra/               # Hetzner resources + the k3s cluster
-│   ├── 02-platform/            # cert-manager + Rancher + backups + upgrade controller
-│   └── 03-rke2-clusters/
-│       ├── _template/          # tracked template for downstream clusters
-│       └── clusters/           # generated RKE2 roots (entire directory is gitignored)
+│   ├── 02-rancher/             # cert-manager + Rancher + backups + upgrade controller
+│   ├── 03-rke2-clusters/
+│   │   ├── _template/          # tracked template for downstream clusters
+│   │   └── clusters/           # generated RKE2 roots (entire directory is gitignored)
+│   └── 04-vtafarm-platform/
+│       ├── _template/          # tracked template for a cluster's platform layer
+│       └── clusters/           # generated platform roots (also gitignored)
 ├── modules/
-│   └── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
+│   ├── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
+│   └── vtafarm-platform/       # cert-manager + Longhorn + both Vaults
+│       ├── charts/vault-pki/   # cert-manager Issuer + Certificate chain
+│       └── templates/          # Vault chart values
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
 │   ├── delete-kube-context.sh  # remove it from ~/.kube/config
-│   └── etcd-snapshot.sh        # take / list etcd snapshots
+│   ├── etcd-snapshot.sh        # take / list etcd snapshots
+│   └── vault-bootstrap.sh      # one-time Vault configuration, per cluster
 └── docs/
     ├── backup-restore.md       # disaster-recovery runbook (includes a drill)
     ├── upgrade.md              # upgrade runbook
+    ├── vault.md                # Vault init, unseal, bootstrap and day-2
     └── troubleshooting.md      # start here when something is stuck
 ```
 
-**Why two stacks?**
+**Why four stacks?**
 OpenTofu must be able to configure a provider *before* it starts running. The `helm` and
 `kubernetes` providers need a kubeconfig — which only exists after stack 01 has finished.
 Putting both in one stack creates a chicken-and-egg problem. Split apart, stack 01 builds the
 cluster and emits a kubeconfig, stack 02 consumes it. This is the standard pattern.
 
-Downstream RKE2 clusters add a third layer. Rancher must already be reachable before its
-provider can create a custom cluster and return the node registration command. Every cluster
-under `stacks/03-rke2-clusters/clusters/<name>` calls the same shared module but keeps a
-separate state. The generated `clusters/` directory is gitignored because it contains
-configuration and state,
-so creating or destroying a second RKE2 cluster cannot replace the first cluster's state.
+The same argument repeats twice more, one layer down:
+
+| Stack | Waits for | Providers |
+| --- | --- | --- |
+| `01-infra` | nothing | `hcloud` |
+| `02-rancher` | stack 01's kubeconfig | `helm`, `kubernetes` |
+| `03-rke2-clusters` | Rancher to be reachable | `hcloud`, `rancher2` |
+| `04-vtafarm-platform` | stack 03's cluster to be Active | `helm`, `kubernetes` |
+
+Rancher must already be up before its provider can create a custom cluster and return the node
+registration command — that is stack 03. And that cluster must be Active and returning a
+kubeconfig before anything can install into it — that is stack 04.
+
+Both 03 and 04 keep one root per cluster, under `clusters/<name>`, each with its own state, so
+creating or destroying a second cluster cannot disturb the first. The shared logic lives in
+`modules/`, which is tracked; the generated `clusters/` directories are gitignored because they
+hold configuration and state. A cluster's directory name is the source of truth in both stacks,
+which is also how stack 04 finds the kubeconfig stack 03 wrote for the same name.
 
 ---
 
@@ -286,10 +346,11 @@ Takes roughly **5–8 minutes**. OpenTofu will appear to hang on
 `null_resource.kubeconfig` — that is it waiting for the first server to finish bootstrapping.
 This is expected.
 
-The cluster's kubeconfig is now at `./kubeconfig`. Use it directly:
+The cluster's kubeconfig is now at `stacks/01-infra/kubeconfig.yaml`, beside the stack that
+produced it. Use it directly:
 
 ```bash
-export KUBECONFIG=$PWD/kubeconfig
+export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
 kubectl get nodes -o wide
 ```
 
@@ -351,7 +412,7 @@ dig +short rancher.yourdomain.com
 ### Step 4 — Install Rancher
 
 ```bash
-cd stacks/02-platform
+cd stacks/02-rancher
 cp terraform.tfvars.example terraform.tfvars
 code terraform.tfvars
 ```
@@ -367,7 +428,7 @@ backup_s3_secret_key = "..."
 
 ```bash
 cd ../..
-make apply-platform
+make apply-rancher
 ```
 
 Takes **5–10 minutes** (cert-manager → Rancher → certificate issuance).
@@ -503,6 +564,70 @@ RKE2 clusters:
 make destroy-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
+### Step 7 — Install the platform layer
+
+Everything so far built clusters. This step installs what runs *on* the downstream one:
+cert-manager, Longhorn, and the two Vaults.
+
+```bash
+make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make init-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make apply-vtafarm-platform CLUSTER=rke2-vtafarm-production
+```
+
+The directory name must match the RKE2 cluster's, because that is where this stack reads the
+kubeconfig from — the scaffold refuses a name with no cluster behind it. The generated
+`terraform.tfvars` needs no edits for a stack 03 cluster built with its defaults; the values
+that matter are the Vault peer count and the Longhorn replica count, both of which default to
+three and must not exceed the number of schedulable nodes.
+
+Takes **5–10 minutes**. Longhorn needs no preparation on the hosts: the RKE2 nodes already
+install `open-iscsi` and `nfs-common` and enable `iscsid` from cloud-init.
+
+```bash
+make vault-status CLUSTER=rke2-vtafarm-production
+```
+
+**Both Vaults come up sealed, and a sealed Vault reports itself not ready.** The transit pod
+shows `0/1` and the farm pods sit in `CreateContainerConfigError` waiting for a secret that does
+not exist yet. That is the expected state after this apply, not a failure — which is also why
+neither Helm release waits for readiness.
+
+Initializing and unsealing them produces recovery keys and root tokens. Those must never reach
+OpenTofu state, so those two steps stay manual and everything after them is a script:
+
+```bash
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/kubeconfig.yaml
+
+# 1. init + unseal the transit Vault (Shamir keys — store them offline)
+kubectl exec -n vault-transit vault-transit-0 -- \
+  vault operator init -key-shares=5 -key-threshold=3 -format=json > vault-init-transit.json
+kubectl exec -it -n vault-transit vault-transit-0 -- vault operator unseal   # ×3
+
+# 2. mint the farm's unseal token, then let the farm pods pick it up
+export VAULT_TOKEN=        # root token from vault-init-transit.json
+make vault-bootstrap CLUSTER=rke2-vtafarm-production TARGET=transit
+kubectl -n vault rollout restart statefulset/vault
+
+# 3. init the farm Vault — auto-unseal means the peers unseal themselves
+kubectl exec -n vault vault-0 -- vault operator init -format=json > vault-init-farm.json
+
+# 4. configure it for vtafarm-api
+export VAULT_TOKEN=        # root token from vault-init-farm.json
+make vault-bootstrap CLUSTER=rke2-vtafarm-production TARGET=farm
+```
+
+> ⚠️ Both `vault-init-*.json` files hold recovery keys and a root token. Move them into a
+> password manager and delete the local copies. They are gitignored; that is not the same as
+> safe. Each cluster has its own keys, and a Vault snapshot without them is unrecoverable.
+
+vtafarm-api then authenticates with the `vtafarm-api-vault` secret and reaches Vault at
+`https://vault.vault.svc:8200`. The `secret_id` is written straight into that secret rather
+than printed.
+
+The full procedure, the tenant isolation model, and the day-2 operations are in
+**[docs/vault.md](docs/vault.md)**.
+
 ---
 
 ## Testing
@@ -628,13 +753,13 @@ Handled by `system-upgrade-controller` — the
 It is already installed and **pinned to an explicit version**, so nothing moves on its own.
 
 ```hcl
-# stacks/02-platform/terraform.tfvars
+# stacks/02-rancher/terraform.tfvars
 k3s_target_version = "v1.35.8+k3s1"
 ```
 
 ```bash
 make snapshot
-make apply-platform
+make apply-rancher
 ```
 
 The controller works **one node at a time**: cordon → swap the binary → restart → wait for
@@ -658,13 +783,13 @@ kubectl get nodes -w
 ### 2. Rancher
 
 ```hcl
-# stacks/02-platform/terraform.tfvars
+# stacks/02-rancher/terraform.tfvars
 rancher_chart_version = "2.14.4"
 ```
 
 ```bash
 make snapshot        # rollback for a failed Rancher upgrade IS the etcd snapshot
-make apply-platform
+make apply-rancher
 ```
 
 Rancher cannot skip minor versions (no 2.12 → 2.14; go 2.12 → 2.13 → 2.14).
@@ -706,6 +831,16 @@ make upgrade-packages    # apt upgrade every node, one at a time
 make kubeconfig          # re-fetch the kubeconfig
 make kubeconfig-merge    # merge it into ~/.kube/config as a switchable context
 make kubeconfig-delete   # delete it from ~/.kube/config
+```
+
+On a downstream cluster, every target takes `CLUSTER=<name>`:
+
+```bash
+make apply-vtafarm-platform   CLUSTER=rke2-vtafarm-production   # cert-manager, Longhorn, Vault
+make outputs-vtafarm-platform CLUSTER=rke2-vtafarm-production   # the in-cluster Vault address
+make vault-status      CLUSTER=rke2-vtafarm-production   # Vault, Longhorn and certificates
+make vault-bootstrap   CLUSTER=rke2-vtafarm-production TARGET=farm
+make destroy-vtafarm-platform CLUSTER=rke2-vtafarm-production   # keeps the RKE2 cluster itself
 ```
 
 ### Growing the cluster
@@ -753,6 +888,10 @@ ssh root@<node-ip> 'journalctl -u k3s -n 200 --no-pager'
 - Rancher pods in `CrashLoopBackOff`
 - load balancer targets reported unhealthy
 
+For the platform layer on a downstream cluster — sealed Vaults, pods waiting on a secret that
+does not exist yet, `Pending` Raft peers or `Pending` PVCs — see the table at the end of
+**[docs/vault.md](docs/vault.md)**.
+
 ---
 
 ## Cost
@@ -775,6 +914,16 @@ Scaling options:
 - adding a fourth and fifth server costs €13.18/month and buys tolerance for two
   simultaneous node failures instead of one
 
+That table is the **management** cluster only. Every downstream RKE2 cluster is billed on top
+of it and repeats the same shape: its server nodes (`cx33` by default, rather than `cx23`), one
+load balancer, and one public IPv4 per node.
+
+Longhorn adds no Hetzner line item. It replicates across the nodes' own NVMe rather than
+attaching Cloud Volumes, so the Vault PVCs cost disk on machines you are already paying for —
+at the price of consuming it `longhorn_replica_count` times over. Hetzner Cloud Volumes remain
+available as the `hcloud-volumes` class for anything that should be billed and attached
+separately.
+
 ---
 
 ## Teardown
@@ -784,8 +933,18 @@ controller) while keeping the stack 01 k3s infrastructure and independently
 managed RKE2 infrastructure:
 
 ```bash
-make destroy-platform
+make destroy-rancher
 ```
+
+Destroy one cluster's platform layer — cert-manager, Longhorn and both Vaults — while keeping
+the RKE2 cluster it runs on:
+
+```bash
+make destroy-vtafarm-platform CLUSTER=rke2-vtafarm-production
+```
+
+> This deletes the Vault PVCs, and with them every seed the farm Vault held. A Raft snapshot
+> plus the recovery keys is the only way back. See [docs/vault.md](docs/vault.md).
 
 Destroy every generated RKE2 cluster, then stack 01:
 
@@ -799,13 +958,18 @@ cluster deletions. Only after every RKE2 destroy succeeds does it destroy
 stack 01. If any step fails, the command stops without deleting the layers that
 the failed step depends on.
 
+Stack 04 is skipped for each cluster for the same reason stack 02 is skipped below: everything
+it owns lives inside the RKE2 cluster, so that cluster's destroy takes it along. Its state file
+is deleted once the cluster is gone, since a stale one would make the next `apply-vtafarm-platform`
+refresh against a cluster that no longer exists.
+
 Stack 02 is deliberately skipped: cert-manager, Rancher, the backup operator
 and the upgrade controller all live inside the k3s cluster, so stack 01's
 destroy removes them with the servers and a separate `helm uninstall` pass
 would only add minutes. Because those resources vanish without OpenTofu
-noticing, the command deletes `stacks/02-platform/terraform.tfstate` once
+noticing, the command deletes `stacks/02-rancher/terraform.tfstate` once
 stack 01 is gone — a stale state file there would make the next
-`make apply-platform` refresh against a cluster that no longer exists.
+`make apply-rancher` refresh against a cluster that no longer exists.
 
 > The order matters. Keep each generated RKE2 directory and its OpenTofu state
 > until its cluster has been destroyed. Without that state, `make destroy`

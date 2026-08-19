@@ -1,0 +1,25 @@
+# Resource name prefix. Produces <name>-selfsigned, <name>-ca, <name>-ca-issuer
+# and the server certificate secret <name>-tls.
+name: vault
+
+caCommonName: vtafarm-vault-ca
+commonName: vault.vault.svc.cluster.local
+
+# 10 years. The CA is the stable trust anchor: moving to full client
+# verification later reuses it, so no certificate has to be re-issued.
+caDuration: 87600h
+caRenewBefore: 2160h
+
+# 90 days, renewed 15 days out.
+certDuration: 2160h
+certRenewBefore: 360h
+
+dnsNames: []
+ipAddresses:
+  - 127.0.0.1
+
+networkPolicy:
+  enabled: false
+  # Only this namespace may reach the Vault API port.
+  allowFromNamespace: ""
+  port: 8200

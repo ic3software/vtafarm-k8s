@@ -22,10 +22,16 @@ modules/**/.terraform.lock.hcl
 
 # Secrets / generated artefacts
 /stacks/03-rke2-clusters/clusters/
+/stacks/04-vtafarm-platform/clusters/
+# kubeconfig.yaml is the current name for both stack 01 and stack 03. The
+# bare one is what stack 01 wrote before it moved into its stack directory,
+# kept so a stale copy in an older checkout cannot be committed by accident.
 kubeconfig
 kubeconfig.yaml
 *.pem
 .env
+# `vault operator init` output: recovery keys and the initial root token.
+vault-init*.json
 
 # Tooling
 node_modules/

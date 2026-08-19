@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INFRA="${ROOT}/stacks/01-infra"
 TFVARS="${INFRA}/terraform.tfvars"
-KUBECONFIG="${KUBECONFIG:-${ROOT}/kubeconfig}"
+KUBECONFIG="${KUBECONFIG:-${INFRA}/kubeconfig.yaml}"
 TARGET_IMAGE="${TARGET_IMAGE:-}"
 WAIT_TIMEOUT_SECONDS="${UPGRADE_OS_WAIT_TIMEOUT_SECONDS:-1200}"
 BETWEEN_NODES_SECONDS="${UPGRADE_OS_BETWEEN_NODES_SECONDS:-300}"
