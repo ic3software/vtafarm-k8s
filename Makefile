@@ -148,19 +148,7 @@ outputs-rke2: check-rke2-cluster ## Print one RKE2 cluster's outputs (CLUSTER=na
 
 .PHONY: kubeconfig-rke2
 kubeconfig-rke2: check-rke2-cluster ## Write one RKE2 kubeconfig to its ignored directory
-	@raw_kubeconfig="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.raw.yaml.XXXXXX")"; \
-	filtered_kubeconfig="$$(mktemp "$(RKE2_CLUSTER_DIR)/.kubeconfig.filtered.yaml.XXXXXX")"; \
-	trap 'rm -f "$$raw_kubeconfig" "$$filtered_kubeconfig"' EXIT; \
-	tofu -chdir=$(RKE2_CLUSTER_DIR) output -raw kube_config >"$$raw_kubeconfig"; \
-	if [[ ! -s "$$raw_kubeconfig" ]] || \
-	   ! kubectl --kubeconfig="$$raw_kubeconfig" config view --minify --flatten >"$$filtered_kubeconfig" 2>/dev/null || \
-	   [[ -z "$$(kubectl --kubeconfig="$$filtered_kubeconfig" config current-context 2>/dev/null)" ]]; then \
-		echo "ERROR: Rancher has not returned a usable kubeconfig yet." >&2; \
-		echo "Wait for the cluster to become Active, then: make refresh-rke2 CLUSTER=$(CLUSTER)" >&2; \
-		exit 1; \
-	fi; \
-	install -m 600 "$$filtered_kubeconfig" "$(RKE2_KUBECONFIG_FILE)"; \
-	echo "wrote $(RKE2_KUBECONFIG_FILE)"
+	@bash $(ROOT)/scripts/write-rke2-kubeconfig.sh "$(RKE2_CLUSTER_DIR)" "$(RKE2_KUBECONFIG_FILE)"
 
 .PHONY: kubeconfig-merge-rke2
 kubeconfig-merge-rke2: kubeconfig-rke2 ## Merge one RKE2 kubeconfig into ~/.kube/config
