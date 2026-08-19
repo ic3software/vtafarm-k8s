@@ -215,8 +215,10 @@ transit Vault holding the same `autounseal` key. Keep both key sets outside the 
 ### Upgrading the chart
 
 Bump `vault_chart_version` in the cluster's `terraform.tfvars`, read the upstream changelog,
-then `make apply-vtafarm-platform CLUSTER=<name>`. Raft plus auto-unseal makes the rolling restart
-non-disruptive — the pods come back already unsealed.
+then `make apply-vtafarm-platform CLUSTER=<name>`. The apply only stages it: the chart defaults to
+`updateStrategyType: OnDelete`, so nothing restarts until the pods are deleted by hand. Transit
+comes back sealed and needs unsealing before the farm pods can auto-unseal from it, so the order
+and the full procedure are in [`vault-upgrade.md`](vault-upgrade.md).
 
 ### Scaling the peers
 

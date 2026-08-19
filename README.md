@@ -139,6 +139,7 @@ holds nothing but the key to unwrap it:
     ├── backup-restore.md       # disaster-recovery runbook (includes a drill)
     ├── upgrade.md              # upgrade runbook
     ├── vault.md                # Vault init, unseal, bootstrap and day-2
+    ├── vault-upgrade.md        # Vault / transit upgrade + node-drain runbook
     └── troubleshooting.md      # start here when something is stuck
 ```
 
