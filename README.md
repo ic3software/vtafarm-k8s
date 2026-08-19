@@ -3,7 +3,8 @@
 OpenTofu for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
 Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one — and the
 downstream RKE2 clusters it provisions, each carrying the platform the vtafarm applications
-need: **cert-manager**, **Longhorn** and **HashiCorp Vault**.
+need — **cert-manager**, **Longhorn** and **HashiCorp Vault** — and the applications themselves,
+installed from the charts published to GHCR.
 
 The HA topology follows the [official k3s embedded-etcd HA guide](https://docs.k3s.io/datastore/ha-embedded):
 an odd number of server nodes, the first started with `--cluster-init`, the rest joining through a
@@ -121,14 +122,19 @@ holds nothing but the key to unwrap it:
 │   ├── 03-rke2-clusters/
 │   │   ├── _template/          # tracked template for downstream clusters
 │   │   └── clusters/           # generated RKE2 roots (entire directory is gitignored)
-│   └── 04-vtafarm-platform/
-│       ├── _template/          # tracked template for a cluster's platform layer
-│       └── clusters/           # generated platform roots (also gitignored)
+│   ├── 04-vtafarm-platform/
+│   │   ├── _template/          # tracked template for a cluster's platform layer
+│   │   └── clusters/           # generated platform roots (also gitignored)
+│   └── 05-vtafarm-app/
+│       ├── _template/          # tracked template for the applications
+│       └── clusters/           # generated app roots (also gitignored)
 ├── modules/
 │   ├── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
-│   └── vtafarm-platform/       # cert-manager + Longhorn + both Vaults
-│       ├── charts/vault-pki/   # cert-manager Issuer + Certificate chain
-│       └── templates/          # Vault chart values
+│   ├── vtafarm-platform/       # cert-manager + Longhorn + both Vaults
+│   │   ├── charts/vault-pki/   # cert-manager Issuer + Certificate chain
+│   │   └── templates/          # Vault chart values
+│   └── vtafarm-app/            # the frontend and the API, from GHCR
+│       └── charts/vtafarm-tls/ # ACME issuers, wildcard certificate, TLS store
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
@@ -143,7 +149,7 @@ holds nothing but the key to unwrap it:
     └── troubleshooting.md      # start here when something is stuck
 ```
 
-**Why four stacks?**
+**Why five stacks?**
 OpenTofu must be able to configure a provider *before* it starts running. The `helm` and
 `kubernetes` providers need a kubeconfig — which only exists after stack 01 has finished.
 Putting both in one stack creates a chicken-and-egg problem. Split apart, stack 01 builds the
@@ -157,12 +163,13 @@ The same argument repeats twice more, one layer down:
 | `02-rancher` | stack 01's kubeconfig | `helm`, `kubernetes` |
 | `03-rke2-clusters` | Rancher to be reachable | `hcloud`, `rancher2` |
 | `04-vtafarm-platform` | stack 03's cluster to be Active | `helm`, `kubernetes` |
+| `05-vtafarm-app` | stack 04's Vault to be bootstrapped | `helm`, `kubernetes`, `random` |
 
 Rancher must already be up before its provider can create a custom cluster and return the node
 registration command — that is stack 03. And that cluster must be Active and returning a
 kubeconfig before anything can install into it — that is stack 04.
 
-Both 03 and 04 keep one root per cluster, under `clusters/<name>`, each with its own state, so
+Stacks 03, 04 and 05 keep one root per cluster, under `clusters/<name>`, each with its own state, so
 creating or destroying a second cluster cannot disturb the first. The shared logic lives in
 `modules/`, which is tracked; the generated `clusters/` directories are gitignored because they
 hold configuration and state. A cluster's directory name is the source of truth in both stacks,
@@ -629,6 +636,90 @@ than printed.
 The full procedure, the tenant isolation model, and the day-2 operations are in
 **[docs/vault.md](docs/vault.md)**.
 
+### Step 8 — Install the applications
+
+The last stack installs the frontend and the API from the charts published to
+GHCR, along with the ACME issuers and the wildcard certificate they are served
+with. It reads the Vault credentials the previous step produced, so it cannot run
+before them.
+
+```bash
+make new-vtafarm-app CLUSTER=rke2-vtafarm-production
+code stacks/05-vtafarm-app/clusters/rke2-vtafarm-production/terraform.tfvars
+```
+
+One domain drives everything else — the two hostnames, every tenant's, the
+wildcard certificate, WebAuthn and CORS:
+
+```hcl
+domain     = "firstperson.dev"
+acme_email = "admin@firstperson.dev"
+
+# make outputs-rke2 CLUSTER=rke2-vtafarm-production
+cluster_ingress_ip = "..."
+
+cloudflare_api_token = "..."
+cloudflare_zone_id   = "..."
+
+# `make gen-keypair` in the vtafarm-api repo
+did_hosting_did         = "did:key:z6Mk..."
+did_hosting_private_key = "..."
+
+# The published release this farm runs
+vtafarm_version     = "0.1.0"
+vtafarm_api_version = "0.1.0"
+```
+
+Create the two A records first, both pointing at the cluster's load balancer —
+the certificate cannot be issued until the names resolve:
+
+```text
+vtafarm.firstperson.dev.       A   <cluster_ingress_ip>
+vtafarm-api.firstperson.dev.   A   <cluster_ingress_ip>
+```
+
+```bash
+make init-vtafarm-app  CLUSTER=rke2-vtafarm-production
+make plan-vtafarm-app  CLUSTER=rke2-vtafarm-production
+make apply-vtafarm-app CLUSTER=rke2-vtafarm-production
+```
+
+The JWT secret and the database password are generated here rather than supplied,
+so they exist only in this stack's state — which is one more reason to back it
+up. Everything else comes from the values above.
+
+```bash
+make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production
+curl -s https://vtafarm-api.firstperson.dev/health
+curl -s https://vtafarm.firstperson.dev/config.js
+```
+
+The second one should echo back the API's address: the frontend image carries no
+domain of its own, and its entrypoint writes that file at startup.
+
+Create the first admin:
+
+```bash
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/kubeconfig.yaml
+kubectl exec -it deployment/vtafarm-api -- ./enroll
+```
+
+#### Upgrading a farm
+
+Bump one number and apply. Each chart's `appVersion` is its image tag, so the
+chart version pins the image too:
+
+```hcl
+vtafarm_api_version = "0.2.0"
+```
+
+```bash
+make apply-vtafarm-app CLUSTER=rke2-vtafarm-production
+```
+
+> Migrations run when the API starts, and rolling the image back does not roll
+> the schema back with it. Take a database backup before a release that migrates.
+
 ---
 
 ## Testing
@@ -842,6 +933,10 @@ make outputs-vtafarm-platform CLUSTER=rke2-vtafarm-production   # the in-cluster
 make vault-status      CLUSTER=rke2-vtafarm-production   # Vault, Longhorn and certificates
 make vault-bootstrap   CLUSTER=rke2-vtafarm-production TARGET=farm
 make destroy-vtafarm-platform CLUSTER=rke2-vtafarm-production   # keeps the RKE2 cluster itself
+
+make apply-vtafarm-app   CLUSTER=rke2-vtafarm-production   # the frontend and the API
+make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production   # the URLs and the DNS records
+make destroy-vtafarm-app CLUSTER=rke2-vtafarm-production   # both releases; the database volume survives
 ```
 
 ### Growing the cluster
@@ -937,6 +1032,14 @@ managed RKE2 infrastructure:
 make destroy-rancher
 ```
 
+Remove the applications while keeping the cluster and its platform. The database's
+PersistentVolumeClaim carries `helm.sh/resource-policy: keep` and its class retains the volume,
+so the data survives and a later apply re-attaches to it:
+
+```bash
+make destroy-vtafarm-app CLUSTER=rke2-vtafarm-production
+```
+
 Destroy one cluster's platform layer — cert-manager, Longhorn and both Vaults — while keeping
 the RKE2 cluster it runs on:
 
@@ -959,7 +1062,7 @@ cluster deletions. Only after every RKE2 destroy succeeds does it destroy
 stack 01. If any step fails, the command stops without deleting the layers that
 the failed step depends on.
 
-Stack 04 is skipped for each cluster for the same reason stack 02 is skipped below: everything
+Stacks 04 and 05 are skipped for each cluster for the same reason stack 02 is skipped below: everything
 it owns lives inside the RKE2 cluster, so that cluster's destroy takes it along. Its state file
 is deleted once the cluster is gone, since a stale one would make the next `apply-vtafarm-platform`
 refresh against a cluster that no longer exists.

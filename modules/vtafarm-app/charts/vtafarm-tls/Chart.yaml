@@ -1,0 +1,5 @@
+apiVersion: v2
+name: vtafarm-tls
+description: The ACME issuers, the wildcard certificate and the TLS store one farm serves its hostnames with.
+type: application
+version: 0.1.0

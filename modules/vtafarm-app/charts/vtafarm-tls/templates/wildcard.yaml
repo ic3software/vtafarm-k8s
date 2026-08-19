@@ -1,0 +1,26 @@
+# One certificate for every managed and platform hostname, which is why the
+# Ingresses vtafarm-api creates carry no tls: block of their own.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ replace "." "-" .Values.domain }}-wildcard
+  namespace: {{ .Values.traefikNamespace }}
+spec:
+  secretName: {{ .Values.wildcardSecret }}
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ printf "*.%s" .Values.domain | quote }}
+---
+# The store must be named `default` and live in Traefik's own namespace with the
+# secret beside it. Anywhere else it silently does nothing and every hostname
+# falls back to Traefik's self-signed certificate.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: {{ .Values.traefikNamespace }}
+spec:
+  defaultCertificate:
+    secretName: {{ .Values.wildcardSecret }}

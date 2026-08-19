@@ -1,0 +1,7 @@
+domain: ""
+acmeEmail: ""
+traefikNamespace: kube-system
+wildcardSecret: ""
+certManagerNamespace: cert-manager
+cloudflareApiToken: ""
+ingressClass: traefik

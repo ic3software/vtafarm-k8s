@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+# Stack 04 must be applied and its Vault bootstrapped first: this stack does not
+# create vtafarm-api-vault, and the API waits for it.
+
+# --- Where to install ------------------------------------------------------
+# Leave empty to read the kubeconfig stack 03 wrote for the cluster whose
+# directory name matches this one.
+kubeconfig_path = ""
+
+# --- Identity --------------------------------------------------------------
+# Everything else is derived: vtafarm.<domain>, vtafarm-api.<domain>,
+# vta-<name>.<domain>, the wildcard certificate, WebAuthn and CORS.
+domain     = "example.org"
+acme_email = "ops@example.org"
+
+# `make outputs-rke2 CLUSTER=<name>` prints this.
+cluster_ingress_ip = ""
+
+# --- Cloudflare ------------------------------------------------------------
+cloudflare_api_token = ""
+cloudflare_zone_id   = ""
+
+# --- DID hosting -----------------------------------------------------------
+# vtafarm-api's own keypair: `make gen-keypair` in the vtafarm-api repo.
+did_hosting_did         = ""
+did_hosting_private_key = ""
+
+# --- Monitoring ------------------------------------------------------------
+# openssl rand -hex 32. Empty disables /api/v1/monitor/*.
+monitor_token = ""
+
+# --- Versions --------------------------------------------------------------
+# The release this farm runs. Each chart's appVersion is its image tag, so
+# these two numbers pin the images too.
+vtafarm_version     = "0.1.0"
+vtafarm_api_version = "0.1.0"

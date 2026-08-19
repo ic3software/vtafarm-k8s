@@ -9,6 +9,8 @@ RKE2_KUBECONFIG_FILE := $(RKE2_CLUSTER_DIR)/kubeconfig.yaml
 VTAFARM_PLATFORM_ROOT := $(ROOT)/stacks/04-vtafarm-platform/clusters
 VTAFARM_PLATFORM_TEMPLATE := $(ROOT)/stacks/04-vtafarm-platform/_template
 VTAFARM_PLATFORM_CLUSTER_DIR := $(VTAFARM_PLATFORM_ROOT)/$(CLUSTER)
+VTAFARM_APP_ROOT := $(ROOT)/stacks/05-vtafarm-app/clusters
+VTAFARM_APP_CLUSTER_DIR := $(VTAFARM_APP_ROOT)/$(CLUSTER)
 VTAFARM_PLATFORM_MODULE := $(ROOT)/modules/vtafarm-platform
 KUBECONFIG_FILE := $(INFRA)/kubeconfig.yaml
 
@@ -232,6 +234,47 @@ outputs-vtafarm-platform: check-vtafarm-platform ## Print one platform root's ou
 .PHONY: destroy-vtafarm-platform
 destroy-vtafarm-platform: check-vtafarm-platform ## Destroy stack 04 only; keep the RKE2 cluster (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) destroy -parallelism=$(VTAFARM_PLATFORM_PARALLELISM)
+
+.PHONY: new-vtafarm-app
+new-vtafarm-app: ## Scaffold the app root for an RKE2 cluster (CLUSTER=name)
+	@bash $(ROOT)/scripts/new-vtafarm-app.sh "$(CLUSTER)"
+
+.PHONY: check-vtafarm-app
+check-vtafarm-app:
+	@if [[ ! "$(CLUSTER)" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$$ ]]; then \
+	  echo "set a DNS-safe cluster name, for example: make apply-vtafarm-app CLUSTER=production" >&2; \
+	  exit 2; \
+	fi
+	@test -d "$(VTAFARM_APP_CLUSTER_DIR)" || { \
+	  echo "app root does not exist: $(VTAFARM_APP_CLUSTER_DIR)" >&2; \
+	  echo "create it with: make new-vtafarm-app CLUSTER=$(CLUSTER)" >&2; \
+	  exit 2; \
+	}
+	@test -s "$(RKE2_KUBECONFIG_FILE)" || { \
+	  echo "no kubeconfig for $(CLUSTER) at $(RKE2_KUBECONFIG_FILE)" >&2; \
+	  echo "write it with: make kubeconfig-rke2 CLUSTER=$(CLUSTER)" >&2; \
+	  exit 2; \
+	}
+
+.PHONY: init-vtafarm-app
+init-vtafarm-app: check-vtafarm-app ## Initialize one app root (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) init
+
+.PHONY: plan-vtafarm-app
+plan-vtafarm-app: check-vtafarm-app ## Plan the frontend and API releases (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) plan
+
+.PHONY: apply-vtafarm-app
+apply-vtafarm-app: check-vtafarm-app ## Install the frontend and the API (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) apply
+
+.PHONY: outputs-vtafarm-app
+outputs-vtafarm-app: check-vtafarm-app ## Print the URLs and the DNS records to create (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) output
+
+.PHONY: destroy-vtafarm-app
+destroy-vtafarm-app: check-vtafarm-app ## Remove both releases; the database volume survives (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) destroy
 
 # Both Vaults come up sealed, and unsealing needs keys that must never reach
 # OpenTofu state - so init and unseal stay manual. See docs/vault.md.
