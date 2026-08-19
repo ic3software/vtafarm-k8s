@@ -18,3 +18,8 @@ output "vault_replicas" {
 output "storage_class" {
   value = module.platform.storage_class
 }
+
+output "retain_storage_class" {
+  description = "Name this on a PVC whose volume must survive the claim."
+  value       = module.platform.retain_storage_class
+}

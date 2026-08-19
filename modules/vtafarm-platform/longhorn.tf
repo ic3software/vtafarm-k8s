@@ -66,3 +66,25 @@ resource "kubernetes_annotations" "hcloud_volumes_not_default" {
 
   depends_on = [helm_release.longhorn]
 }
+
+# Longhorn's own class deletes the volume with the PVC, which is right for a
+# tenant's session and wrong for a database. reclaimPolicy is immutable, so this
+# is a second class rather than a change to that one.
+resource "kubernetes_storage_class_v1" "longhorn_retain" {
+  metadata {
+    name = "longhorn-retain"
+  }
+
+  storage_provisioner    = "driver.longhorn.io"
+  reclaim_policy         = "Retain"
+  allow_volume_expansion = true
+  volume_binding_mode    = "Immediate"
+
+  parameters = {
+    numberOfReplicas    = tostring(var.config.longhorn_replica_count)
+    staleReplicaTimeout = "30"
+    fsType              = "ext4"
+  }
+
+  depends_on = [helm_release.longhorn]
+}

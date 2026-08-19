@@ -22,3 +22,8 @@ output "storage_class" {
   description = "StorageClass backing the Vault volumes."
   value       = var.config.storage_class
 }
+
+output "retain_storage_class" {
+  description = "StorageClass for volumes that must outlive their PVC."
+  value       = kubernetes_storage_class_v1.longhorn_retain.metadata[0].name
+}

@@ -120,7 +120,15 @@ locals {
       chart           = "hcloud-csi"
       version         = var.config.hcloud_csi_version
       targetNamespace = "kube-system"
-      valuesContent   = yamlencode({})
+      # The chart claims the default StorageClass. RKE2 reconciles this manifest,
+      # so anything that unsets the annotation afterwards loses on the next sync.
+      valuesContent = yamlencode({
+        storageClasses = [{
+          name                = "hcloud-volumes"
+          defaultStorageClass = false
+          reclaimPolicy       = "Delete"
+        }]
+      })
     }
   })
 
@@ -152,6 +160,40 @@ locals {
     ],
     var.config.cni == "canal" ? [local.canal_manifest] : [],
   ))
+
+  # Rancher owns the bundled Traefik's configuration on a cluster it manages, so
+  # a HelmChartConfig applied with kubectl is reverted on the next sync. These
+  # are the same values, set where Rancher will not fight them.
+  #
+  # The redirect replaces ingress-nginx's per-Ingress ssl-redirect annotation,
+  # which is why the Ingresses vtafarm-api creates carry none.
+  chart_values = yamlencode({
+    rke2-traefik = {
+      ingressClass = {
+        isDefaultClass = true
+      }
+      ports = {
+        web = {
+          http = {
+            redirections = {
+              entryPoint = {
+                to        = "websecure"
+                scheme    = "https"
+                permanent = true
+              }
+            }
+          }
+        }
+        websecure = {
+          http = {
+            tls = {
+              enabled = true
+            }
+          }
+        }
+      }
+    }
+  })
 
   registration_command = rancher2_cluster_v2.this.cluster_registration_token[0].node_command
 

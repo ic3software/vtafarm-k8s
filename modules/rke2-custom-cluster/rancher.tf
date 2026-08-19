@@ -19,6 +19,7 @@ resource "rancher2_cluster_v2" "this" {
   rke_config {
     machine_global_config = local.machine_global_config
     additional_manifest   = sensitive(local.additional_manifest)
+    chart_values          = local.chart_values
 
     upgrade_strategy {
       control_plane_concurrency = var.config.control_plane_upgrade_concurrency
