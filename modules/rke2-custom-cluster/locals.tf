@@ -16,13 +16,13 @@ locals {
 
   lb_private_ip = cidrhost(var.config.subnet_cidr, 10)
 
-  # The kernel names Hetzner's private NIC after the server type (enp7s0, ens10,
-  # ...), so the bootstrap renames it to something stable that the cluster-wide
-  # canal manifest below can name on every machine.
-  private_interface = "rke2-private"
-
   # Hetzner private networks run at MTU 1450.
   private_interface_mtu = 1450
+
+  # The kernel names Hetzner's private NIC after the server type (enp7s0, ens10,
+  # ...), so canal is pointed at it by address instead. Every address this module
+  # hands out sits in the first /24 of the subnet.
+  private_subnet_regex = "^${replace(regex("^\\d+\\.\\d+\\.\\d+", cidrhost(var.config.subnet_cidr, 0)), ".", "\\.")}\\."
 
   server_nodes = {
     for i in range(var.config.server_count) : "server-${i + 1}" => {
@@ -134,9 +134,10 @@ locals {
 
   # Left alone, canal binds flannel to the default-route interface — the public
   # NIC, where hcloud_firewall.nodes drops VXLAN and cross-node pod traffic with
-  # it. RKE2 has no k3s-style flannel-iface flag, so the chart is the only place
-  # to say this. vethuMTU has to follow: it is not derived from the interface,
-  # and pods sending 1450-byte frames into a 1400-byte tunnel would blackhole.
+  # it. RKE2 has no k3s-style per-node flannel-iface flag, so the chart selects
+  # the interface cluster-wide, by address. vethuMTU has to follow: it is not
+  # derived from the interface, and pods sending 1450-byte frames into a
+  # 1400-byte tunnel would blackhole.
   canal_manifest = yamlencode({
     apiVersion = "helm.cattle.io/v1"
     kind       = "HelmChartConfig"
@@ -146,7 +147,7 @@ locals {
     }
     spec = {
       valuesContent = yamlencode({
-        flannel = { iface = local.private_interface }
+        flannel = { regexIface = local.private_subnet_regex }
         calico  = { vethuMTU = local.private_interface_mtu - 50 }
       })
     }
@@ -201,7 +202,6 @@ locals {
     for key, node in local.nodes : key => templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
       hostname              = node.name
       node_private_ip       = node.private_ip
-      private_interface     = local.private_interface
       private_interface_mtu = local.private_interface_mtu
       bootstrap_script      = file("${path.module}/templates/rancher-node-bootstrap.sh")
       registration_script = join(" ", concat(

@@ -17,7 +17,7 @@ write_files:
     permissions: "0600"
     owner: root:root
     encoding: b64
-    content: ${base64encode("NODE_PRIVATE_IP=\"${node_private_ip}\"\nPRIVATE_IFACE_NAME=\"${private_interface}\"\nPRIVATE_IFACE_MTU=\"${private_interface_mtu}\"\n")}
+    content: ${base64encode("NODE_PRIVATE_IP=\"${node_private_ip}\"\nPRIVATE_IFACE_MTU=\"${private_interface_mtu}\"\n")}
 
   - path: /etc/rancher/node-registration.sh
     permissions: "0700"

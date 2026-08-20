@@ -98,7 +98,10 @@ run "default_ha_topology" {
   assert {
     condition = (
       strcontains(local.additional_manifest, local.canal_manifest) &&
-      yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).flannel.iface == "rke2-private" &&
+      can(regex(
+        yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).flannel.regexIface,
+        local.nodes["server-1"].private_ip,
+      )) &&
       yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).calico.vethuMTU == 1400
     )
     error_message = "Canal must bind flannel to the private interface, with a pod MTU that matches its VXLAN tunnel."

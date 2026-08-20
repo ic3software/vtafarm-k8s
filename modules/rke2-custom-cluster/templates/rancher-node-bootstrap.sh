@@ -21,7 +21,6 @@ trap record_failure EXIT
 # shellcheck disable=SC1091
 source /etc/rancher-node-bootstrap.env
 : "${NODE_PRIVATE_IP:?not set in /etc/rancher-node-bootstrap.env}"
-: "${PRIVATE_IFACE_NAME:?not set in /etc/rancher-node-bootstrap.env}"
 : "${PRIVATE_IFACE_MTU:?not set in /etc/rancher-node-bootstrap.env}"
 
 log() { echo "[rancher-node-bootstrap] $(date -Is) $*"; }
@@ -50,16 +49,15 @@ configure_private_interface() {
   interface="$1"
   mac_address="$(cat "/sys/class/net/${interface}/address")"
 
-  log "configuring private interface ${interface} (${mac_address}) as ${PRIVATE_IFACE_NAME}"
+  log "configuring private interface ${interface} (${mac_address}) with netplan DHCP"
   cat >/etc/netplan/60-rke2-private-network.yaml <<EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    ${PRIVATE_IFACE_NAME}:
+    ${interface}:
       match:
         macaddress: "${mac_address}"
-      set-name: "${PRIVATE_IFACE_NAME}"
       dhcp4: true
       dhcp4-overrides:
         use-dns: false
@@ -69,9 +67,6 @@ network:
 EOF
   chmod 0600 /etc/netplan/60-rke2-private-network.yaml
   netplan generate
-  # The kernel refuses to rename an interface that is up, and the hot-plugged
-  # NIC may already have been brought up by networkd's default handling.
-  ip link set dev "$interface" down || true
   netplan apply
 }
 
@@ -81,6 +76,9 @@ if [ -z "$PUBLIC_IFACE" ]; then
   exit 1
 fi
 
+# Hetzner attaches the private NIC just after the server is created, so whether
+# cloud-init's metadata already carries it is a race each node runs on its own.
+# Leave the NIC alone once it has the address, whoever configured it.
 IFACE=""
 DETECTED_IFACE=""
 NETPLAN_CONFIGURED=0
@@ -107,14 +105,6 @@ if [ -z "$IFACE" ]; then
   log "ERROR: private IP ${NODE_PRIVATE_IP} never appeared"
   ip -o link show || true
   ip -o -4 addr show || true
-  exit 1
-fi
-
-# Canal is told to bind flannel to this exact name. Failing here beats letting
-# the node join with a CNI that cannot find its interface.
-if [ "$IFACE" != "$PRIVATE_IFACE_NAME" ]; then
-  log "ERROR: private IP ${NODE_PRIVATE_IP} is on ${IFACE}, expected ${PRIVATE_IFACE_NAME}"
-  ip -o link show || true
   exit 1
 fi
 
