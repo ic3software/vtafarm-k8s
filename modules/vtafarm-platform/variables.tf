@@ -5,10 +5,11 @@ variable "config" {
 
     cert_manager_version = optional(string, "v1.21.1")
 
-    longhorn_version       = optional(string, "1.12.1")
-    longhorn_replica_count = optional(number, 3)
-    # Longhorn owns the default class, so Vault's PVCs get replicated storage
-    # without every chart naming it. hcloud-volumes stays available by name.
+    longhorn_version = optional(string, "1.12.1")
+    # Vault's Raft already replicates, and node NVMe is the whole budget.
+    longhorn_replica_count = optional(number, 1)
+    # Longhorn owns the default class, so Vault's PVCs land on it without every
+    # chart naming it. hcloud-volumes stays available by name.
     longhorn_default_class = optional(bool, true)
 
     vault_chart_version = optional(string, "0.33.0")

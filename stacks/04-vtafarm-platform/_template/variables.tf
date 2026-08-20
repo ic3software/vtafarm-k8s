@@ -23,9 +23,9 @@ variable "longhorn_version" {
 }
 
 variable "longhorn_replica_count" {
-  description = "Copies Longhorn keeps of every volume. Needs at least this many schedulable nodes."
+  description = "Copies Longhorn keeps of every volume. Each one costs another volume-size of node disk and another schedulable node."
   type        = number
-  default     = 3
+  default     = 1
 }
 
 variable "longhorn_default_class" {

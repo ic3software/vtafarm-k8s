@@ -10,11 +10,10 @@
 kubeconfig_path = ""
 
 # --- Storage ---------------------------------------------------------------
-# Longhorn replicates each volume across nodes and becomes the default class,
-# demoting the hcloud-volumes class the RKE2 module installs. Keep the replica
-# count at or below the number of schedulable nodes.
+# Longhorn becomes the default class, demoting the hcloud-volumes class the RKE2
+# module installs. Each replica costs another volume-size of node disk.
 longhorn_version       = "1.12.1"
-longhorn_replica_count = 3
+longhorn_replica_count = 1
 longhorn_default_class = true
 
 # --- Vault -----------------------------------------------------------------

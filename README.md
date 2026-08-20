@@ -108,7 +108,7 @@ holds nothing but the key to unwrap it:
 | **Traefik as a DaemonSet with hostPorts** | Installing an external CCM requires `--disable-cloud-controller`, which also removes k3s' built-in servicelb (klipper). Traefik binds directly to `:80`/`:443` on the host instead, so the load balancer has something to reach. |
 | **IPv4 only on the nodes** | One address family is one set of firewall rules to reason about. Hetzner still gives the load balancer an IPv6 address and offers no switch for that, but it reaches the nodes over private IPv4 regardless. |
 | **A transit Vault for auto-unseal, not manual keys** | Without it every Vault pod restart blocks on a human pasting unseal keys. The transit Vault is the root of the chain, so it is the one thing still unsealed by hand — but it holds no tenant data, so losing it costs a re-key rather than the seeds. It buys unattended restarts, not protection against a compromise of a live cluster: the token that unwraps the farm's root key lives in the same cluster. Swapping the `seal` stanza moves it to a cloud KMS. |
-| **Longhorn owns the default StorageClass** | The RKE2 module already installs hcloud-csi, so the cluster has block storage — single-replica, separately billed, one volume attached to one node. Vault's Raft data wants replication across nodes, so Longhorn takes the default and `hcloud-volumes` is explicitly demoted. Two classes both claiming to be default is undefined behaviour: the API server picks one and PVCs land on the wrong storage silently. |
+| **Longhorn owns the default StorageClass** | The RKE2 module already installs hcloud-csi, so the cluster has block storage — single-replica, separately billed, one volume attached to one node. Longhorn keeps PVCs on the nodes' own NVMe, so it takes the default and `hcloud-volumes` is explicitly demoted. One replica by default, because Vault's Raft already holds a copy per peer; `longhorn_replica_count` raises it for data that replicates nothing itself. Two classes both claiming to be default is undefined behaviour: the API server picks one and PVCs land on the wrong storage silently. |
 | **`cx23` on x86, not the ARM64 `cax` line** | `cx23` is 2 vCPU / 4 GB / 40 GB NVMe on shared AMD EPYC. The memory budget is deliberately tight — k3s with etcd takes ~1 GB, a Rancher replica 1–1.5 GB, the bundled add-ons ~0.5 GB — so watch for OOMKills during Rancher upgrades and step up to `cx33` if they appear. The `cax` (ARM64) line is cheaper still, but [Rancher documents ARM64 as experimental and not recommended for production](https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64). |
 
 ### Repository layout
@@ -586,8 +586,8 @@ make apply-vtafarm-platform CLUSTER=rke2-vtafarm-production
 The directory name must match the RKE2 cluster's, because that is where this stack reads the
 kubeconfig from — the scaffold refuses a name with no cluster behind it. The generated
 `terraform.tfvars` needs no edits for a stack 03 cluster built with its defaults; the values
-that matter are the Vault peer count and the Longhorn replica count, both of which default to
-three and must not exceed the number of schedulable nodes.
+that matter are the Vault peer count, three, and the Longhorn replica count, one; neither may
+exceed the number of schedulable nodes.
 
 Takes **5–10 minutes**. Longhorn needs no preparation on the hosts: the RKE2 nodes already
 install `open-iscsi` and `nfs-common` and enable `iscsid` from cloud-init.
@@ -1014,11 +1014,11 @@ That table is the **management** cluster only. Every downstream RKE2 cluster is 
 of it and repeats the same shape: its server nodes (`cx33` by default, rather than `cx23`), one
 load balancer, and one public IPv4 per node.
 
-Longhorn adds no Hetzner line item. It replicates across the nodes' own NVMe rather than
-attaching Cloud Volumes, so the Vault PVCs cost disk on machines you are already paying for —
-at the price of consuming it `longhorn_replica_count` times over. Hetzner Cloud Volumes remain
-available as the `hcloud-volumes` class for anything that should be billed and attached
-separately.
+Longhorn adds no Hetzner line item. It uses the nodes' own NVMe rather than attaching Cloud
+Volumes, so the Vault PVCs cost disk on machines you are already paying for — at the price of
+consuming it `longhorn_replica_count` times over, which is why that count defaults to one.
+Hetzner Cloud Volumes remain available as the `hcloud-volumes` class for anything that should
+be billed and attached separately.
 
 ---
 
