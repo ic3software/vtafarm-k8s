@@ -334,9 +334,9 @@ ssh root@<server-1> 'journalctl -u k3s | grep -i s3 | tail -30'
 - `no such host` → bad endpoint (no `https://` prefix, and no bucket name in it)
 
 Note that fixing tfvars and running `make apply` will **not** push the change to running nodes —
-`user_data` is protected by `ignore_changes` (see the README). Either edit
-`/etc/rancher/k3s/config.yaml` on each node and `systemctl restart k3s`, or roll the nodes one
-at a time with `-replace`.
+`user_data` is protected by `ignore_changes` (see
+[opentofu-primer.md](opentofu-primer.md)). Either edit `/etc/rancher/k3s/config.yaml` on each
+node and `systemctl restart k3s`, or roll the nodes one at a time with `-replace`.
 
 ### Rancher is missing or crash-looping after `--cluster-reset`
 

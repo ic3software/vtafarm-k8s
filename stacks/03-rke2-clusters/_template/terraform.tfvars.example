@@ -1,4 +1,6 @@
-hcloud_token      = "REPLACE_ME"
+hcloud_token = "REPLACE_ME"
+
+# Rancher UI -> user menu -> Account & API Keys -> Create API Key.
 rancher_api_url   = "https://rancher.example.com"
 rancher_token_key = "token-REPLACE_ME:REPLACE_ME"
 
@@ -17,6 +19,7 @@ worker_count = 0
 worker_type  = "cx23"
 
 # Reuse an existing SSH key from this Hetzner project.
+# Unless you changed it, the name is <k3s_cluster_name>-admin. See stack 01.
 ssh_key_name = "k3s-rancher-admin"
 
 # Replace with your workstation address, for example 203.0.113.7/32.

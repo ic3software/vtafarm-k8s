@@ -2,16 +2,20 @@
 # Console -> your project -> Security -> API tokens -> Generate (Read & Write)
 hcloud_token = "REPLACE_ME"
 
-# The network zone is derived from the location; there is nothing else to set.
 cluster_name = "k3s-rancher"
-location     = "nbg1" # Nuremberg
+
+# Hetzner location for every server and the load balancer:
+# fsn1 = Falkenstein, nbg1 = Nuremberg, hel1 = Helsinki,
+# ash = Ashburn, hil = Hillsboro, sin = Singapore.
+# The network zone follows from it; there is nothing else to set.
+location = "nbg1"
 
 # --- Cluster shape ---------------------------------------------------------
 # Odd number >= 3 so etcd keeps quorum. Every node is control-plane + etcd and
 # also runs workloads, Rancher included.
 server_count = 3
-server_type  = "cx23" # 2 vCPU / 4 GB / 40 GB NVMe - see the note in variables.tf
-os_image     = "ubuntu-24.04" # change this when following the OS upgrade runbook
+server_type  = "cx23"
+os_image     = "ubuntu-24.04"
 
 # --- Access ----------------------------------------------------------------
 # Point these at the SSH key you already use - no need to generate a new one.
