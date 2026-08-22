@@ -256,7 +256,30 @@ time from the highest-numbered server to server-1. Any failed check stops the up
 
 ---
 
-## 5. Upgrading OpenTofu providers
+## 5. Upgrading a vtafarm release
+
+Bump one number and apply. Each chart's `appVersion` is its image tag, so the chart version
+pins the image too:
+
+```hcl
+# stacks/05-vtafarm-app/clusters/<name>/terraform.tfvars
+vtafarm_version     = "0.2.0"
+vtafarm_api_version = "0.2.0"
+```
+
+```bash
+make apply-vtafarm-app CLUSTER=rke2-vtafarm-production
+```
+
+> Migrations run when the API starts, and rolling the image back does not roll the schema back
+> with it. Take a database backup before a release that migrates.
+
+Vault and its transit peer upgrade through their own runbook:
+[vault-upgrade.md](vault-upgrade.md).
+
+---
+
+## 6. Upgrading OpenTofu providers
 
 ```bash
 tofu -chdir=stacks/01-infra init -upgrade

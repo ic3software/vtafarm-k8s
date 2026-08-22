@@ -23,6 +23,21 @@ ssh root@<node-ip> 'grep k3s-bootstrap /var/log/cloud-init-output.log'
 
 ---
 
+## `make apply` hangs at `null_resource.kubeconfig`
+
+The apply waits for the first server to bootstrap, which takes a few minutes. If it waits much
+longer, your SSH key has a passphrase and the fetch is blocked on a prompt that OpenTofu cannot
+show you:
+
+```bash
+ssh-add ~/.ssh/my_key
+```
+
+Then run `make apply` again. `ssh_private_key_path` in `stacks/01-infra/terraform.tfvars` must
+point at that same key.
+
+---
+
 ## Nodes stay `NotReady` with an `uninitialized` taint
 
 ```bash
@@ -200,7 +215,7 @@ kubectl -n cattle-system logs -l app=rancher --tail=100 --previous
 
 | Log message | Cause |
 | --- | --- |
-| `Rancher must be installed on a supported Kubernetes version` | k3s is outside Rancher's support matrix. Check the README version table |
+| `Rancher must be installed on a supported Kubernetes version` | k3s is outside Rancher's support matrix. Check the version table in [upgrade.md](upgrade.md) |
 | OOMKilled (`kubectl describe pod` shows it) | Out of memory. `cx23` gives 4 GB per node, which fits k3s + etcd + one Rancher replica with little to spare, and a Rancher upgrade briefly doubles the replicas. Confirm with `kubectl top nodes`, then raise `server_type` to `cx33` and roll the nodes one at a time |
 | `failed to get ingress` / waiting on TLS | The certificate is not ready yet; fix the cert-manager chain first |
 | `replicas` exceed schedulable nodes | `rancher_replicas` must be ≤ the number of nodes that can accept the pods |

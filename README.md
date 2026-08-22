@@ -1,34 +1,39 @@
-# k3s HA + Rancher + downstream RKE2 on Hetzner Cloud
+# vtafarm on RKE2 — deployment guide
 
-OpenTofu for a **3-node high-availability (HA) k3s cluster with embedded etcd** on Hetzner
-Cloud, running **Rancher**, with **backups** and **upgrades** wired up from day one — and the
-downstream RKE2 clusters it provisions, each carrying the platform the vtafarm applications
-need — **cert-manager**, **Longhorn** and **HashiCorp Vault** — and the applications themselves,
-installed from the charts published to GHCR.
+This guide deploys vtafarm on Hetzner Cloud. You start with an empty Hetzner project and finish
+with a running application. It builds five layers, in this order:
 
-The HA topology follows the [official k3s embedded-etcd HA guide](https://docs.k3s.io/datastore/ha-embedded):
-an odd number of server nodes, the first started with `--cluster-init`, the rest joining through a
-**fixed registration address** (a Hetzner Load Balancer in this setup).
+1. a 3-node high-availability **k3s** cluster
+2. **Rancher**, running on that k3s cluster
+3. an **RKE2** cluster that Rancher creates for a farm
+4. the platform inside that cluster: **cert-manager**, **Longhorn** and **HashiCorp Vault**
+5. the vtafarm frontend and API
 
----
+Each layer is one OpenTofu stack. You build layers 1 and 2 once. Layers 3 to 5 are one farm, so
+repeat steps 6 to 8 for every farm you need. Vault keeps the master seed of every VTA encrypted
+and separated per user, which is what makes a farm safe enough to run vtafarm on. See
+[docs/vault.md](docs/vault.md).
 
 ## Contents
 
 - [Architecture](#architecture)
-- [OpenTofu in three minutes](#opentofu-in-three-minutes)
-- [Prerequisites](#prerequisites)
 - [Deploy](#deploy)
-- [Testing](#testing)
-- [Backups](#backups)
-- [Upgrades](#upgrades)
-- [Day-2 operations](#day-2-operations)
-- [Troubleshooting](#troubleshooting)
-- [Cost](#cost)
-- [Teardown](#teardown)
+  - [Prerequisites](#prerequisites)
+  - [Step 1 — Configure stack 01](#step-1--configure-stack-01)
+  - [Step 2 — Build the cluster](#step-2--build-the-cluster)
+  - [Step 3 — Point DNS at the load balancer](#step-3--point-dns-at-the-load-balancer)
+  - [Step 4 — Install Rancher](#step-4--install-rancher)
+  - [Step 5 — Log in](#step-5--log-in)
+  - [Step 6 — Create an RKE2 cluster](#step-6--create-an-rke2-cluster)
+  - [Step 7 — Install the platform layer](#step-7--install-the-platform-layer)
+  - [Step 8 — Install the applications](#step-8--install-the-applications)
+- [Runbooks](#runbooks)
 
 ---
 
 ## Architecture
+
+### Management cluster — k3s + Rancher
 
 ```text
                           internet
@@ -58,9 +63,10 @@ an odd number of server nodes, the first started with `--cluster-init`, the rest
                   Hetzner Object Storage (S3)
 ```
 
-Every downstream RKE2 cluster Rancher provisions carries its own platform layer. The farm
-Vault stores each VTA's master seed and auto-unseals against a second, single-node Vault that
-holds nothing but the key to unwrap it:
+### Downstream cluster — RKE2 + the vtafarm platform
+
+The farm Vault stores the master seed of every VTA. It cannot unseal itself after a restart, so
+a second Vault does that for it. This transit Vault runs on one node and holds one key:
 
 ```text
                           internet
@@ -94,222 +100,47 @@ holds nothing but the key to unwrap it:
   └─────────────────────────────────────────────────────────┘
 ```
 
-### Design decisions worth knowing about
+### Five stacks
 
-| Decision | Why |
+A stack cannot run until the stack before it exists. You therefore apply them in order:
+
+| Stack | Waits for |
 | --- | --- |
-| **3 servers with embedded etcd** | etcd needs a quorum of `(n/2)+1`, so the server count must be odd and at least 3. Three nodes tolerate one failure. |
-| **k3s pinned to v1.35.7, Rancher to 2.14.3** | The Rancher chart declares a `kubeVersion` constraint that helm enforces: `2.14.x -> < 1.36.0-0`. The k3s `stable` channel is on v1.36, so following it would make `helm install rancher` fail outright. v1.35.7 is the newest k3s that 2.14.3 accepts. |
-| **API behind a load balancer (fixed registration address)** | Nodes join via `https://10.0.1.10:6443`. Any server can be replaced without the others noticing, and your kubeconfig points at the same stable address. |
-| **One load balancer, three services** | A Hetzner load balancer serves up to 5 services and 10,000 concurrent connections. A management cluster whose ingress traffic is a couple of admins has nothing to gain from a second one, so :6443, :80 and :443 share it. Targets belong to the load balancer while health checks belong to each service, and every node runs both the API server and Traefik, so all three services report green. |
-| **All k3s traffic on the private network** | Hetzner Cloud Firewalls only filter the **public** interface — private network traffic is never inspected. So etcd (2379-2380), the API (6443), flannel's Virtual Extensible LAN tunnel (VXLAN, 8472) and the kubelet (10250) all bind to private IPs, and the public interface only exposes SSH. |
-| **Placement group `spread`** | Without it, three "HA" servers can land on the same physical host and one hardware failure costs you etcd quorum. |
-| **Hetzner cloud controller manager (CCM) manages nodes, OpenTofu manages load balancers** | The CCM sets `providerID`, topology labels and node lifecycle. Its load-balancer controller is switched off (`HCLOUD_LOAD_BALANCERS_ENABLED=false`) — otherwise it creates load balancers OpenTofu doesn't know about, which survive `tofu destroy` and keep billing you. |
-| **Traefik as a DaemonSet with hostPorts** | Installing an external CCM requires `--disable-cloud-controller`, which also removes k3s' built-in servicelb (klipper). Traefik binds directly to `:80`/`:443` on the host instead, so the load balancer has something to reach. |
-| **IPv4 only on the nodes** | One address family is one set of firewall rules to reason about. Hetzner still gives the load balancer an IPv6 address and offers no switch for that, but it reaches the nodes over private IPv4 regardless. |
-| **A transit Vault for auto-unseal, not manual keys** | Without it every Vault pod restart blocks on a human pasting unseal keys. The transit Vault is the root of the chain, so it is the one thing still unsealed by hand — but it holds no tenant data, so losing it costs a re-key rather than the seeds. It buys unattended restarts, not protection against a compromise of a live cluster: the token that unwraps the farm's root key lives in the same cluster. Swapping the `seal` stanza moves it to a cloud KMS. |
-| **Longhorn owns the default StorageClass** | The RKE2 module already installs hcloud-csi, so the cluster has block storage — single-replica, separately billed, one volume attached to one node. Longhorn keeps PVCs on the nodes' own NVMe, so it takes the default and `hcloud-volumes` is explicitly demoted. One replica by default, because Vault's Raft already holds a copy per peer; `longhorn_replica_count` raises it for data that replicates nothing itself. Two classes both claiming to be default is undefined behaviour: the API server picks one and PVCs land on the wrong storage silently. |
-| **`cx23` on x86, not the ARM64 `cax` line** | `cx23` is 2 vCPU / 4 GB / 40 GB NVMe on shared AMD EPYC. The memory budget is deliberately tight — k3s with etcd takes ~1 GB, a Rancher replica 1–1.5 GB, the bundled add-ons ~0.5 GB — so watch for OOMKills during Rancher upgrades and step up to `cx33` if they appear. The `cax` (ARM64) line is cheaper still, but [Rancher documents ARM64 as experimental and not recommended for production](https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64). |
+| `01-infra` | nothing |
+| `02-rancher` | stack 01's kubeconfig |
+| `03-rke2-clusters` | Rancher to be reachable |
+| `04-vtafarm-platform` | stack 03's cluster to be Active |
+| `05-vtafarm-app` | stack 04's Vault to be bootstrapped |
 
-### Repository layout
+Stacks 03, 04 and 05 keep one directory per cluster, under `clusters/<name>`. Each directory
+has its own state file. Creating or destroying one cluster does not affect the others.
 
-```text
-.
-├── Makefile                    # every common task is a make target
-├── stacks/
-│   ├── 01-infra/               # Hetzner resources + the k3s cluster
-│   ├── 02-rancher/             # cert-manager + Rancher + backups + upgrade controller
-│   ├── 03-rke2-clusters/
-│   │   ├── _template/          # tracked template for downstream clusters
-│   │   └── clusters/           # generated RKE2 roots (entire directory is gitignored)
-│   ├── 04-vtafarm-platform/
-│   │   ├── _template/          # tracked template for a cluster's platform layer
-│   │   └── clusters/           # generated platform roots (also gitignored)
-│   └── 05-vtafarm-app/
-│       ├── _template/          # tracked template for the applications
-│       └── clusters/           # generated app roots (also gitignored)
-├── modules/
-│   ├── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
-│   ├── vtafarm-platform/       # cert-manager + Longhorn + both Vaults
-│   │   ├── charts/vault-pki/   # cert-manager Issuer + Certificate chain
-│   │   └── templates/          # Vault chart values
-│   └── vtafarm-app/            # the frontend and the API, from GHCR
-│       └── charts/vtafarm-tls/ # ACME issuers, wildcard certificate, TLS store
-├── scripts/
-│   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
-│   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
-│   ├── delete-kube-context.sh  # remove it from ~/.kube/config
-│   ├── etcd-snapshot.sh        # take / list etcd snapshots
-│   └── vault-bootstrap.sh      # one-time Vault configuration, per cluster
-└── docs/
-    ├── backup-restore.md       # disaster-recovery runbook (includes a drill)
-    ├── upgrade.md              # upgrade runbook
-    ├── vault.md                # Vault init, unseal, bootstrap and day-2
-    ├── vault-upgrade.md        # Vault / transit upgrade + node-drain runbook
-    └── troubleshooting.md      # start here when something is stuck
-```
-
-**Why five stacks?**
-OpenTofu must be able to configure a provider *before* it starts running. The `helm` and
-`kubernetes` providers need a kubeconfig — which only exists after stack 01 has finished.
-Putting both in one stack creates a chicken-and-egg problem. Split apart, stack 01 builds the
-cluster and emits a kubeconfig, stack 02 consumes it. This is the standard pattern.
-
-The same argument repeats twice more, one layer down:
-
-| Stack | Waits for | Providers |
-| --- | --- | --- |
-| `01-infra` | nothing | `hcloud` |
-| `02-rancher` | stack 01's kubeconfig | `helm`, `kubernetes` |
-| `03-rke2-clusters` | Rancher to be reachable | `hcloud`, `rancher2` |
-| `04-vtafarm-platform` | stack 03's cluster to be Active | `helm`, `kubernetes` |
-| `05-vtafarm-app` | stack 04's Vault to be bootstrapped | `helm`, `kubernetes`, `random` |
-
-Rancher must already be up before its provider can create a custom cluster and return the node
-registration command — that is stack 03. And that cluster must be Active and returning a
-kubeconfig before anything can install into it — that is stack 04.
-
-Stacks 03, 04 and 05 keep one root per cluster, under `clusters/<name>`, each with its own state, so
-creating or destroying a second cluster cannot disturb the first. The shared logic lives in
-`modules/`, which is tracked; the generated `clusters/` directories are gitignored because they
-hold configuration and state. A cluster's directory name is the source of truth in both stacks,
-which is also how stack 04 finds the kubeconfig stack 03 wrote for the same name.
-
----
-
-## OpenTofu in three minutes
-
-**The core idea:** you *describe the desired end state* in `.tf` files. OpenTofu diffs that
-against what actually exists in the cloud and works out what to change. It is not a script —
-there is no execution order, only a dependency graph it derives from how resources reference
-each other.
-
-**Four kinds of file:**
-
-| File | Role |
-| --- | --- |
-| `variables.tf` | Declares which knobs exist (like a function signature) |
-| `terraform.tfvars` | The values you actually supply (**contains secrets, gitignored**) |
-| other `*.tf` | The resource definitions themselves |
-| `terraform.tfstate` | OpenTofu's ledger of what it has created. **Lose it and OpenTofu forgets everything and wants to rebuild it all** |
-
-**Four commands:**
-
-```bash
-tofu init      # download providers (first run, or after changing provider versions)
-tofu plan      # "what would happen if I ran this" — read-only, run it freely
-tofu apply     # actually do it; shows the plan first and asks you to type yes
-tofu destroy   # delete everything this stack created
-```
-
-**Reading a plan:**
-
-```text
-+ create      new resource
-~ update      changed in place (no service impact)
--/+ replace   destroyed and recreated  ←←← stop and think when you see this
-- destroy     removed
-```
-
-> ⚠️ The dangerous one here is `-/+ replace` on `hcloud_server.server` — that means OpenTofu
-> wants to rebuild control-plane nodes, and all three at once wipes the cluster. This repo
-> guards against the common cause with
-> `lifecycle { ignore_changes = [user_data, ssh_keys, image] }`, because cloud-init only ever
-> runs on first boot: editing it changes nothing on a running node, yet would still trigger a
-> rebuild. When you genuinely want to roll a node, do it **one at a time**:
-> `tofu apply -replace='hcloud_server.server[2]'`
-
-**Where does state live?**
-Locally, in `stacks/*/terraform.tfstate`. Fine for a single operator, but **back it up**, or
-switch to a remote backend (S3-compatible object storage). Losing state is painful to
-recover from.
-
-> The `terraform.` prefixes are not a leftover: OpenTofu still reads `terraform.tfvars`,
-> writes `terraform.tfstate`, and keeps its plugin cache in `.terraform/`.
-
----
-
-## Prerequisites
-
-### 1. Tools
-
-```bash
-brew install opentofu kubectl helm jq
-```
-
-OpenTofu ≥ 1.12, kubectl, Helm 3, jq.
-
-### 2. A Hetzner API token
-
-Hetzner Cloud Console → your project → **Security** → **API tokens** → Generate API token →
-permission **Read & Write** → copy it (shown only once).
-
-### 3. An SSH key
-
-**Use the key you already have.** OpenTofu needs two paths: the public key, which it uploads
-to Hetzner and installs in root's `authorized_keys` on every node, and the matching private
-key, which never leaves your machine — only `scripts/fetch-kubeconfig.sh` and
-`scripts/etcd-snapshot.sh` use it to reach the nodes.
-
-```bash
-ls -l ~/.ssh/*.pub          # find what you already have
-```
-
-If your key lives at the default location there is nothing to configure. Otherwise point the
-variables at it:
-
-```hcl
-# stacks/01-infra/terraform.tfvars
-ssh_public_key_path  = "~/.ssh/my_key.pub"
-ssh_private_key_path = "~/.ssh/my_key"
-```
-
-Ed25519 and RSA both work.
-
-Only if you have no key at all:
-
-```bash
-ssh-keygen -t ed25519 -C "k3s-hetzner" -f ~/.ssh/id_ed25519
-```
-
-> If your private key has a passphrase, run `ssh-add ~/.ssh/my_key` once before
-> `make apply`, otherwise the kubeconfig fetch stalls waiting for a prompt it cannot show you.
-
-### 4. A domain
-
-Rancher **requires a DNS hostname** — it cannot be reached by IP. Have something like
-`rancher.yourdomain.com` ready, on a zone you can edit.
-
-### 5. Hetzner Object Storage (for backups)
-
-Object Storage is created manually because the `hcloud` provider does not manage S3 buckets
-or S3 credentials. In the same Hetzner project as the cluster:
-
-1. Open **Object Storage** → **Create Bucket**.
-2. **Location:** pick **Nuremberg**. The dialog lists cities, not codes — `nbg1` is Nuremberg
-   (the default, Falkenstein, is `fsn1`). The suffix next to the name field should read
-   `.nbg1.your-objectstorage.com`.
-3. **Name:** must be globally unique. Use a `firstperson`-related name, for example
-   `firstperson-backup-<unique-suffix>`. Object Lock **Disabled**, Visibility **Private**.
-4. Open **Security** → **S3 credentials** and generate a credential pair. The dialog asks for a
-   **Description** — it is the only label the pair ever gets. Name it after the bucket rather
-   than the cluster, for example `firstperson-backup`: the credentials are scoped to the whole
-   Object Storage account, and this bucket holds more than just the k3s and Rancher backups.
-   Unlike the bucket name it does not have to be globally unique.
-5. Immediately save both the access key and secret key in a password manager. The secret is
-   shown only once and is required during disaster recovery.
-
-Use Nuremberg unless you have a reason not to — it is where the cluster is created, and the
-`*_s3_endpoint` / `*_s3_region` defaults in both stacks already point at `nbg1`. A different
-location means changing all four of them, and the mismatch only surfaces at the first upload.
-
-The Hetzner Cloud API token from prerequisite 2 cannot authenticate to Object Storage. The same
-S3 credential pair and private bucket are used by both stacks; separate folder prefixes keep
-the etcd snapshots and Rancher backups apart.
+The full directory tree and the reasons behind this layout are in
+[docs/design-decisions.md](docs/design-decisions.md).
 
 ---
 
 ## Deploy
+
+### Prerequisites
+
+Collect all of this before you start.
+
+1. **Tools** — `brew install opentofu kubectl helm jq`. OpenTofu must be 1.12 or newer
+2. **Hetzner API token**, Read & Write — Console → Security → API tokens. Shown once
+3. **SSH key pair** — the one you already use, or `ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519`
+4. **A DNS zone you can edit** — at your registrar. The farm domain in step 8 must be on
+   Cloudflare, see below
+5. **A private Object Storage bucket** in Nuremberg (`nbg1`) — Console → Object Storage →
+   Create Bucket. The name must be globally unique. Object Lock disabled, Visibility private
+6. **S3 credential pair** — Console → Security → S3 credentials. The secret is shown once
+
+vtafarm itself, in step 8, also needs:
+
+1. **Cloudflare API token and zone ID** — from the Cloudflare dashboard, for the zone of your
+   domain. vtafarm creates tenant domains automatically, and Cloudflare is the only DNS
+   provider it supports today
+2. **`did:key` keypair** — `make gen-keypair` in the vtafarm-api repo
 
 ### Step 1 — Configure stack 01
 
@@ -319,63 +150,36 @@ cp terraform.tfvars.example terraform.tfvars
 code terraform.tfvars
 ```
 
-Minimum you need to set:
-
-```hcl
-hcloud_token = "your Hetzner token"
-cluster_name = "k3s-rancher"
-
-# Lock SSH to your own addresses: curl -s https://ifconfig.me
-# One entry per address, always /32 — Hetzner takes CIDR notation only.
-ssh_allowed_cidrs = [
-  "203.0.113.7/32",   # office
-  "198.51.100.42/32", # admin 1, home
-]
-
-
-# etcd snapshots to Hetzner Object Storage (required - there is no local-only mode)
-etcd_s3_endpoint   = "nbg1.your-objectstorage.com"
-etcd_s3_region     = "nbg1"
-etcd_s3_bucket     = "your-globally-unique-bucket-name"
-etcd_s3_access_key = "..."
-etcd_s3_secret_key = "..."
-```
+Go through every value in the file and read the comments above them. They say what each value
+does and which ones you have to fill in. Continue with step 2 when the file is complete.
 
 ### Step 2 — Build the cluster
 
 ```bash
-cd ../..            # back to the repo root
+cd ../..
 make init
-make plan           # read what it intends to do
-make apply          # type yes
+make apply
 ```
 
-Takes roughly **5–8 minutes**. OpenTofu will appear to hang on
-`null_resource.kubeconfig` — that is it waiting for the first server to finish bootstrapping.
-This is expected.
+This takes about **5–8 minutes**. OpenTofu looks stuck at `null_resource.kubeconfig`. It is
+waiting for the first server to finish its bootstrap, so this is normal.
 
-The cluster's kubeconfig is now at `stacks/01-infra/kubeconfig.yaml`, beside the stack that
-produced it. Use it directly:
+OpenTofu writes the kubeconfig to `stacks/01-infra/kubeconfig.yaml`:
 
 ```bash
 export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
 kubectl get nodes -o wide
 ```
 
-Or, if you already juggle other clusters, merge it into `~/.kube/config` so it becomes one
-more context you can switch to:
+You can also merge it into `~/.kube/config` and use it as one more context:
 
 ```bash
 make kubeconfig-merge
 kubectl config use-context k3s-rancher
 ```
 
-The merge backs up `~/.kube/config` first, leaves your other clusters and your current context
-untouched, and is safe to re-run — same-named entries are replaced rather than duplicated, so
-running it again after rebuilding the cluster just refreshes the credentials. The context takes
-its name from `cluster_name`.
-
-Either way, you should see three `Ready` nodes with roles `control-plane,etcd,master`:
+In both cases you should see three `Ready` nodes with the roles
+`control-plane,etcd,master`:
 
 ```text
 NAME                   STATUS   ROLES                       AGE   VERSION
@@ -384,20 +188,14 @@ k3s-rancher-server-2   Ready    control-plane,etcd,master   3m    v1.35.7+k3s1
 k3s-rancher-server-3   Ready    control-plane,etcd,master   2m    v1.35.7+k3s1
 ```
 
-> The rest of this README assumes `KUBECONFIG` points at the cluster. If you merged instead,
-> either select the context first or add `--context k3s-rancher` to the kubectl commands.
->
-> If nodes stay `NotReady` with a `node.cloudprovider.kubernetes.io/uninitialized` taint, the
-> Hetzner CCM has not started — see [Troubleshooting](docs/troubleshooting.md).
-
-**Save the join token — this matters:**
+**Save the join token:**
 
 ```bash
 make token
 ```
 
-Besides letting nodes join, this token encrypts confidential data inside etcd.
-**Without it, an etcd snapshot cannot be restored.** Put it in your password manager.
+Store it in your password manager now. The token lets new nodes join, and it also encrypts the
+secret data inside etcd, so **you cannot restore an etcd snapshot without it**.
 
 ### Step 3 — Point DNS at the load balancer
 
@@ -405,13 +203,14 @@ Besides letting nodes join, this token encrypts confidential data inside etcd.
 make outputs
 ```
 
-Take `load_balancer_ipv4` and create:
+Take the `load_balancer_ipv4` value and create this record:
 
 ```text
 rancher.yourdomain.com.   A      <load_balancer_ipv4>
 ```
 
-**Wait for DNS to propagate before continuing**, otherwise the Let's Encrypt challenge fails:
+**Wait until DNS has propagated before you continue.** If you do not, the Let's Encrypt
+challenge fails:
 
 ```bash
 dig +short rancher.yourdomain.com
@@ -425,27 +224,19 @@ cp terraform.tfvars.example terraform.tfvars
 code terraform.tfvars
 ```
 
-```hcl
-rancher_hostname  = "rancher.yourdomain.com"
-letsencrypt_email = "you@yourdomain.com"
-
-backup_s3_bucket     = "your-globally-unique-bucket-name"
-backup_s3_access_key = "..."
-backup_s3_secret_key = "..."
-```
+Go through every value in the file and read the comments above them. Reuse the bucket and the
+S3 credentials from step 1.
 
 ```bash
 cd ../..
 make apply-rancher
 ```
 
-Takes **5–10 minutes** (cert-manager → Rancher → certificate issuance).
-
-Check the certificate was issued:
+This takes **5–10 minutes**: cert-manager first, then Rancher, then the certificate. `READY`
+must be `True`:
 
 ```bash
 kubectl -n cattle-system get certificate
-# READY should be True
 ```
 
 ### Step 5 — Log in
@@ -455,80 +246,36 @@ make rancher-password
 open https://rancher.yourdomain.com
 ```
 
-User `admin`, with that password. Rancher forces a change on first login.
+Log in as `admin` with that password. Rancher asks you to change it at the first login.
 
 ### Step 6 — Create an RKE2 cluster
 
-First, create a Rancher API key from the user menu under **Account & API Keys**.
-Then scaffold an OpenTofu root for the new cluster:
+Create a Rancher API key in the user menu, under **Account & API Keys**. Then generate an
+OpenTofu directory for the new cluster. The name you pass is both the cluster name in Rancher
+and the directory name:
 
 ```bash
 make new-rke2-cluster CLUSTER=rke2-vtafarm-production
-```
-
-This name is also used as the cluster name in Rancher and as its OpenTofu
-directory name.
-
-Edit the generated configuration:
-
-```bash
 code stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/terraform.tfvars
 ```
 
-At minimum, replace the Hetzner and Rancher credentials and restrict SSH
-access:
-
-```hcl
-hcloud_token      = "your Hetzner token"
-rancher_api_url   = "https://rancher.yourdomain.com"
-rancher_token_key = "token-xxxxx:xxxxx"
-
-# Hetzner location for all servers and the load balancer:
-# fsn1 = Falkenstein, nbg1 = Nuremberg, hel1 = Helsinki,
-# ash = Ashburn, hil = Hillsboro, sin = Singapore.
-location = "nbg1"
-
-# Hetzner server type for all RKE2 control-plane/etcd nodes.
-server_count = 3
-server_type  = "cx33"
-
-# Reuse an existing SSH key from this Hetzner project.
-ssh_key_name = "k3s-rancher-admin"
-
-ssh_allowed_cidrs = [
-  "203.0.113.7/32"
-]
-```
-
-The directory name supplies `cluster_name`. `location` controls the Hetzner
-location of every server and the cluster load balancer. Other settings use defaults,
-including a dedicated Hetzner network, three `cx33` nodes, Ubuntu 24.04, and
-RKE2 with Canal and Traefik. `ssh_key_name` selects an existing SSH key from
-the same Hetzner project; this stack does not upload or duplicate the key.
-
-Create the RKE2 cluster and its Hetzner hosts:
+Go through every value in the file and read the comments above them. The scaffold already
+wrote `terraform.tfvars` for you, so there is nothing to copy.
 
 ```bash
-make init-rke2 CLUSTER=rke2-vtafarm-production
-make plan-rke2 CLUSTER=rke2-vtafarm-production
+make init-rke2  CLUSTER=rke2-vtafarm-production
 make apply-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
-The default creates three nodes with the etcd, control-plane, and worker roles.
-Its OpenTofu-managed load balancer forwards `80`, `443`, `6443`, and `9345`
-to all server nodes over their private addresses. RKE2's default ingress
-configuration binds the standard HTTP and HTTPS ports on those nodes.
-Wait for `rke2-vtafarm-production` to become **Active** in Rancher Cluster
-
-Management before continuing. The initial OpenTofu apply may have stored an
-empty `kube_config` while Rancher was still provisioning the cluster. Refresh
-the OpenTofu state after the cluster becomes Active:
+Wait until the cluster is **Active** in Rancher, under Cluster Management. The first apply
+stores an empty, unusable `kube_config`, because Rancher is still creating the cluster while
+OpenTofu finishes. Refresh the state once the cluster is Active:
 
 ```bash
 make refresh-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
-Then write its Rancher-generated kubeconfig and use it directly:
+Then write the kubeconfig and use it directly:
 
 ```bash
 make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
@@ -536,166 +283,135 @@ export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/
 kubectl get nodes
 ```
 
-Rancher also generates direct contexts for each control-plane server. This
-target intentionally keeps only Rancher's current cluster context, so kubectl
-shows one `rke2-vtafarm-production` entry instead of one entry per server.
-
-Or merge it into `~/.kube/config` alongside your other clusters:
+Or merge it into `~/.kube/config` and use it as one more context:
 
 ```bash
 make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
+kubectl config use-context rke2-vtafarm-production
 ```
 
-The merge target automatically writes the YAML by running `kubeconfig-rke2`
-first, but it does not refresh OpenTofu state. Run the refresh command above
-once after Rancher reports the cluster Active.
+Either way the file lands in the cluster's directory, where stacks 04 and 05 read it.
 
-Remove only this cluster's local kubeconfig context without deleting any
-Rancher or Hetzner resources:
-
-```bash
-make kubeconfig-delete CLUSTER=rke2-vtafarm-production
-```
-
-#### Optional — Create more RKE2 clusters
-
-Repeat Step 6 with a different unique name:
-
-```bash
-make new-rke2-cluster CLUSTER=rke2-vtafarm-staging
-```
-
-Destroy one downstream cluster without touching stack 01, stack 02, or other
-RKE2 clusters:
-
-```bash
-make destroy-rke2 CLUSTER=rke2-vtafarm-production
-```
+To add a second cluster, repeat this step with a different name, for example
+`make new-rke2-cluster CLUSTER=rke2-vtafarm-staging`. The two directories are independent.
 
 ### Step 7 — Install the platform layer
 
-Everything so far built clusters. This step installs what runs *on* the downstream one:
-cert-manager, Longhorn, and the two Vaults.
+This step installs the platform inside the RKE2 cluster: cert-manager, Longhorn and the two
+Vaults.
+
+Use the same cluster name as in step 6. This stack reads the kubeconfig from that cluster's
+directory, so the two names must match.
 
 ```bash
 make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
-make init-vtafarm-platform CLUSTER=rke2-vtafarm-production
+code stacks/04-vtafarm-platform/clusters/rke2-vtafarm-production/terraform.tfvars
+```
+
+The defaults work as they are. Open the file only if you want a different Vault or Longhorn
+setup, and read the comments before you change anything.
+
+```bash
+make init-vtafarm-platform  CLUSTER=rke2-vtafarm-production
 make apply-vtafarm-platform CLUSTER=rke2-vtafarm-production
 ```
 
-The directory name must match the RKE2 cluster's, because that is where this stack reads the
-kubeconfig from — the scaffold refuses a name with no cluster behind it. The generated
-`terraform.tfvars` needs no edits for a stack 03 cluster built with its defaults; the values
-that matter are the Vault peer count, three, and the Longhorn replica count, one; neither may
-exceed the number of schedulable nodes.
-
-Takes **5–10 minutes**. Longhorn needs no preparation on the hosts: the RKE2 nodes already
-install `open-iscsi` and `nfs-common` and enable `iscsid` from cloud-init.
+This takes **5–10 minutes**.
 
 ```bash
 make vault-status CLUSTER=rke2-vtafarm-production
 ```
 
-**Both Vaults come up sealed, and a sealed Vault reports itself not ready.** The transit pod
-shows `0/1` and the farm pods sit in `CreateContainerConfigError` waiting for a secret that does
-not exist yet. That is the expected state after this apply, not a failure — which is also why
-neither Helm release waits for readiness.
+**Both Vaults start sealed, and a sealed Vault reports itself as not ready.** The transit pod
+shows `0/1`. The farm pods stay in `CreateContainerConfigError`, because they wait for a secret
+that does not exist yet. This is the expected state after this apply. It is not a failure.
 
-Initializing and unsealing them produces recovery keys and root tokens. Those must never reach
-OpenTofu state, so those two steps stay manual and everything after them is a script:
+Initializing and unsealing a Vault produces recovery keys and root tokens. These must never be
+written into OpenTofu state, so you run those steps by hand. Point kubectl at the cluster first:
 
 ```bash
 export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/kubeconfig.yaml
-
-# 1. init + unseal the transit Vault (Shamir keys — store them offline)
-kubectl exec -n vault-transit vault-transit-0 -- \
-  vault operator init -key-shares=5 -key-threshold=3 -format=json > vault-init-transit.json
-kubectl exec -it -n vault-transit vault-transit-0 -- vault operator unseal   # ×3
-
-# 2. mint the farm's unseal token, then let the farm pods pick it up
-export VAULT_TOKEN=        # root token from vault-init-transit.json
-make vault-bootstrap CLUSTER=rke2-vtafarm-production TARGET=transit
-kubectl -n vault rollout restart statefulset/vault
-
-# 3. init the farm Vault — auto-unseal means the peers unseal themselves
-kubectl exec -n vault vault-0 -- vault operator init -format=json > vault-init-farm.json
-
-# 4. configure it for vtafarm-api
-export VAULT_TOKEN=        # root token from vault-init-farm.json
-make vault-bootstrap CLUSTER=rke2-vtafarm-production TARGET=farm
 ```
 
-> ⚠️ Both `vault-init-*.json` files hold recovery keys and a root token. Move them into a
-> password manager and delete the local copies. They are gitignored; that is not the same as
-> safe. Each cluster has its own keys, and a Vault snapshot without them is unrecoverable.
+1. Init the transit Vault. This writes the Shamir keys and its root token to
+   `vault-init-transit.json`:
 
-vtafarm-api then authenticates with the `vtafarm-api-vault` secret and reaches Vault at
-`https://vault.vault.svc:8200`. The `secret_id` is written straight into that secret rather
-than printed.
+   ```bash
+   kubectl exec -n vault-transit vault-transit-0 -- \
+     vault operator init -key-shares=5 -key-threshold=3 -format=json > vault-init-transit.json
+   ```
 
-The full procedure, the tenant isolation model, and the day-2 operations are in
-**[docs/vault.md](docs/vault.md)**.
+2. Unseal it. Run this **three** times, with a different Shamir key each time:
+
+   ```bash
+   kubectl exec -it -n vault-transit vault-transit-0 -- vault operator unseal
+   ```
+
+3. Create the unseal token for the farm Vault. Paste the root token from
+   `vault-init-transit.json` after the `=`:
+
+   ```bash
+   export VAULT_TOKEN=
+   make vault-bootstrap CLUSTER=rke2-vtafarm-production TARGET=transit
+   ```
+
+4. Restart the farm pods so they read the new token:
+
+   ```bash
+   kubectl -n vault rollout restart statefulset/vault
+   ```
+
+5. Init the farm Vault. Its peers unseal themselves from here on:
+
+   ```bash
+   kubectl exec -n vault vault-0 -- vault operator init -format=json > vault-init-farm.json
+   ```
+
+6. Configure it for vtafarm-api. Paste the root token from `vault-init-farm.json`:
+
+   ```bash
+   export VAULT_TOKEN=
+   make vault-bootstrap CLUSTER=rke2-vtafarm-production TARGET=farm
+   ```
+
+> ⚠️ Move both `vault-init-*.json` files into your password manager now, then delete the local
+> copies. They hold the recovery keys and the root tokens. Git ignores them, which is not the
+> same as safe. Every cluster has its own keys, and a Vault snapshot is worthless without them.
+
+The full procedure, the tenant isolation model and the day-2 operations are in
+[docs/vault.md](docs/vault.md).
 
 ### Step 8 — Install the applications
 
-The last stack installs the frontend and the API from the charts published to
-GHCR, along with the ACME issuers and the wildcard certificate they are served
-with. It reads the Vault credentials the previous step produced, so it cannot run
-before them.
+This step installs the vtafarm applications: the frontend and the API.
 
 ```bash
 make new-vtafarm-app CLUSTER=rke2-vtafarm-production
 code stacks/05-vtafarm-app/clusters/rke2-vtafarm-production/terraform.tfvars
 ```
 
-One domain drives everything else — the two hostnames, every tenant's, the
-wildcard certificate, WebAuthn and CORS:
+Go through every value in the file and read the comments above them. `domain` drives every
+hostname the farm serves.
 
-```hcl
-domain     = "firstperson.dev"
-acme_email = "admin@firstperson.dev"
-
-# make outputs-rke2 CLUSTER=rke2-vtafarm-production
-cluster_ingress_ip = "..."
-
-cloudflare_api_token = "..."
-cloudflare_zone_id   = "..."
-
-# `make gen-keypair` in the vtafarm-api repo
-did_hosting_did         = "did:key:z6Mk..."
-did_hosting_private_key = "..."
-
-# The published release this farm runs
-vtafarm_version     = "0.1.0"
-vtafarm_api_version = "0.1.0"
-```
-
-Create the two A records first, both pointing at the cluster's load balancer —
-the certificate cannot be issued until the names resolve:
+Create the two A records next. Both point at the load balancer of the cluster. cert-manager
+cannot issue the certificate until these names resolve:
 
 ```text
-vtafarm.firstperson.dev.       A   <cluster_ingress_ip>
-vtafarm-api.firstperson.dev.   A   <cluster_ingress_ip>
+vtafarm.yourdomain.com.       A   <cluster_ingress_ip>
+vtafarm-api.yourdomain.com.   A   <cluster_ingress_ip>
 ```
 
 ```bash
 make init-vtafarm-app  CLUSTER=rke2-vtafarm-production
-make plan-vtafarm-app  CLUSTER=rke2-vtafarm-production
 make apply-vtafarm-app CLUSTER=rke2-vtafarm-production
 ```
 
-The JWT secret and the database password are generated here rather than supplied,
-so they exist only in this stack's state — which is one more reason to back it
-up. Everything else comes from the values above.
+This stack generates the JWT secret and the database password instead of taking them from you.
+They exist only in this stack's state file, so back that file up.
 
 ```bash
 make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production
-curl -s https://vtafarm-api.firstperson.dev/health
-curl -s https://vtafarm.firstperson.dev/config.js
 ```
-
-The second one should echo back the API's address: the frontend image carries no
-domain of its own, and its entrypoint writes that file at startup.
 
 Create the first admin:
 
@@ -704,413 +420,29 @@ export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/
 kubectl exec -it deployment/vtafarm-api -- ./enroll
 ```
 
-#### Upgrading a farm
-
-Bump one number and apply. Each chart's `appVersion` is its image tag, so the
-chart version pins the image too:
-
-```hcl
-vtafarm_api_version = "0.2.0"
-```
+Or, if you merged the kubeconfig in step 6, switch to that context instead:
 
 ```bash
-make apply-vtafarm-app CLUSTER=rke2-vtafarm-production
+kubectl config use-context rke2-vtafarm-production
+kubectl exec -it deployment/vtafarm-api -- ./enroll
 ```
 
-> Migrations run when the API starts, and rolling the image back does not roll
-> the schema back with it. Take a database backup before a release that migrates.
+The farm is now running. Everything after this point is a runbook.
 
 ---
 
-## Testing
+## Runbooks
 
-### Quick health check
-
-```bash
-make status
-```
-
-Shows nodes, etcd members, any non-Running pods, the Rancher deployment and certificates.
-
-### Detailed verification
-
-```bash
-kubectl config use-context k3s-rancher
-
-# 1. Three Ready nodes, all of them actual etcd members
-kubectl get nodes -L node-role.kubernetes.io/etcd
-
-# 2. etcd is healthy (run against any server)
-ssh root@<server-1-public-ip> 'k3s kubectl get --raw "/healthz?verbose"' | grep etcd
-
-# 3. The Hetzner CCM is up and nodes carry a providerID
-kubectl -n kube-system get pods -l app.kubernetes.io/name=hcloud-cloud-controller-manager
-kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.providerID}{"\n"}{end}'
-# expect hcloud://<server-id>
-
-# 4. Traefik runs as a DaemonSet, one pod per node
-kubectl -n kube-system get ds traefik -o wide
-
-# 5. Every load balancer service reports healthy targets
-#    (Hetzner Console → Load Balancers → Targets)
-
-# 6. Rancher has three replicas spread across nodes
-kubectl -n cattle-system get pods -o wide -l app=rancher
-```
-
-### HA failover test — do this once, before you rely on the cluster
-
-This is the only way to know whether "HA" is actually HA.
-
-```bash
-# pick a node you are NOT connected to, and power it off
-hcloud server poweroff k3s-rancher-server-3     # or use the Console
-```
-
-In another terminal:
-
-```bash
-watch kubectl get nodes
-```
-
-Expected behaviour:
-
-| When | What happens |
+| Document | Covers |
 | --- | --- |
-| immediately | `kubectl` keeps working — the LB routes to the remaining two servers |
-| ~40s | the node goes `NotReady` |
-| ~5 min | its pods are evicted and rescheduled elsewhere |
-| throughout | `https://rancher.yourdomain.com` stays available |
-
-```bash
-hcloud server poweron k3s-rancher-server-3
-kubectl get nodes          # back to Ready within a minute or two
-```
-
-> **What if you kill a second node?** etcd loses quorum (1 of 3 is below the required
-> `(3/2)+1 = 2`) and **the API server stops serving**. That is etcd behaving correctly, not a
-> bug. Tolerating two simultaneous failures requires five servers.
-
----
-
-## Backups
-
-Two layers. Both are configured, and neither substitutes for the other:
-
-| Layer | Tool | Covers | Use when |
-| --- | --- | --- | --- |
-| **etcd snapshot** | built into k3s | the entire Kubernetes datastore (every resource, including all of Rancher) | the cluster is broken, something was deleted by mistake, or you need to roll back |
-| **Rancher backup** | rancher-backup operator | only Rancher's own CRDs, users and downstream cluster registrations | migrating Rancher to a different cluster |
-
-Both upload to the same private Hetzner Object Storage bucket on a schedule, under different
-folder prefixes.
-
-### etcd snapshots
-
-Every **6 hours** by default. Each node keeps 12 compressed snapshots locally (3 days), while
-all three nodes share an S3 retention limit of 360 snapshots. At 4 snapshots per node per day,
-that is 12 uploads per day and approximately 30 days of S3 history. Tune these values with the
-`etcd_snapshot_*` / `etcd_s3_*` variables in `stacks/01-infra/terraform.tfvars`.
-
-```bash
-make snapshots            # list all snapshots (local + S3)
-make snapshot             # take one right now
-```
-
-### Three things you must keep outside the cluster
-
-A snapshot file on its own is not enough. Store these in a password manager or separate backup:
-
-1. **The k3s token** — `make token`. It decrypts the bootstrap data inside every snapshot.
-2. **OpenTofu state** — `stacks/*/terraform.tfstate`.
-3. **The S3 credentials** — otherwise you cannot reach the backups you took.
-
-### Restoring
-
-The full procedure, including how to rehearse it, is in
-**[docs/backup-restore.md](docs/backup-restore.md)**.
-
-**Run the drill before you go live.** A backup you have never restored is not a backup.
-
----
-
-## Upgrades
-
-Three independent things. Recommended order: **k3s → Rancher → operating system**.
-
-### 1. k3s
-
-Handled by `system-upgrade-controller` — the
-[approach k3s documents for automated upgrades](https://docs.k3s.io/upgrades/automated).
-It is already installed and **pinned to an explicit version**, so nothing moves on its own.
-
-```hcl
-# stacks/02-rancher/terraform.tfvars
-k3s_target_version = "v1.35.8+k3s1"
-```
-
-```bash
-make snapshot
-make apply-rancher
-```
-
-The controller works **one node at a time**: cordon → swap the binary → restart → wait for
-Ready → next node.
-
-```bash
-kubectl -n system-upgrade get jobs -w
-kubectl get nodes -w
-```
-
-> **Which version?** It must satisfy the Rancher chart's `kubeVersion` — 2.14.x means
-> **< 1.36.0-0**, i.e. v1.33 / v1.34 / v1.35. List the current channel heads with:
->
-> ```bash
-> curl -s https://update.k3s.io/v1-release/channels | jq -r '.data[] | "\(.id)\t\(.latest)"'
-> ```
->
-> The Plan pins an exact version on purpose. A k3s release channel would work here too, but
-> it would upgrade the cluster past what the installed Rancher chart accepts, unattended.
-
-### 2. Rancher
-
-```hcl
-# stacks/02-rancher/terraform.tfvars
-rancher_chart_version = "2.14.4"
-```
-
-```bash
-make snapshot        # rollback for a failed Rancher upgrade IS the etcd snapshot
-make apply-rancher
-```
-
-Rancher cannot skip minor versions (no 2.12 → 2.14; go 2.12 → 2.13 → 2.14).
-
-### 3. Operating system
-
-Routine Ubuntu package updates are `apt update && apt upgrade`, sequenced one node at a time.
-A node is drained and rebooted only when the update actually requires it, so a month of
-userspace-only fixes costs no downtime:
-
-```bash
-make upgrade-packages-check                             # pending updates per node
-make upgrade-packages                                   # the k3s cluster
-make upgrade-packages CLUSTER=rke2-vtafarm-production   # a downstream RKE2 cluster
-```
-
-Moving to the next Ubuntu LTS is a rolling node replacement instead:
-
-```bash
-make upgrade-os TARGET_IMAGE=ubuntu-26.04
-```
-
-Full procedures and a checklist: **[docs/upgrade.md](docs/upgrade.md)**.
-
----
-
-## Day-2 operations
-
-```bash
-make help                # list every target
-make status              # cluster health overview
-make outputs             # LB IPs, node IPs, DNS records to create
-make ssh                 # SSH into the first control-plane node
-make token               # the k3s token
-make rancher-password    # Rancher bootstrap password
-make snapshot            # on-demand etcd snapshot
-make snapshots           # list snapshots
-make upgrade-packages    # apt upgrade every node, one at a time
-make kubeconfig          # re-fetch the kubeconfig
-make kubeconfig-merge    # merge it into ~/.kube/config as a switchable context
-make kubeconfig-delete   # delete it from ~/.kube/config
-```
-
-On a downstream cluster, every target takes `CLUSTER=<name>`:
-
-```bash
-make apply-vtafarm-platform   CLUSTER=rke2-vtafarm-production   # cert-manager, Longhorn, Vault
-make outputs-vtafarm-platform CLUSTER=rke2-vtafarm-production   # the in-cluster Vault address
-make vault-status      CLUSTER=rke2-vtafarm-production   # Vault, Longhorn and certificates
-make vault-bootstrap   CLUSTER=rke2-vtafarm-production TARGET=farm
-make destroy-vtafarm-platform CLUSTER=rke2-vtafarm-production   # keeps the RKE2 cluster itself
-
-make apply-vtafarm-app   CLUSTER=rke2-vtafarm-production   # the frontend and the API
-make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production   # the URLs and the DNS records
-make destroy-vtafarm-app CLUSTER=rke2-vtafarm-production   # both releases; the database volume survives
-```
-
-### Growing the cluster
-
-Every node is a control-plane and etcd member, so scaling means adding servers — and the
-count must stay **odd** for etcd quorum. Going from 3 to 5 raises the tolerated simultaneous
-failures from one to two:
-
-```hcl
-# stacks/01-infra/terraform.tfvars
-server_count = 5
-```
-
-```bash
-make snapshot        # etcd membership changes; have a restore point first
-make apply
-kubectl get nodes -w
-```
-
-The new nodes wait for the existing ones, join through the load balancer, and pick up the
-firewall and load balancer target by label. Nothing else needs changing.
-
-> This repo has no separate worker pool by design — with everything schedulable there is one
-> node type to reason about. If workloads ever outgrow that, the change is a second
-> `hcloud_server` resource with `INSTALL_K3S_EXEC=agent` in its bootstrap env, plus an
-> `agent-plan` for the upgrade controller.
-
----
-
-## Troubleshooting
-
-When a node is stuck, always start with the bootstrap log:
-
-```bash
-ssh root@<node-ip> 'tail -100 /var/log/cloud-init-output.log'
-ssh root@<node-ip> 'journalctl -u k3s -n 200 --no-pager'
-```
-
-**[docs/troubleshooting.md](docs/troubleshooting.md)** covers:
-
-- nodes stuck `NotReady` with the `uninitialized` taint (CCM did not start)
-- Let's Encrypt certificate never issued
-- the second and third servers fail to join
-- `tofu plan` wants to replace server nodes
-- Rancher pods in `CrashLoopBackOff`
-- load balancer targets reported unhealthy
-
-For the platform layer on a downstream cluster — sealed Vaults, pods waiting on a secret that
-does not exist yet, `Pending` Raft peers or `Pending` PVCs — see the table at the end of
-**[docs/vault.md](docs/vault.md)**.
-
----
-
-## Cost
-
-Monthly cost for `nbg1` with the defaults:
-
-| Item | Unit | Qty | / month |
-| --- | --- | --- | --- |
-| `cx23` (2 vCPU / 4 GB / 40 GB NVMe) | €6.59 | 3 | €19.77 |
-| Load Balancer `lb11` | €8.99 | 1 | €8.99 |
-| Public IPv4 | €0.60 | 3 | €1.80 |
-| **Hetzner compute total** | | | **€30.56** |
-| Hetzner Object Storage | €7.79 | 1 account | €7.79 |
-| **Estimated total** | | | **€38.35** |
-
-Scaling options:
-
-- moving up to `cx33` (4 vCPU / 8 GB) costs about €11/month more in total and removes the
-  memory pressure described above — the obvious first step if Rancher starts getting OOMKilled
-- adding a fourth and fifth server costs €13.18/month and buys tolerance for two
-  simultaneous node failures instead of one
-
-That table is the **management** cluster only. Every downstream RKE2 cluster is billed on top
-of it and repeats the same shape: its server nodes (`cx33` by default, rather than `cx23`), one
-load balancer, and one public IPv4 per node.
-
-Longhorn adds no Hetzner line item. It uses the nodes' own NVMe rather than attaching Cloud
-Volumes, so the Vault PVCs cost disk on machines you are already paying for — at the price of
-consuming it `longhorn_replica_count` times over, which is why that count defaults to one.
-Hetzner Cloud Volumes remain available as the `hcloud-volumes` class for anything that should
-be billed and attached separately.
-
----
-
-## Teardown
-
-Destroy only stack 02 (cert-manager, Rancher, backups, and the upgrade
-controller) while keeping the stack 01 k3s infrastructure and independently
-managed RKE2 infrastructure:
-
-```bash
-make destroy-rancher
-```
-
-Remove the applications while keeping the cluster and its platform. The database's
-PersistentVolumeClaim carries `helm.sh/resource-policy: keep` and its class retains the volume,
-so the data survives and a later apply re-attaches to it:
-
-```bash
-make destroy-vtafarm-app CLUSTER=rke2-vtafarm-production
-```
-
-Destroy one cluster's platform layer — cert-manager, Longhorn and both Vaults — while keeping
-the RKE2 cluster it runs on:
-
-```bash
-make destroy-vtafarm-platform CLUSTER=rke2-vtafarm-production
-```
-
-> This deletes the Vault PVCs, and with them every seed the farm Vault held. A Raft snapshot
-> plus the recovery keys is the only way back. See [docs/vault.md](docs/vault.md).
-
-Destroy every generated RKE2 cluster, then stack 01:
-
-```bash
-make destroy
-```
-
-The command scans `stacks/03-rke2-clusters/clusters/*` and runs OpenTofu
-destroy for every cluster root first, while Rancher is still up to accept the
-cluster deletions. Only after every RKE2 destroy succeeds does it destroy
-stack 01. If any step fails, the command stops without deleting the layers that
-the failed step depends on.
-
-Stacks 04 and 05 are skipped for each cluster for the same reason stack 02 is skipped below: everything
-it owns lives inside the RKE2 cluster, so that cluster's destroy takes it along. Its state file
-is deleted once the cluster is gone, since a stale one would make the next `apply-vtafarm-platform`
-refresh against a cluster that no longer exists.
-
-Stack 02 is deliberately skipped: cert-manager, Rancher, the backup operator
-and the upgrade controller all live inside the k3s cluster, so stack 01's
-destroy removes them with the servers and a separate `helm uninstall` pass
-would only add minutes. Because those resources vanish without OpenTofu
-noticing, the command deletes `stacks/02-rancher/terraform.tfstate` once
-stack 01 is gone — a stale state file there would make the next
-`make apply-rancher` refresh against a cluster that no longer exists.
-
-> The order matters. Keep each generated RKE2 directory and its OpenTofu state
-> until its cluster has been destroyed. Without that state, `make destroy`
-> cannot discover or safely remove those Rancher and Hetzner resources.
-
-Afterwards, check the Hetzner Console for leftover Volumes. PVs created by the CSI driver are
-not OpenTofu-managed: those with `reclaimPolicy: Delete` disappear on their own, but `Retain`
-volumes stay and keep billing.
-
----
-
-## Kubeconfig context
-
-Merge the generated kubeconfig into `~/.kube/config`:
-
-```bash
-make kubeconfig-merge
-```
-
-Delete it later:
-
-```bash
-make kubeconfig-delete
-```
-
-Deletion creates a backup first and preserves cluster/user entries still used by other contexts.
-
----
-
-## References
-
-- [k3s — High Availability with Embedded etcd](https://docs.k3s.io/datastore/ha-embedded)
-- [k3s — Fixed Registration Address](https://docs.k3s.io/datastore/ha)
-- [k3s — Networking Requirements](https://docs.k3s.io/installation/requirements)
-- [k3s — etcd Snapshot CLI](https://docs.k3s.io/cli/etcd-snapshot)
-- [k3s — Automated Upgrades](https://docs.k3s.io/upgrades/automated)
-- [Rancher — Install on a Kubernetes Cluster](https://ranchermanager.docs.rancher.com/getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster)
-- [Rancher — Support Matrix](https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/)
-- [Hetzner Cloud provider](https://search.opentofu.org/provider/hetznercloud/hcloud/latest)
-- [hcloud-cloud-controller-manager](https://github.com/hetznercloud/hcloud-cloud-controller-manager)
+| [docs/testing.md](docs/testing.md) | health checks, detailed verification, the HA failover test |
+| [docs/operations.md](docs/operations.md) | day-2 `make` targets, kubeconfig contexts, adding nodes, what is backed up |
+| [docs/backup-restore.md](docs/backup-restore.md) | disaster recovery, four failure scenarios, and a drill |
+| [docs/upgrade.md](docs/upgrade.md) | how to upgrade k3s, Rancher, cert-manager, the OS, a vtafarm release and the providers |
+| [docs/vault.md](docs/vault.md) | Vault init, unseal, bootstrap, the isolation model and day-2 tasks |
+| [docs/vault-upgrade.md](docs/vault-upgrade.md) | how to upgrade both Vaults and drain a node |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | read this first when something is stuck |
+| [docs/design-decisions.md](docs/design-decisions.md) | the repository layout, and why the topology and the version pins are what they are |
+| [docs/teardown.md](docs/teardown.md) | how to destroy one layer, one cluster, or everything |
+| [docs/opentofu-primer.md](docs/opentofu-primer.md) | a short introduction to OpenTofu, if it is new to you |
+| [docs/cost.md](docs/cost.md) | the monthly cost, and what each scaling step adds |

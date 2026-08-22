@@ -69,7 +69,7 @@ variable "os_image" {
 }
 
 variable "ssh_key_name" {
-  description = "Name of an existing SSH key in the Hetzner project."
+  description = "Name of an existing SSH key in the Hetzner project. Stack 01 names its key <cluster_name>-admin."
   type        = string
   default     = "k3s-rancher-admin"
 }
