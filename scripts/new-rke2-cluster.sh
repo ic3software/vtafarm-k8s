@@ -31,7 +31,7 @@ if [ -f "${TEMPLATE_DIR}/.terraform.lock.hcl" ]; then
 fi
 cp "${TARGET_DIR}/terraform.tfvars.example" "${TARGET_DIR}/terraform.tfvars"
 
-for config_file in backend.tf.example main.tf; do
+for config_file in main.tf; do
   temporary_file="$(mktemp "${TARGET_DIR}/.${config_file}.XXXXXX")"
   sed \
     -e "s/REPLACE_CLUSTER_NAME/${CLUSTER_NAME}/g" \
