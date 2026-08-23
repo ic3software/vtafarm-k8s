@@ -16,12 +16,77 @@ KUBECONFIG_FILE := $(INFRA)/kubeconfig.yaml
 
 export KUBECONFIG := $(KUBECONFIG_FILE)
 
+# .env carries the state bucket and the S3 credentials. It is the one file a
+# new operator receives out of band; see docs/remote-state.md.
+-include .env
+TF_PREFIX ?= opentofu
+export TF_STATE_BUCKET TF_PREFIX
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_ENDPOINT_URL_S3
+
+# backend.tf holds no site-specific value, so all three arrive at init time.
+# $(1) is the stack's path below $(TF_PREFIX)/tfstate.
+backend_config = -backend-config="bucket=$(TF_STATE_BUCKET)" \
+                 -backend-config="region=$(AWS_REGION)" \
+                 -backend-config="key=$(TF_PREFIX)/tfstate/$(1)/terraform.tfstate"
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
 help: ## Show this help
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-26s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-32s\033[0m %s\n", $$1, $$2}'
+
+# --- shared state and shared tfvars ----------------------------------------
+
+.PHONY: check-state-env
+check-state-env:
+	@test -n "$(TF_STATE_BUCKET)" || { \
+	  echo "TF_STATE_BUCKET is not set - copy .env.example to .env and fill it in" >&2; \
+	  exit 2; \
+	}
+	@test -n "$(AWS_ACCESS_KEY_ID)" || { \
+	  echo "AWS_ACCESS_KEY_ID is not set - copy .env.example to .env and fill it in" >&2; \
+	  exit 2; \
+	}
+
+.PHONY: state-bucket-setup
+state-bucket-setup: check-state-env ## One-time: versioning + retention on the state bucket
+	@bash $(ROOT)/scripts/state-bucket-setup.sh
+
+.PHONY: tfvars-pull
+tfvars-pull: check-state-env ## Download every terraform.tfvars from the state bucket
+	@bash $(ROOT)/scripts/tfvars-sync.sh pull
+
+.PHONY: tfvars-push
+tfvars-push: check-state-env ## Upload every terraform.tfvars to the state bucket
+	@bash $(ROOT)/scripts/tfvars-sync.sh push
+
+.PHONY: tfvars-diff
+tfvars-diff: check-state-env ## Name the tfvars variables that differ from the bucket
+	@bash $(ROOT)/scripts/tfvars-sync.sh diff
+
+# One-time, for a checkout whose state is still on disk. Plain `init` refuses to
+# run once backend.tf appears until it is told what to do with the old state;
+# -migrate-state is what offers to copy it up. Harmless to re-run afterwards.
+.PHONY: migrate-state
+migrate-state: check-state-env ## One-time: move stack 01 state into the bucket
+	tofu -chdir=$(INFRA) init -migrate-state $(call backend_config,01-infra)
+
+.PHONY: migrate-state-rancher
+migrate-state-rancher: check-state-env ## One-time: move stack 02 state into the bucket
+	tofu -chdir=$(RANCHER) init -migrate-state $(call backend_config,02-rancher)
+
+.PHONY: migrate-state-rke2
+migrate-state-rke2: check-rke2-cluster check-state-env ## One-time: move stack 03 state (CLUSTER=name)
+	tofu -chdir=$(RKE2_CLUSTER_DIR) init -migrate-state $(call backend_config,03-rke2-clusters/$(CLUSTER))
+
+.PHONY: migrate-state-vtafarm-platform
+migrate-state-vtafarm-platform: check-vtafarm-platform check-state-env ## One-time: move stack 04 state (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) init -migrate-state $(call backend_config,04-vtafarm-platform/$(CLUSTER))
+
+.PHONY: migrate-state-vtafarm-app
+migrate-state-vtafarm-app: check-vtafarm-app check-state-env ## One-time: move stack 05 state (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) init -migrate-state $(call backend_config,05-vtafarm-app/$(CLUSTER))
 
 # --- stack 01: infrastructure + k3s ----------------------------------------
 
@@ -52,9 +117,9 @@ fmt: ## Auto-format OpenTofu and Markdown in place
 	markdownlint-cli2 --fix
 
 .PHONY: init
-init: ## Download providers for all stacks and module tests
-	tofu -chdir=$(INFRA) init
-	tofu -chdir=$(RANCHER) init
+init: check-state-env ## Download providers for all stacks and module tests
+	tofu -chdir=$(INFRA) init $(call backend_config,01-infra)
+	tofu -chdir=$(RANCHER) init $(call backend_config,02-rancher)
 	tofu -chdir=$(RKE2_TEMPLATE) init -backend=false
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) init -backend=false
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster init -backend=false
@@ -129,8 +194,8 @@ check-rke2-cluster:
 	}
 
 .PHONY: init-rke2
-init-rke2: check-rke2-cluster ## Initialize one RKE2 cluster (CLUSTER=name)
-	tofu -chdir=$(RKE2_CLUSTER_DIR) init
+init-rke2: check-rke2-cluster check-state-env ## Initialize one RKE2 cluster (CLUSTER=name)
+	tofu -chdir=$(RKE2_CLUSTER_DIR) init $(call backend_config,03-rke2-clusters/$(CLUSTER))
 
 .PHONY: plan-rke2
 plan-rke2: check-rke2-cluster ## Plan one RKE2 cluster (CLUSTER=name)
@@ -166,11 +231,8 @@ destroy-rke2: check-rke2-cluster ## Destroy one RKE2 cluster only (CLUSTER=name)
 # would refresh against a cluster that no longer exists - the same reasoning as
 # stack 02 at the bottom of this file.
 .PHONY: drop-vtafarm-platform-state
-drop-vtafarm-platform-state:
-	@if [[ -f "$(VTAFARM_PLATFORM_CLUSTER_DIR)/terraform.tfstate" ]]; then \
-		rm -f "$(VTAFARM_PLATFORM_CLUSTER_DIR)"/terraform.tfstate "$(VTAFARM_PLATFORM_CLUSTER_DIR)"/terraform.tfstate.backup; \
-		echo "==> removed stack 04 state for $(CLUSTER) (its resources died with the cluster)"; \
-	fi
+drop-vtafarm-platform-state: check-state-env
+	@bash $(ROOT)/scripts/drop-state.sh "04-vtafarm-platform/$(CLUSTER)"
 
 .PHONY: destroy-all-rke2
 destroy-all-rke2: ## Destroy every generated RKE2 cluster before Rancher
@@ -216,8 +278,8 @@ check-vtafarm-platform:
 	}
 
 .PHONY: init-vtafarm-platform
-init-vtafarm-platform: check-vtafarm-platform ## Initialize one platform root (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) init
+init-vtafarm-platform: check-vtafarm-platform check-state-env ## Initialize one platform root (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) init $(call backend_config,04-vtafarm-platform/$(CLUSTER))
 
 .PHONY: plan-vtafarm-platform
 plan-vtafarm-platform: check-vtafarm-platform ## Plan the downstream cluster's platform (CLUSTER=name)
@@ -257,8 +319,8 @@ check-vtafarm-app:
 	}
 
 .PHONY: init-vtafarm-app
-init-vtafarm-app: check-vtafarm-app ## Initialize one app root (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) init
+init-vtafarm-app: check-vtafarm-app check-state-env ## Initialize one app root (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) init $(call backend_config,05-vtafarm-app/$(CLUSTER))
 
 .PHONY: plan-vtafarm-app
 plan-vtafarm-app: check-vtafarm-app ## Plan the frontend and API releases (CLUSTER=name)
@@ -340,5 +402,4 @@ ssh: ## SSH into the first control-plane node
 destroy: ## Tear down RKE2 clusters, then infrastructure; drop the stale stack 02 state
 	@$(MAKE) --no-print-directory destroy-all-rke2
 	tofu -chdir=$(INFRA) destroy
-	@rm -f $(RANCHER)/terraform.tfstate $(RANCHER)/terraform.tfstate.backup
-	@echo "==> removed stack 02 state (its resources died with the cluster)"
+	@bash $(ROOT)/scripts/drop-state.sh "02-rancher"

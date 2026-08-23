@@ -19,7 +19,7 @@ and separated per user, which is what makes a farm safe enough to run vtafarm on
 - [Architecture](#architecture)
 - [Deploy](#deploy)
   - [Prerequisites](#prerequisites)
-  - [Step 1 — Configure stack 01](#step-1--configure-stack-01)
+  - [Step 1 — Configure the backend and stack 01](#step-1--configure-the-backend-and-stack-01)
   - [Step 2 — Build the cluster](#step-2--build-the-cluster)
   - [Step 3 — Point DNS at the load balancer](#step-3--point-dns-at-the-load-balancer)
   - [Step 4 — Install Rancher](#step-4--install-rancher)
@@ -113,7 +113,9 @@ A stack cannot run until the stack before it exists. You therefore apply them in
 | `05-vtafarm-app` | stack 04's Vault to be bootstrapped |
 
 Stacks 03, 04 and 05 keep one directory per cluster, under `clusters/<name>`. Each directory
-has its own state file. Creating or destroying one cluster does not affect the others.
+has its own state file, and each state file is locked separately, so creating or destroying one
+cluster does not affect the others. All of them live in the bucket, not on your laptop; see
+[docs/remote-state.md](docs/remote-state.md).
 
 The full directory tree and the reasons behind this layout are in
 [docs/design-decisions.md](docs/design-decisions.md).
@@ -142,7 +144,25 @@ vtafarm itself, in step 8, also needs:
    provider it supports today
 2. **`did:key` keypair** — `make gen-keypair` in the vtafarm-api repo
 
-### Step 1 — Configure stack 01
+### Step 1 — Configure the backend and stack 01
+
+State lives in the bucket, not on your laptop, so the first file to fill in is `.env`. It names
+the bucket, the folder to keep state and tfvars under, and the S3 credentials. Every `make`
+target reads it:
+
+```bash
+cp .env.example .env
+code .env
+```
+
+Prepare the bucket once. This enables versioning and a retention rule, so a bad apply can be
+rolled back and the etcd snapshots sharing the bucket do not pile up:
+
+```bash
+make state-bucket-setup
+```
+
+Then configure the stack itself:
 
 ```bash
 cd stacks/01-infra
@@ -152,6 +172,10 @@ code terraform.tfvars
 
 Go through every value in the file and read the comments above them. They say what each value
 does and which ones you have to fill in. Continue with step 2 when the file is complete.
+
+Once it is, `make tfvars-push` uploads it to the bucket, where a colleague picks it up with
+`make tfvars-pull`. Do that for every stack you configure from here on.
+[docs/remote-state.md](docs/remote-state.md) covers the whole arrangement.
 
 ### Step 2 — Build the cluster
 
@@ -437,6 +461,7 @@ The farm is now running. Everything after this point is a runbook.
 | --- | --- |
 | [docs/testing.md](docs/testing.md) | health checks, detailed verification, the HA failover test |
 | [docs/operations.md](docs/operations.md) | day-2 `make` targets, kubeconfig contexts, adding nodes, what is backed up |
+| [docs/remote-state.md](docs/remote-state.md) | where state and tfvars live, locking, and how a second operator joins |
 | [docs/backup-restore.md](docs/backup-restore.md) | disaster recovery, four failure scenarios, and a drill |
 | [docs/upgrade.md](docs/upgrade.md) | how to upgrade k3s, Rancher, cert-manager, the OS, a vtafarm release and the providers |
 | [docs/vault.md](docs/vault.md) | Vault init, unseal, bootstrap, the isolation model and day-2 tasks |

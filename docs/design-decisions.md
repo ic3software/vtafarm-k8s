@@ -36,6 +36,21 @@ of server nodes, where the first one starts with `--cluster-init` and the others
 
 ---
 
+## Shared state
+
+| Decision | Why |
+| --- | --- |
+| **State in the same bucket as the backups, not a second one** | The bucket already holds the etcd snapshots, which contain every Secret in the management cluster. State adds no exposure class that is not already there, and Hetzner S3 credentials are project-wide, so a second bucket could not be given a narrower key anyway. Prefixes keep the uses apart: everything OpenTofu owns sits under the `TF_PREFIX` folder from `.env`, beside the snapshot and backup folders. |
+| **`use_lockfile` rather than a lock table or a lock server** | Hetzner Object Storage honours `If-None-Match: *`, so OpenTofu can hold the lock as an object beside the state. The DynamoDB table the S3 backend traditionally needed has no Hetzner equivalent, and any external lock service would be one more thing that has to be up before you can apply. |
+| **Versioning paired with a 30-day retention rule** | Versioning is what makes a corrupted state recoverable. On its own it would also make the bucket grow forever, because k3s prunes etcd snapshots by deleting objects and a delete under versioning only hides one. The rule bounds that without shortening state history to anything useless. |
+| **`backend.tf` tracked, but empty of site values** | A backend block cannot take variables, so hard-coding the bucket or a prefix would put one site's name in a tracked file and make the repository single-tenant. Bucket, region and key all arrive through `-backend-config`, and the endpoint and credentials through the environment — all of it from `.env`. The cost is that a bare `tofu init` cannot find the state on its own, which is why every init goes through `make`. |
+| **`terraform.tfvars` through the bucket, not encrypted into Git** | Encrypting tfvars while the state and the etcd snapshots sit unencrypted in the same bucket would move no real boundary: the S3 credential already unlocks everything. Keeping tfvars out of Git also keeps the repository usable by anyone who points it at their own project. The trade is that tfvars have no review history — bucket versioning is the fallback. |
+
+The full arrangement, including how a second operator joins, is in
+[remote-state.md](remote-state.md).
+
+---
+
 ## Repository layout
 
 ```text
@@ -65,6 +80,9 @@ of server nodes, where the first one starts with `--cluster-init` and the others
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
 │   ├── delete-kube-context.sh  # remove it from ~/.kube/config
 │   ├── etcd-snapshot.sh        # take / list etcd snapshots
+│   ├── state-bucket-setup.sh   # versioning + retention on the state bucket
+│   ├── tfvars-sync.sh          # move terraform.tfvars to and from the bucket
+│   ├── drop-state.sh           # delete one stack's state after its cluster is gone
 │   └── vault-bootstrap.sh      # one-time Vault configuration, per cluster
 └── docs/                       # the runbooks, indexed at the end of the README
 ```
@@ -86,9 +104,10 @@ installed into it. That is stack 04.
 Stacks 03, 04 and 05 keep one directory per cluster, under `clusters/<name>`, and each
 directory has its own state file. Creating or destroying one cluster therefore cannot affect
 another. The shared logic lives in `modules/`, which is tracked in Git. Git ignores the
-generated `clusters/` directories, because they contain configuration and state. The directory
-name of a cluster is the single source of truth in every stack. It is also how stack 04 finds
-the kubeconfig that stack 03 wrote for the same name.
+generated `clusters/` directories, because they are site-specific: a second operator recreates
+them from `_template` with `make new-…` and then pulls their `terraform.tfvars` from the
+bucket. The directory name of a cluster is the single source of truth in every stack. It is
+also how stack 04 finds the kubeconfig that stack 03 wrote for the same name.
 
 ---
 

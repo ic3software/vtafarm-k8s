@@ -115,3 +115,15 @@ make snapshot             # take one right now
 
 [backup-restore.md](backup-restore.md) covers retention, the three things you must store
 outside the cluster, the restore procedures and the drill.
+
+A third thing shares the bucket: everything OpenTofu owns, under the `TF_PREFIX` folder set in
+`.env` — state in `tfstate/`, the `terraform.tfvars` in `tfvars/`. State is versioned rather than
+snapshotted, and it is not part of either layer above.
+
+| Target | Does |
+| --- | --- |
+| `make tfvars-diff` | Names the variables that differ from the bucket, never their values |
+| `make tfvars-pull` | Overwrites every local `terraform.tfvars` with the bucket's copy |
+| `make tfvars-push` | Uploads yours, after showing the same report and asking |
+
+[remote-state.md](remote-state.md) covers locking, recovery and how a second operator joins.

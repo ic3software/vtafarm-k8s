@@ -290,6 +290,25 @@ the internet and the firewall blocks it. Fix `flannel-iface` on that node and
 
 ---
 
+## `Error acquiring the state lock`
+
+State lives in the bucket and every run locks it, so this means either a colleague is applying
+right now or an earlier run died without releasing the lock.
+
+The error prints the lock's `ID`, `Who` and `Created`. Read `Who` before you do anything: it is
+the user and host that took the lock. If someone is mid-apply, wait — breaking a live lock is
+how state gets corrupted.
+
+Once you are sure the lock is stale, use the `ID` from the message:
+
+```bash
+tofu -chdir=stacks/01-infra force-unlock <ID>
+```
+
+[remote-state.md](remote-state.md) covers the case where even that fails.
+
+---
+
 ## Starting over from scratch
 
 ```bash
