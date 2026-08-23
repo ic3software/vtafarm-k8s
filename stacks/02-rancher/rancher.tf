@@ -7,10 +7,10 @@ resource "helm_release" "cert_manager" {
   create_namespace = true
 
   # cert-manager's CRDs must exist before Rancher creates its Issuer.
-  set {
+  set = [{
     name  = "crds.enabled"
     value = "true"
-  }
+  }]
 
   wait    = true
   timeout = 600
@@ -38,50 +38,45 @@ resource "helm_release" "rancher" {
   namespace        = "cattle-system"
   create_namespace = true
 
-  set {
-    name  = "hostname"
-    value = var.rancher_hostname
-  }
+  set = [
+    {
+      name  = "hostname"
+      value = var.rancher_hostname
+    },
+    {
+      name  = "replicas"
+      value = var.rancher_replicas
+    },
+    {
+      name  = "ingress.tls.source"
+      value = "letsEncrypt"
+    },
+    {
+      name  = "agentTLSMode"
+      value = "system-store"
+    },
+    {
+      name  = "ingress.ingressClassName"
+      value = var.ingress_class
+    },
+    {
+      name  = "letsEncrypt.email"
+      value = var.letsencrypt_email
+    },
+    {
+      name  = "letsEncrypt.ingress.class"
+      value = var.ingress_class
+    },
+    {
+      name  = "letsEncrypt.environment"
+      value = var.letsencrypt_environment
+    },
+  ]
 
-  set_sensitive {
+  set_sensitive = [{
     name  = "bootstrapPassword"
     value = local.rancher_bootstrap_password
-  }
-
-  set {
-    name  = "replicas"
-    value = var.rancher_replicas
-  }
-
-  set {
-    name  = "ingress.tls.source"
-    value = "letsEncrypt"
-  }
-
-  set {
-    name  = "agentTLSMode"
-    value = "system-store"
-  }
-
-  set {
-    name  = "ingress.ingressClassName"
-    value = var.ingress_class
-  }
-
-  set {
-    name  = "letsEncrypt.email"
-    value = var.letsencrypt_email
-  }
-
-  set {
-    name  = "letsEncrypt.ingress.class"
-    value = var.ingress_class
-  }
-
-  set {
-    name  = "letsEncrypt.environment"
-    value = var.letsencrypt_environment
-  }
+  }]
 
   # Rancher's own liveness depends on the ingress + certificate being ready,
   # which can take a couple of minutes on a cold cluster.

@@ -3,7 +3,7 @@
 
 provider "registry.opentofu.org/hetznercloud/hcloud" {
   version     = "1.68.0"
-  constraints = ">= 1.68.0, ~> 1.68, < 2.0.0"
+  constraints = "~> 1.68"
   hashes = [
     "h1:226Z1Y5A30w6lKA7/EG6vzPn8inyZ9XYbnmpIzZcA58=",
     "h1:2MU8gDe67KjqALpvzzRfWONH2c/8djL+yxTnym9/FjY=",
@@ -36,7 +36,7 @@ provider "registry.opentofu.org/hetznercloud/hcloud" {
 
 provider "registry.opentofu.org/rancher/rancher2" {
   version     = "14.1.1"
-  constraints = "~> 14.1, >= 14.1.1, < 15.0.0"
+  constraints = "~> 14.1"
   hashes = [
     "h1:751MPGOhzawweO8e2TS6wyZrzTXAqHPloSiX0sEbTvs=",
     "h1:SD0B/LZfmI+2FeWgVXEHQIead3b7cyopzRzXrwsTPBo=",

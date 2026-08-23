@@ -4,7 +4,7 @@
 # there is no chicken-and-egg between "create the cluster" and "talk to it" -
 # the same reason stack 02 is separate from stack 01.
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     config_path = pathexpand(local.kubeconfig_path)
   }
 }
