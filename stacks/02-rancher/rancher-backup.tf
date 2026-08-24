@@ -84,7 +84,7 @@ locals {
       name = "rancher-scheduled-backup"
     }
     spec = {
-      resourceSetName = "rancher-resource-set"
+      resourceSetName = "rancher-resource-set-full"
       schedule        = var.rancher_backup_schedule
       retentionCount  = var.rancher_backup_retention
     }
