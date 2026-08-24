@@ -39,34 +39,36 @@ resource "helm_release" "rancher_backup" {
   version    = var.rancher_backup_chart_version
   namespace  = kubernetes_namespace.cattle_resources_system.metadata[0].name
 
-  set {
-    name  = "s3.enabled"
-    value = "true"
-  }
-  set {
-    name  = "s3.credentialSecretName"
-    value = kubernetes_secret.backup_s3.metadata[0].name
-  }
-  set {
-    name  = "s3.credentialSecretNamespace"
-    value = kubernetes_namespace.cattle_resources_system.metadata[0].name
-  }
-  set {
-    name  = "s3.bucketName"
-    value = var.backup_s3_bucket
-  }
-  set {
-    name  = "s3.folder"
-    value = var.backup_s3_folder
-  }
-  set {
-    name  = "s3.region"
-    value = var.backup_s3_region
-  }
-  set {
-    name  = "s3.endpoint"
-    value = var.backup_s3_endpoint
-  }
+  set = [
+    {
+      name  = "s3.enabled"
+      value = "true"
+    },
+    {
+      name  = "s3.credentialSecretName"
+      value = kubernetes_secret.backup_s3.metadata[0].name
+    },
+    {
+      name  = "s3.credentialSecretNamespace"
+      value = kubernetes_namespace.cattle_resources_system.metadata[0].name
+    },
+    {
+      name  = "s3.bucketName"
+      value = var.backup_s3_bucket
+    },
+    {
+      name  = "s3.folder"
+      value = var.backup_s3_folder
+    },
+    {
+      name  = "s3.region"
+      value = var.backup_s3_region
+    },
+    {
+      name  = "s3.endpoint"
+      value = var.backup_s3_endpoint
+    },
+  ]
 
   wait    = true
   timeout = 600
@@ -82,7 +84,7 @@ locals {
       name = "rancher-scheduled-backup"
     }
     spec = {
-      resourceSetName = "rancher-resource-set"
+      resourceSetName = "rancher-resource-set-full"
       schedule        = var.rancher_backup_schedule
       retentionCount  = var.rancher_backup_retention
     }

@@ -4,7 +4,7 @@ terraform {
   required_providers {
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.17"
+      version = "~> 3.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -26,7 +26,7 @@ terraform {
 # time these providers are configured, so there is no chicken-and-egg problem
 # between "create the cluster" and "talk to the cluster".
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     config_path = pathexpand(var.kubeconfig_path)
   }
 }
