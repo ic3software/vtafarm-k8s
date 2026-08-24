@@ -119,21 +119,27 @@ export VAULT_TOKEN=        # root token from vault-init-farm.json
 make vault-bootstrap CLUSTER=<name> TARGET=farm
 ```
 
-This enables KV v2 at `secret/`, the Kubernetes auth method, AppRole, and writes the
-`vtafarm-api-admin` policy plus the API's role. The resulting credentials go into the
-`vtafarm-api-vault` secret in the `default` namespace — `role_id` is printed, `secret_id` is
-not. Point the API at `VAULT_ADDR=https://vault.vault.svc:8200`.
+This enables the audit device, KV v2 at `secret/`, the Kubernetes auth method, AppRole, and
+writes the `vtafarm-api-admin` policy plus the API's role. The resulting credentials go into
+the `vtafarm-api-vault` secret in the `default` namespace — `role_id` is printed, `secret_id`
+is not. Point the API at `VAULT_ADDR=https://vault.vault.svc:8200`.
 
 Set `API_SECRET_NS` if vtafarm-api runs somewhere other than `default`.
 
-### 6. Enable the audit device
+### The audit trail lives on stdout
 
-A secrets store deserves a durable audit trail, and the PVC for it is already mounted:
+Vault refuses every request once an audit device cannot write, so a PersistentVolume for the
+audit log is a liability: it fills, and Vault stops. The device therefore writes to the pods'
+stdout, and kubelet's container-log rotation bounds and prunes it — sized by
+`container-log-max-size` and `container-log-max-files` in the RKE2 cluster config, currently
+100Mi across 5 files per container.
 
 ```bash
-kubectl exec -n vault vault-0 -- env VAULT_TOKEN=<root> \
-  vault audit enable file file_path=/vault/audit/audit.log
+kubectl -n vault logs vault-0 | grep '"type":"request"'
 ```
+
+Only the active peer serves requests, so that is where the trail accumulates. The window is
+finite by design; ship the logs off-cluster if you ever need to retain them longer.
 
 ---
 

@@ -85,6 +85,47 @@ run "default_ha_topology" {
 
   assert {
     condition = (
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/etc/rancher-node-bootstrap.env"
+        ])),
+        "PRIVATE_NETWORK_CIDR=\"10.10.0.0/16\"",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/etc/rancher-node-bootstrap.env"
+        ])),
+        "PRIVATE_NETWORK_GATEWAY=\"10.10.0.1\"",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
+        ])),
+        "use-routes: false",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
+        ])),
+        "to: $${PRIVATE_NETWORK_CIDR}",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
+        ])),
+        "to: $${PRIVATE_NETWORK_GATEWAY}/32",
+      )
+    )
+    error_message = "Private NIC bootstrap must reject DHCP routes and install the configured network route explicitly."
+  }
+
+  assert {
+    condition = (
       hcloud_load_balancer_service.ingress_http.listen_port == 80 &&
       hcloud_load_balancer_service.ingress_http.destination_port == 80 &&
       hcloud_load_balancer_service.ingress_https.listen_port == 443 &&
@@ -105,6 +146,16 @@ run "default_ha_topology" {
       yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).calico.vethuMTU == 1400
     )
     error_message = "Canal must bind flannel to the private interface, with a pod MTU that matches its VXLAN tunnel."
+  }
+
+  # A metadata request routed through the private NIC times out and leaves the
+  # external-cloud-provider taint in place, so no ordinary pod can schedule.
+  assert {
+    condition = (
+      yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK.value == "true" &&
+      yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_ROUTES_ENABLED.value == "false"
+    )
+    error_message = "The Hetzner CCM must trust OpenTofu's network attachment and leave private-network routing to Canal."
   }
 }
 

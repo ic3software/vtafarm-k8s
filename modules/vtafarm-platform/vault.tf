@@ -53,7 +53,6 @@ resource "helm_release" "vault" {
     chart_version     = var.config.vault_chart_version
     replicas          = var.config.vault_replicas
     data_size         = var.config.vault_data_size
-    audit_size        = var.config.vault_audit_size
     storage_class     = var.config.storage_class
   })]
 

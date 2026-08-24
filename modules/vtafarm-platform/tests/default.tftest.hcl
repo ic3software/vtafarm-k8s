@@ -37,9 +37,9 @@ run "default_topology" {
     condition = (
       yamldecode(helm_release.vault.values[0]).server.ha.replicas == 3 &&
       yamldecode(helm_release.vault.values[0]).server.dataStorage.storageClass == "longhorn" &&
-      yamldecode(helm_release.vault.values[0]).server.auditStorage.storageClass == "longhorn"
+      yamldecode(helm_release.vault.values[0]).server.auditStorage.enabled == false
     )
-    error_message = "The farm Vault must run three peers with both volumes on the longhorn StorageClass."
+    error_message = "The farm Vault must run three peers on longhorn, with the audit trail on stdout rather than a PVC that can fill."
   }
 
   assert {
@@ -100,6 +100,51 @@ run "single_node_vault_shrinks_its_raft_peers" {
   assert {
     condition     = length(regexall("retry_join \\{", helm_release.vault.values[0])) == 1
     error_message = "retry_join stanzas must follow vault_replicas rather than a hardcoded three."
+  }
+}
+
+run "longhorn_daily_s3_backup" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name                  = "rke2-vtafarm-production"
+      longhorn_backup_enabled       = true
+      longhorn_backup_s3_endpoint   = "https://nbg1.your-objectstorage.com"
+      longhorn_backup_s3_region     = "nbg1"
+      longhorn_backup_s3_bucket     = "vtafarm-backups"
+      longhorn_backup_s3_prefix     = "longhorn/rke2-vtafarm-production"
+      longhorn_backup_s3_access_key = "test-access-key"
+      longhorn_backup_s3_secret_key = "test-secret-key"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.longhorn.values[0]).global.timezone == "UTC" &&
+      yamldecode(helm_release.longhorn.values[0]).defaultBackupStore.backupTarget == "s3://vtafarm-backups@nbg1/longhorn/rke2-vtafarm-production/" &&
+      yamldecode(helm_release.longhorn.values[0]).defaultBackupStore.backupTargetCredentialSecret == "longhorn-backup-s3"
+    )
+    error_message = "Longhorn must use the configured S3-compatible backup target and credential secret."
+  }
+
+  assert {
+    condition = (
+      length(helm_release.longhorn_backup) == 1 &&
+      helm_release.longhorn_backup[0].name == "longhorn-backup" &&
+      yamldecode(helm_release.longhorn_backup[0].values[0]).name == "longhorn-daily-backup" &&
+      yamldecode(helm_release.longhorn_backup[0].values[0]).schedule == "0 0 * * *" &&
+      yamldecode(helm_release.longhorn_backup[0].values[0]).retention == 30
+    )
+    error_message = "A dependent Helm release must schedule the daily midnight UTC backup after Longhorn installs its CRDs."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.longhorn.values[0]).defaultSettings.allowRecurringJobWhileVolumeDetached == true &&
+      length(kubernetes_secret_v1.longhorn_backup_s3) == 1
+    )
+    error_message = "Detached Longhorn volumes must be eligible for recurring backups and have an S3 credential Secret."
   }
 }
 

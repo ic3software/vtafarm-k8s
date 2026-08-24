@@ -40,6 +40,59 @@ variable "longhorn_default_class" {
   default     = true
 }
 
+variable "longhorn_backup_enabled" {
+  description = "Back up Longhorn volumes automatically to the configured S3-compatible bucket."
+  type        = bool
+  default     = true
+}
+
+variable "longhorn_backup_s3_endpoint" {
+  description = "S3-compatible endpoint URL for Longhorn backups."
+  type        = string
+  default     = "https://nbg1.your-objectstorage.com"
+}
+
+variable "longhorn_backup_s3_region" {
+  description = "S3 region used in the Longhorn backup target URL."
+  type        = string
+  default     = "nbg1"
+}
+
+variable "longhorn_backup_s3_bucket" {
+  description = "Private S3 bucket that receives Longhorn volume backups."
+  type        = string
+}
+
+variable "longhorn_backup_s3_prefix" {
+  description = "Prefix inside the bucket. Empty defaults to longhorn/<cluster name>."
+  type        = string
+  default     = ""
+}
+
+variable "longhorn_backup_s3_access_key" {
+  description = "S3 access key used by Longhorn."
+  type        = string
+  sensitive   = true
+}
+
+variable "longhorn_backup_s3_secret_key" {
+  description = "S3 secret key used by Longhorn."
+  type        = string
+  sensitive   = true
+}
+
+variable "longhorn_backup_schedule" {
+  description = "Cron schedule for Longhorn volume backups. Longhorn is pinned to UTC."
+  type        = string
+  default     = "0 0 * * *"
+}
+
+variable "longhorn_backup_retention" {
+  description = "Number of successful backups to retain per Longhorn volume."
+  type        = number
+  default     = 30
+}
+
 variable "vault_chart_version" {
   description = "hashicorp/vault chart version. Bump deliberately; read the upstream changelog first."
   type        = string
@@ -66,12 +119,6 @@ variable "vault_replicas" {
 
 variable "vault_data_size" {
   description = "PersistentVolume size for each farm Vault peer's Raft data."
-  type        = string
-  default     = "10Gi"
-}
-
-variable "vault_audit_size" {
-  description = "PersistentVolume size for each farm Vault peer's audit log."
   type        = string
   default     = "10Gi"
 }

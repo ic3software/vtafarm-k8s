@@ -1,6 +1,17 @@
 # Replicated block storage for Vault's Raft and audit volumes. The RKE2 nodes
 # are already prepared for it: cloud-init installs open-iscsi and nfs-common and
 # enables iscsid, which is all Longhorn asks of the host.
+locals {
+  longhorn_backup_credential_secret = "longhorn-backup-s3"
+  longhorn_backup_recurring_job     = "longhorn-daily-backup"
+  longhorn_backup_target = format(
+    "s3://%s@%s/%s/",
+    var.config.longhorn_backup_s3_bucket,
+    var.config.longhorn_backup_s3_region,
+    trim(var.config.longhorn_backup_s3_prefix, "/"),
+  )
+}
+
 resource "helm_release" "longhorn" {
   name             = "longhorn"
   repository       = "https://charts.longhorn.io"
@@ -8,6 +19,21 @@ resource "helm_release" "longhorn" {
   version          = var.config.longhorn_version
   namespace        = "longhorn-system"
   create_namespace = true
+
+  values = [yamlencode({
+    # RecurringJob does not expose CronJob's timeZone field. RKE2 control-plane
+    # nodes run UTC; pin Longhorn to the same zone so its schedule and logs agree.
+    global = {
+      timezone = "UTC"
+    }
+    defaultBackupStore = var.config.longhorn_backup_enabled ? {
+      backupTarget                 = local.longhorn_backup_target
+      backupTargetCredentialSecret = local.longhorn_backup_credential_secret
+    } : {}
+    defaultSettings = {
+      allowRecurringJobWhileVolumeDetached = var.config.longhorn_backup_enabled
+    }
+  })]
 
   set = [
     {
@@ -41,6 +67,52 @@ resource "helm_release" "longhorn" {
 
   wait    = true
   timeout = 900
+}
+
+# The chart creates the namespace, so the credential follows the release on a
+# fresh install. Longhorn continuously reconciles the target and starts using
+# the secret as soon as it appears.
+resource "kubernetes_secret_v1" "longhorn_backup_s3" {
+  count = var.config.longhorn_backup_enabled ? 1 : 0
+
+  metadata {
+    name      = local.longhorn_backup_credential_secret
+    namespace = helm_release.longhorn.namespace
+  }
+
+  # These names are fixed by Longhorn's S3-compatible backupstore client.
+  data = {
+    AWS_ACCESS_KEY_ID     = var.config.longhorn_backup_s3_access_key
+    AWS_SECRET_ACCESS_KEY = var.config.longhorn_backup_s3_secret_key
+    AWS_ENDPOINTS         = var.config.longhorn_backup_s3_endpoint
+  }
+
+  type = "Opaque"
+}
+
+# Longhorn ships its CRDs as ordinary templates, so a RecurringJob in the same
+# Helm release fails API discovery on a fresh cluster. A dependent release is
+# evaluated only after Longhorn and its CRDs are installed.
+resource "helm_release" "longhorn_backup" {
+  count = var.config.longhorn_backup_enabled ? 1 : 0
+
+  name      = "longhorn-backup"
+  chart     = "${path.module}/charts/longhorn-backup"
+  namespace = helm_release.longhorn.namespace
+
+  values = [yamlencode({
+    name      = local.longhorn_backup_recurring_job
+    schedule  = var.config.longhorn_backup_schedule
+    retention = var.config.longhorn_backup_retention
+  })]
+
+  wait    = true
+  timeout = 300
+
+  depends_on = [
+    helm_release.longhorn,
+    kubernetes_secret_v1.longhorn_backup_s3,
+  ]
 }
 
 # The RKE2 module installs hcloud-csi, which ships its own StorageClass. Two

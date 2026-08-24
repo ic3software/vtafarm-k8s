@@ -16,13 +16,25 @@ longhorn_version       = "1.12.1"
 longhorn_replica_count = 1
 longhorn_default_class = true
 
+# Reuse the private bucket and S3 credential pair used by the other backup
+# layers. The default prefix isolates this cluster at longhorn/<cluster-name>.
+# The schedule is evaluated in UTC and keeps 30 daily backups per volume.
+longhorn_backup_enabled       = true
+longhorn_backup_s3_endpoint   = "https://nbg1.your-objectstorage.com"
+longhorn_backup_s3_region     = "nbg1"
+longhorn_backup_s3_bucket     = "my-globally-unique-k3s-backups"
+longhorn_backup_s3_prefix     = ""
+longhorn_backup_s3_access_key = ""
+longhorn_backup_s3_secret_key = ""
+longhorn_backup_schedule      = "0 0 * * *"
+longhorn_backup_retention     = 30
+
 # --- Vault -----------------------------------------------------------------
 # vault_replicas must be odd and cannot exceed the schedulable node count: the
 # chart pins one Vault pod per node, so a fourth peer would stay Pending.
 vault_chart_version = "0.33.0"
 vault_replicas      = 3
 vault_data_size     = "10Gi"
-vault_audit_size    = "10Gi"
 transit_data_size   = "1Gi"
 storage_class       = "longhorn"
 

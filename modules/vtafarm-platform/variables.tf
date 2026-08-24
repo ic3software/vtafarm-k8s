@@ -12,11 +12,20 @@ variable "config" {
     # chart naming it. hcloud-volumes stays available by name.
     longhorn_default_class = optional(bool, true)
 
+    longhorn_backup_enabled       = optional(bool, false)
+    longhorn_backup_s3_endpoint   = optional(string, "")
+    longhorn_backup_s3_region     = optional(string, "")
+    longhorn_backup_s3_bucket     = optional(string, "")
+    longhorn_backup_s3_prefix     = optional(string, "longhorn")
+    longhorn_backup_s3_access_key = optional(string, "")
+    longhorn_backup_s3_secret_key = optional(string, "")
+    longhorn_backup_schedule      = optional(string, "0 0 * * *")
+    longhorn_backup_retention     = optional(number, 30)
+
     vault_chart_version = optional(string, "0.33.0")
     vault_namespace     = optional(string, "vault")
     vault_replicas      = optional(number, 3)
     vault_data_size     = optional(string, "10Gi")
-    vault_audit_size    = optional(string, "10Gi")
 
     transit_namespace = optional(string, "vault-transit")
     transit_data_size = optional(string, "1Gi")
@@ -42,6 +51,29 @@ variable "config" {
   validation {
     condition     = var.config.longhorn_replica_count >= 1 && var.config.longhorn_replica_count <= 5
     error_message = "longhorn_replica_count must be between 1 and 5."
+  }
+
+  validation {
+    condition = !var.config.longhorn_backup_enabled || alltrue([
+      for value in [
+        var.config.longhorn_backup_s3_endpoint,
+        var.config.longhorn_backup_s3_region,
+        var.config.longhorn_backup_s3_bucket,
+        var.config.longhorn_backup_s3_access_key,
+        var.config.longhorn_backup_s3_secret_key,
+      ] : trimspace(value) != ""
+    ])
+    error_message = "Longhorn S3 endpoint, region, bucket, access key, and secret key are required when backups are enabled."
+  }
+
+  validation {
+    condition     = !var.config.longhorn_backup_enabled || can(regex("^https?://", var.config.longhorn_backup_s3_endpoint))
+    error_message = "longhorn_backup_s3_endpoint must be an http(s) URL."
+  }
+
+  validation {
+    condition     = !var.config.longhorn_backup_enabled || var.config.longhorn_backup_retention >= 1
+    error_message = "longhorn_backup_retention must be at least 1."
   }
 
   validation {

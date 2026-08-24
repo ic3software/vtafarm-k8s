@@ -1,0 +1,7 @@
+apiVersion: v2
+name: longhorn-backup
+description: >-
+  Longhorn recurring volume backup installed after the main chart establishes
+  the longhorn.io CRDs.
+type: application
+version: 0.1.0

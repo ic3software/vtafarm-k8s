@@ -36,14 +36,10 @@ server:
     storageClass: ${storage_class}
 %{ endif ~}
 
-  # A secrets store needs a durable audit trail. Enable the device after init:
-  #   vault audit enable file file_path=/vault/audit/audit.log
+  # The audit trail goes to stdout, where kubelet rotates and prunes it. A PVC
+  # here would fill, and Vault refuses every request once it cannot write.
   auditStorage:
-    enabled: true
-    size: ${audit_size}
-%{ if storage_class != "" ~}
-    storageClass: ${storage_class}
-%{ endif ~}
+    enabled: false
 
   # Right-sized for an early farm. HashiCorp's reference numbers (8Gi/16Gi) are
   # for large-scale production; raise these as tenant count and load grow.

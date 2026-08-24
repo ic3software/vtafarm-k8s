@@ -17,7 +17,8 @@ locals {
   lb_private_ip = cidrhost(var.config.subnet_cidr, 10)
 
   # Hetzner private networks run at MTU 1450.
-  private_interface_mtu = 1450
+  private_interface_mtu   = 1450
+  private_network_gateway = cidrhost(var.config.network_cidr, 1)
 
   # The kernel names Hetzner's private NIC after the server type (enp7s0, ens10,
   # ...), so canal is pointed at it by address instead. Every address this module
@@ -63,6 +64,12 @@ locals {
     secrets-encryption       = true
     tls-san                  = local.tls_sans
     write-kubeconfig-mode    = "0600"
+
+    # Bounds Vault's stdout audit log; kubelet's 10Mi x 5 default is too short.
+    kubelet-arg = [
+      "container-log-max-size=100Mi",
+      "container-log-max-files=5",
+    ]
   })
 
   hcloud_secret_manifest = yamlencode({
@@ -102,7 +109,11 @@ locals {
               }
             }
           }
-          HCLOUD_NETWORK_ROUTES_ENABLED = { value = "false" }
+          # Network attachment is already guaranteed by hcloud_server.node.
+          # Skipping the metadata check prevents a bad link-local DHCP route
+          # from leaving the CCM crash-looping and every node uninitialized.
+          HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK = { value = "true" }
+          HCLOUD_NETWORK_ROUTES_ENABLED         = { value = "false" }
         }
       })
     }
@@ -200,10 +211,12 @@ locals {
 
   node_user_data = {
     for key, node in local.nodes : key => templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
-      hostname              = node.name
-      node_private_ip       = node.private_ip
-      private_interface_mtu = local.private_interface_mtu
-      bootstrap_script      = file("${path.module}/templates/rancher-node-bootstrap.sh")
+      hostname                = node.name
+      node_private_ip         = node.private_ip
+      private_network_cidr    = var.config.network_cidr
+      private_network_gateway = local.private_network_gateway
+      private_interface_mtu   = local.private_interface_mtu
+      bootstrap_script        = file("${path.module}/templates/rancher-node-bootstrap.sh")
       registration_script = join(" ", concat(
         [local.registration_command],
         [for role in node.roles : "--${role}"],
