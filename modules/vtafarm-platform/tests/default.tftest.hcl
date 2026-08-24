@@ -130,13 +130,13 @@ run "longhorn_daily_s3_backup" {
 
   assert {
     condition = (
-      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].kind == "RecurringJob" &&
-      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.task == "backup" &&
-      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.cron == "0 0 * * *" &&
-      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.retain == 30 &&
-      contains(yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.groups, "default")
+      length(helm_release.longhorn_backup) == 1 &&
+      helm_release.longhorn_backup[0].name == "longhorn-backup" &&
+      yamldecode(helm_release.longhorn_backup[0].values[0]).name == "longhorn-daily-backup" &&
+      yamldecode(helm_release.longhorn_backup[0].values[0]).schedule == "0 0 * * *" &&
+      yamldecode(helm_release.longhorn_backup[0].values[0]).retention == 30
     )
-    error_message = "Longhorn must run a daily midnight UTC backup for the default volume group."
+    error_message = "A dependent Helm release must schedule the daily midnight UTC backup after Longhorn installs its CRDs."
   }
 
   assert {

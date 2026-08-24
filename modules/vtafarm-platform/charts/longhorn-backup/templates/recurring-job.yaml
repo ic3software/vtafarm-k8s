@@ -1,0 +1,14 @@
+# The default group covers existing and future volumes without mutating the
+# parameters of an already-created StorageClass.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  concurrency: 1
+  cron: {{ .Values.schedule | quote }}
+  groups:
+    - default
+  retain: {{ .Values.retention }}
+  task: backup

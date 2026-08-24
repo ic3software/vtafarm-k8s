@@ -33,23 +33,6 @@ resource "helm_release" "longhorn" {
     defaultSettings = {
       allowRecurringJobWhileVolumeDetached = var.config.longhorn_backup_enabled
     }
-    # The default group covers existing and future volumes without attempting
-    # to mutate the parameters of an already-created StorageClass.
-    extraObjects = var.config.longhorn_backup_enabled ? [{
-      apiVersion = "longhorn.io/v1beta2"
-      kind       = "RecurringJob"
-      metadata = {
-        name      = local.longhorn_backup_recurring_job
-        namespace = "longhorn-system"
-      }
-      spec = {
-        concurrency = 1
-        cron        = var.config.longhorn_backup_schedule
-        groups      = ["default"]
-        retain      = var.config.longhorn_backup_retention
-        task        = "backup"
-      }
-    }] : []
   })]
 
   set = [
@@ -105,6 +88,31 @@ resource "kubernetes_secret_v1" "longhorn_backup_s3" {
   }
 
   type = "Opaque"
+}
+
+# Longhorn ships its CRDs as ordinary templates, so a RecurringJob in the same
+# Helm release fails API discovery on a fresh cluster. A dependent release is
+# evaluated only after Longhorn and its CRDs are installed.
+resource "helm_release" "longhorn_backup" {
+  count = var.config.longhorn_backup_enabled ? 1 : 0
+
+  name      = "longhorn-backup"
+  chart     = "${path.module}/charts/longhorn-backup"
+  namespace = helm_release.longhorn.namespace
+
+  values = [yamlencode({
+    name      = local.longhorn_backup_recurring_job
+    schedule  = var.config.longhorn_backup_schedule
+    retention = var.config.longhorn_backup_retention
+  })]
+
+  wait    = true
+  timeout = 300
+
+  depends_on = [
+    helm_release.longhorn,
+    kubernetes_secret_v1.longhorn_backup_s3,
+  ]
 }
 
 # The RKE2 module installs hcloud-csi, which ships its own StorageClass. Two
