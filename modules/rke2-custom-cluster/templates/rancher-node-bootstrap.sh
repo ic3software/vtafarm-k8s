@@ -21,6 +21,8 @@ trap record_failure EXIT
 # shellcheck disable=SC1091
 source /etc/rancher-node-bootstrap.env
 : "${NODE_PRIVATE_IP:?not set in /etc/rancher-node-bootstrap.env}"
+: "${PRIVATE_NETWORK_CIDR:?not set in /etc/rancher-node-bootstrap.env}"
+: "${PRIVATE_NETWORK_GATEWAY:?not set in /etc/rancher-node-bootstrap.env}"
 : "${PRIVATE_IFACE_MTU:?not set in /etc/rancher-node-bootstrap.env}"
 
 log() { echo "[rancher-node-bootstrap] $(date -Is) $*"; }
@@ -61,9 +63,15 @@ network:
       dhcp4: true
       dhcp4-overrides:
         use-dns: false
+        use-routes: false
       dhcp6: false
       mtu: ${PRIVATE_IFACE_MTU}
       optional: true
+      routes:
+        - to: ${PRIVATE_NETWORK_GATEWAY}/32
+          scope: link
+        - to: ${PRIVATE_NETWORK_CIDR}
+          via: ${PRIVATE_NETWORK_GATEWAY}
 EOF
   chmod 0600 /etc/netplan/60-rke2-private-network.yaml
   netplan generate

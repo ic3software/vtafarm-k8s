@@ -85,6 +85,47 @@ run "default_ha_topology" {
 
   assert {
     condition = (
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/etc/rancher-node-bootstrap.env"
+        ])),
+        "PRIVATE_NETWORK_CIDR=\"10.10.0.0/16\"",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/etc/rancher-node-bootstrap.env"
+        ])),
+        "PRIVATE_NETWORK_GATEWAY=\"10.10.0.1\"",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
+        ])),
+        "use-routes: false",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
+        ])),
+        "to: $${PRIVATE_NETWORK_CIDR}",
+      ) &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
+        ])),
+        "to: $${PRIVATE_NETWORK_GATEWAY}/32",
+      )
+    )
+    error_message = "Private NIC bootstrap must reject DHCP routes and install the configured network route explicitly."
+  }
+
+  assert {
+    condition = (
       hcloud_load_balancer_service.ingress_http.listen_port == 80 &&
       hcloud_load_balancer_service.ingress_http.destination_port == 80 &&
       hcloud_load_balancer_service.ingress_https.listen_port == 443 &&

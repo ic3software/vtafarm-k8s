@@ -17,7 +17,8 @@ locals {
   lb_private_ip = cidrhost(var.config.subnet_cidr, 10)
 
   # Hetzner private networks run at MTU 1450.
-  private_interface_mtu = 1450
+  private_interface_mtu   = 1450
+  private_network_gateway = cidrhost(var.config.network_cidr, 1)
 
   # The kernel names Hetzner's private NIC after the server type (enp7s0, ens10,
   # ...), so canal is pointed at it by address instead. Every address this module
@@ -204,10 +205,12 @@ locals {
 
   node_user_data = {
     for key, node in local.nodes : key => templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
-      hostname              = node.name
-      node_private_ip       = node.private_ip
-      private_interface_mtu = local.private_interface_mtu
-      bootstrap_script      = file("${path.module}/templates/rancher-node-bootstrap.sh")
+      hostname                = node.name
+      node_private_ip         = node.private_ip
+      private_network_cidr    = var.config.network_cidr
+      private_network_gateway = local.private_network_gateway
+      private_interface_mtu   = local.private_interface_mtu
+      bootstrap_script        = file("${path.module}/templates/rancher-node-bootstrap.sh")
       registration_script = join(" ", concat(
         [local.registration_command],
         [for role in node.roles : "--${role}"],
