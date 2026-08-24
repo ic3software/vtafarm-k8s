@@ -464,6 +464,7 @@ The farm is now running. Everything after this point is a runbook.
 | [docs/operations.md](docs/operations.md) | day-2 `make` targets, kubeconfig contexts, adding nodes, what is backed up |
 | [docs/remote-state.md](docs/remote-state.md) | where state and tfvars live, locking, and how a second operator joins |
 | [docs/backup-restore.md](docs/backup-restore.md) | disaster recovery, four failure scenarios, and a drill |
+| [docs/cluster-migration.md](docs/cluster-migration.md) | moving a live farm — database, Vault and tenants — onto a new cluster |
 | [docs/upgrade.md](docs/upgrade.md) | how to upgrade k3s, Rancher, cert-manager, the OS, a vtafarm release and the providers |
 | [docs/vault.md](docs/vault.md) | Vault init, unseal, bootstrap, the isolation model and day-2 tasks |
 | [docs/vault-upgrade.md](docs/vault-upgrade.md) | how to upgrade both Vaults and drain a node |
