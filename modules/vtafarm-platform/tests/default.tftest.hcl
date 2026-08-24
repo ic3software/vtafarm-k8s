@@ -103,6 +103,51 @@ run "single_node_vault_shrinks_its_raft_peers" {
   }
 }
 
+run "longhorn_daily_s3_backup" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name                  = "rke2-vtafarm-production"
+      longhorn_backup_enabled       = true
+      longhorn_backup_s3_endpoint   = "https://nbg1.your-objectstorage.com"
+      longhorn_backup_s3_region     = "nbg1"
+      longhorn_backup_s3_bucket     = "vtafarm-backups"
+      longhorn_backup_s3_prefix     = "longhorn/rke2-vtafarm-production"
+      longhorn_backup_s3_access_key = "test-access-key"
+      longhorn_backup_s3_secret_key = "test-secret-key"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.longhorn.values[0]).global.timezone == "UTC" &&
+      yamldecode(helm_release.longhorn.values[0]).defaultBackupStore.backupTarget == "s3://vtafarm-backups@nbg1/longhorn/rke2-vtafarm-production/" &&
+      yamldecode(helm_release.longhorn.values[0]).defaultBackupStore.backupTargetCredentialSecret == "longhorn-backup-s3"
+    )
+    error_message = "Longhorn must use the configured S3-compatible backup target and credential secret."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].kind == "RecurringJob" &&
+      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.task == "backup" &&
+      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.cron == "0 0 * * *" &&
+      yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.retain == 30 &&
+      contains(yamldecode(helm_release.longhorn.values[0]).extraObjects[0].spec.groups, "default")
+    )
+    error_message = "Longhorn must run a daily midnight UTC backup for the default volume group."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.longhorn.values[0]).defaultSettings.allowRecurringJobWhileVolumeDetached == true &&
+      length(kubernetes_secret_v1.longhorn_backup_s3) == 1
+    )
+    error_message = "Detached Longhorn volumes must be eligible for recurring backups and have an S3 credential Secret."
+  }
+}
+
 run "keeping_hcloud_default_leaves_its_class_alone" {
   command = plan
 

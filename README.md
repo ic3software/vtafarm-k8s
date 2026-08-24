@@ -332,8 +332,9 @@ make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
 code stacks/04-vtafarm-platform/clusters/rke2-vtafarm-production/terraform.tfvars
 ```
 
-The defaults work as they are. Open the file only if you want a different Vault or Longhorn
-setup, and read the comments before you change anything.
+Fill in the Longhorn backup bucket and S3 credential pair. Reuse the private bucket from step 1;
+the default `longhorn/<cluster-name>` prefix keeps each downstream cluster separate. The other
+defaults install Vault and schedule Longhorn volume backups for `00:00 UTC` every day.
 
 ```bash
 make init-vtafarm-platform  CLUSTER=rke2-vtafarm-production

@@ -11,11 +11,13 @@
 | --- | --- | --- | --- | --- |
 | etcd snapshot | k3s built-in | the whole Kubernetes datastore | every 6h, on each server | 12 per server locally (3 days) + 360 in Hetzner Object Storage (30 days) |
 | Rancher backup | rancher-backup operator | Rancher CRDs, users, downstream cluster registrations | daily 03:00 | 30 in Hetzner Object Storage |
+| Longhorn backup | Longhorn recurring job | every Longhorn volume in a downstream cluster | daily 00:00 UTC | 30 per volume in Hetzner Object Storage |
 
 Configured in:
 
 - etcd: `etcd_snapshot_*` / `etcd_s3_*` in `stacks/01-infra/terraform.tfvars`
 - Rancher: `rancher_backup_*` / `backup_s3_*` in `stacks/02-rancher/terraform.tfvars`
+- Longhorn: `longhorn_backup_*` in each stack 04 cluster's `terraform.tfvars`
 
 ---
 
@@ -81,6 +83,19 @@ Rancher backups:
 kubectl get backup
 kubectl describe backup rancher-scheduled-backup | tail -20
 ```
+
+Longhorn volume backups on one downstream cluster:
+
+```bash
+export KUBECONFIG=stacks/03-rke2-clusters/clusters/<cluster>/kubeconfig.yaml
+kubectl -n longhorn-system get recurringjob longhorn-daily-backup
+kubectl -n longhorn-system get backups.longhorn.io
+kubectl -n longhorn-system get backuptargets.longhorn.io
+```
+
+The recurring job should show `0 0 * * *`, and the backup target must report `Available`.
+Longhorn only creates a new incremental backup when the volume contains data changed since the
+previous backup.
 
 ---
 

@@ -22,6 +22,16 @@ module "platform" {
     longhorn_replica_count = var.longhorn_replica_count
     longhorn_default_class = var.longhorn_default_class
 
+    longhorn_backup_enabled       = var.longhorn_backup_enabled
+    longhorn_backup_s3_endpoint   = var.longhorn_backup_s3_endpoint
+    longhorn_backup_s3_region     = var.longhorn_backup_s3_region
+    longhorn_backup_s3_bucket     = var.longhorn_backup_s3_bucket
+    longhorn_backup_s3_prefix     = coalesce(var.longhorn_backup_s3_prefix, "longhorn/${local.cluster_name}")
+    longhorn_backup_s3_access_key = var.longhorn_backup_s3_access_key
+    longhorn_backup_s3_secret_key = var.longhorn_backup_s3_secret_key
+    longhorn_backup_schedule      = var.longhorn_backup_schedule
+    longhorn_backup_retention     = var.longhorn_backup_retention
+
     vault_chart_version = var.vault_chart_version
     vault_namespace     = var.vault_namespace
     vault_replicas      = var.vault_replicas
