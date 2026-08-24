@@ -123,12 +123,6 @@ variable "vault_data_size" {
   default     = "10Gi"
 }
 
-variable "vault_audit_size" {
-  description = "PersistentVolume size for each farm Vault peer's audit log."
-  type        = string
-  default     = "10Gi"
-}
-
 variable "transit_namespace" {
   description = "Namespace for the standalone transit Vault providing auto-unseal."
   type        = string

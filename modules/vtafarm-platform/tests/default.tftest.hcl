@@ -37,9 +37,9 @@ run "default_topology" {
     condition = (
       yamldecode(helm_release.vault.values[0]).server.ha.replicas == 3 &&
       yamldecode(helm_release.vault.values[0]).server.dataStorage.storageClass == "longhorn" &&
-      yamldecode(helm_release.vault.values[0]).server.auditStorage.storageClass == "longhorn"
+      yamldecode(helm_release.vault.values[0]).server.auditStorage.enabled == false
     )
-    error_message = "The farm Vault must run three peers with both volumes on the longhorn StorageClass."
+    error_message = "The farm Vault must run three peers on longhorn, with the audit trail on stdout rather than a PVC that can fill."
   }
 
   assert {

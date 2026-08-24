@@ -6,8 +6,9 @@
 #   vault-bootstrap.sh transit   enable the transit engine, create the autounseal
 #                                key, mint the farm Vault's unseal token and
 #                                store it as the vault-transit-token secret
-#   vault-bootstrap.sh farm      enable KV v2, Kubernetes auth and AppRole, write
-#                                the vtafarm-api-admin policy and the API's role
+#   vault-bootstrap.sh farm      enable the audit device, KV v2, Kubernetes auth
+#                                and AppRole, write the vtafarm-api-admin policy
+#                                and the API's role
 #
 # Both subcommands need VAULT_TOKEN set to the root token that
 # `vault operator init` printed for THAT Vault - they are separate Vaults with
@@ -124,6 +125,16 @@ Its pods were waiting on the secret, so restart them to pick it up:
 Then initialize the farm Vault and run:  $0 farm
 MSG
   exit 0
+fi
+
+# Enabled first, so the rest of this bootstrap is itself audited. On stdout
+# rather than a volume: Vault refuses every request once an audit device cannot
+# write, and kubelet already rotates and prunes container logs.
+echo "==> Enabling the audit device on stdout"
+if vault audit list -format=json 2>/dev/null | grep -q '"file/"'; then
+  echo "    (already enabled)"
+else
+  vault audit enable file file_path=stdout
 fi
 
 echo "==> Enabling KV v2 at '${KV_MOUNT}/'"

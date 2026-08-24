@@ -26,7 +26,6 @@ variable "config" {
     vault_namespace     = optional(string, "vault")
     vault_replicas      = optional(number, 3)
     vault_data_size     = optional(string, "10Gi")
-    vault_audit_size    = optional(string, "10Gi")
 
     transit_namespace = optional(string, "vault-transit")
     transit_data_size = optional(string, "1Gi")

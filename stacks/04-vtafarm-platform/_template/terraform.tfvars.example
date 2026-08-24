@@ -35,7 +35,6 @@ longhorn_backup_retention     = 30
 vault_chart_version = "0.33.0"
 vault_replicas      = 3
 vault_data_size     = "10Gi"
-vault_audit_size    = "10Gi"
 transit_data_size   = "1Gi"
 storage_class       = "longhorn"
 

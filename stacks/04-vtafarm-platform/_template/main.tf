@@ -36,7 +36,6 @@ module "platform" {
     vault_namespace     = var.vault_namespace
     vault_replicas      = var.vault_replicas
     vault_data_size     = var.vault_data_size
-    vault_audit_size    = var.vault_audit_size
 
     transit_namespace = var.transit_namespace
     transit_data_size = var.transit_data_size
