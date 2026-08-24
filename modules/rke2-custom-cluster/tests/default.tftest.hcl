@@ -106,6 +106,16 @@ run "default_ha_topology" {
     )
     error_message = "Canal must bind flannel to the private interface, with a pod MTU that matches its VXLAN tunnel."
   }
+
+  # A metadata request routed through the private NIC times out and leaves the
+  # external-cloud-provider taint in place, so no ordinary pod can schedule.
+  assert {
+    condition = (
+      yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK.value == "true" &&
+      yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_ROUTES_ENABLED.value == "false"
+    )
+    error_message = "The Hetzner CCM must trust OpenTofu's network attachment and leave private-network routing to Canal."
+  }
 }
 
 run "worker_scale_does_not_renumber_servers" {

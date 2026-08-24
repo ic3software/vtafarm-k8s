@@ -102,7 +102,11 @@ locals {
               }
             }
           }
-          HCLOUD_NETWORK_ROUTES_ENABLED = { value = "false" }
+          # Network attachment is already guaranteed by hcloud_server.node.
+          # Skipping the metadata check prevents a bad link-local DHCP route
+          # from leaving the CCM crash-looping and every node uninitialized.
+          HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK = { value = "true" }
+          HCLOUD_NETWORK_ROUTES_ENABLED         = { value = "false" }
         }
       })
     }
