@@ -173,14 +173,20 @@ code terraform.tfvars
 Go through every value in the file and read the comments above them. They say what each value
 does and which ones you have to fill in. Continue with step 2 when the file is complete.
 
-Once it is, `make tfvars-push` uploads it to the bucket, where a colleague picks it up with
+Once it is:
+
+```bash
+cd ../..
+make tfvars-push
+```
+
+uploads it to the bucket, where a colleague picks it up with
 `make tfvars-pull`. Do that for every stack you configure from here on.
 [docs/remote-state.md](docs/remote-state.md) covers the whole arrangement.
 
 ### Step 2 — Build the cluster
 
 ```bash
-cd ../..
 make init
 make apply
 ```
@@ -200,6 +206,7 @@ You can also merge it into `~/.kube/config` and use it as one more context:
 ```bash
 make kubeconfig-merge
 kubectl config use-context k3s-rancher
+kubectl get nodes
 ```
 
 In both cases you should see three `Ready` nodes with the roles
