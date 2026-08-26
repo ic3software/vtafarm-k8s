@@ -376,6 +376,14 @@ snapshot: ## Take an on-demand etcd snapshot on the first server
 snapshots: ## List etcd snapshots (local + S3)
 	@bash $(ROOT)/scripts/etcd-snapshot.sh list
 
+.PHONY: restore
+restore: ## Restore the cluster from a snapshot (SNAPSHOT=name, LOCAL=1 for disk)
+	@test -n "$(SNAPSHOT)" || { \
+	  echo "set SNAPSHOT=<file> - list them with: make snapshots" >&2; \
+	  exit 2; \
+	}
+	@bash $(ROOT)/scripts/etcd-restore.sh $(if $(LOCAL),--local,) "$(SNAPSHOT)"
+
 .PHONY: upgrade-os
 export TARGET_IMAGE
 upgrade-os: ## Replace nodes one at a time with TARGET_IMAGE (for example ubuntu-26.04)

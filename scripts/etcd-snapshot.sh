@@ -62,6 +62,13 @@ save)
   NAME="${1:-manual-$(date +%Y%m%d-%H%M%S)}"
   echo "==> taking snapshot '${NAME}' on ${HOST}"
   run_snapshot save --name "$NAME"
+
+  # k3s appends the node name and a timestamp, so the file is not named what
+  # was asked for. Restoring needs that exact name; read it back.
+  FILE="$(run_snapshot list 2>/dev/null | awk -v n="$NAME" '$1 ~ "^" n "-" { print $1 }' | sort -u | tail -1)"
+  if [ -n "$FILE" ]; then
+    printf '\n==> saved as\n\n    %s\n\n    restore it with: make restore SNAPSHOT=%s\n' "$FILE" "$FILE"
+  fi
   ;;
 list)
   echo "==> snapshots known to the cluster (local disk and S3)"
