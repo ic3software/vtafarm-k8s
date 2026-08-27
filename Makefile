@@ -65,29 +65,6 @@ tfvars-push: check-state-env ## Upload every terraform.tfvars to the state bucke
 tfvars-diff: check-state-env ## Name the tfvars variables that differ from the bucket
 	@bash $(ROOT)/scripts/tfvars-sync.sh diff
 
-# One-time, for a checkout whose state is still on disk. Plain `init` refuses to
-# run once backend.tf appears until it is told what to do with the old state;
-# -migrate-state is what offers to copy it up. Harmless to re-run afterwards.
-.PHONY: migrate-state
-migrate-state: check-state-env ## One-time: move stack 01 state into the bucket
-	tofu -chdir=$(INFRA) init -migrate-state $(call backend_config,01-infra)
-
-.PHONY: migrate-state-rancher
-migrate-state-rancher: check-state-env ## One-time: move stack 02 state into the bucket
-	tofu -chdir=$(RANCHER) init -migrate-state $(call backend_config,02-rancher)
-
-.PHONY: migrate-state-rke2
-migrate-state-rke2: check-rke2-cluster check-state-env ## One-time: move stack 03 state (CLUSTER=name)
-	tofu -chdir=$(RKE2_CLUSTER_DIR) init -migrate-state $(call backend_config,03-rke2-clusters/$(CLUSTER))
-
-.PHONY: migrate-state-vtafarm-platform
-migrate-state-vtafarm-platform: check-vtafarm-platform check-state-env ## One-time: move stack 04 state (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) init -migrate-state $(call backend_config,04-vtafarm-platform/$(CLUSTER))
-
-.PHONY: migrate-state-vtafarm-app
-migrate-state-vtafarm-app: check-vtafarm-app check-state-env ## One-time: move stack 05 state (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) init -migrate-state $(call backend_config,05-vtafarm-app/$(CLUSTER))
-
 # --- stack 01: infrastructure + k3s ----------------------------------------
 
 .PHONY: lint
