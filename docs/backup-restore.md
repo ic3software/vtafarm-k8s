@@ -178,14 +178,26 @@ kubectl -n cattle-system scale deploy rancher --replicas=3
 
 ```bash
 export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/<cluster>/kubeconfig.yaml
+
+HOST=$(pnm vta info | sed $'s/\033\\[[0-9;]*m//g' |
+  sed -n 's|.*URL:[[:space:]]*https://\([^ ]*\).*|\1|p')
+read -r NS DEPLOY <<<"$(kubectl get ingress -A -o json |
+  jq -r --arg h "$HOST" '.items[] | select(.spec.rules[]?.host == $h)
+    | [.metadata.namespace, .metadata.name] | @tsv')"
+PVC=$(kubectl -n "$NS" get deploy "$DEPLOY" \
+  -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}')
+OLD_PV=$(kubectl -n "$NS" get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
+OLD_VOLUME=$(kubectl get pv "$OLD_PV" -o jsonpath='{.spec.csi.volumeHandle}')
+
+printf 'ns=%s deploy=%s pvc=%s old-pv=%s old-volume=%s\n' \
+  "$NS" "$DEPLOY" "$PVC" "$OLD_PV" "$OLD_VOLUME"
 kubectl -n longhorn-system get backuptargets.longhorn.io
 ```
 
 ### Back up
 
 ```bash
-PV=$(kubectl -n <namespace> get pvc <pvc> -o jsonpath='{.spec.volumeName}')
-BACKUP_NAME="manual-${PV}-$(date -u +%Y%m%d-%H%M%S)"
+BACKUP_NAME="manual-${OLD_VOLUME}-$(date -u +%Y%m%d-%H%M%S)"
 
 kubectl apply -f - <<EOF
 apiVersion: longhorn.io/v1beta2
@@ -194,7 +206,7 @@ metadata:
   name: ${BACKUP_NAME}
   namespace: longhorn-system
 spec:
-  volume: ${PV}
+  volume: ${OLD_VOLUME}
   createSnapshot: true
 EOF
 kubectl -n longhorn-system wait --for=jsonpath='{.status.readyToUse}'=true \
@@ -208,7 +220,7 @@ metadata:
   namespace: longhorn-system
   labels:
     backup-target: default
-    backup-volume: ${PV}
+    backup-volume: ${OLD_VOLUME}
 spec:
   snapshotName: ${BACKUP_NAME}
 EOF
@@ -225,28 +237,34 @@ That last URL is what a restore is addressed by. **Keep it.**
 **Longhorn never rolls a volume back in place.** A restore grows a *new* volume from the backup,
 and you move the claim onto it. Nothing is finished until the workload runs on the new volume.
 
-**1.** Optional, and the only way back if the restored volume turns out to be wrong: these PVs
-come from the default `longhorn` class, which is `Delete`, so step 3 destroys the old volume.
+**1.** Keep the old Longhorn volume as the rollback copy until the restored workload has passed
+verification. These PVs come from the default `longhorn` class, which is `Delete`, so temporarily
+change its reclaim policy to `Retain`.
 
 ```bash
-kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+kubectl patch pv "$OLD_PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
 ```
 
 **2.** Detach the volume, and grow the restored one beside it. The spec is the old volume's, plus
 `fromBackup`:
 
 ```bash
-kubectl -n <namespace> scale deploy <workload> --replicas=0
+kubectl -n "$NS" scale deploy "$DEPLOY" --replicas=0
+
+BACKUP_URL=$(kubectl -n longhorn-system get backup.longhorn.io "$BACKUP_NAME" \
+  -o jsonpath='{.status.url}')
+# Longhorn volume names are limited to 40 characters.
+RESTORED_VOLUME="restore-${DEPLOY:0:12}-$(date -u +%Y%m%d-%H%M%S)"
 
 kubectl apply -f - <<EOF
 apiVersion: longhorn.io/v1beta2
 kind: Volume
 metadata:
-  name: ${BACKUP_NAME}-restored
+  name: ${RESTORED_VOLUME}
   namespace: longhorn-system
 spec:
-  fromBackup: "$(kubectl -n longhorn-system get backup.longhorn.io ${BACKUP_NAME} -o jsonpath='{.status.url}')"
-  size: "$(kubectl -n longhorn-system get volume.longhorn.io ${PV} -o jsonpath='{.spec.size}')"
+  fromBackup: "${BACKUP_URL}"
+  size: "$(kubectl -n longhorn-system get volume.longhorn.io ${OLD_VOLUME} -o jsonpath='{.spec.size}')"
   numberOfReplicas: 1
   dataEngine: v1
   accessMode: rwo
@@ -254,31 +272,79 @@ spec:
   backupTargetName: default
 EOF
 
+# Resolve the actual name by backup URL. This also finds volumes created with the old long name,
+# which Longhorn silently shortened.
+RESTORED_VOLUME=$(kubectl -n longhorn-system get volume.longhorn.io -o json |
+  jq -er --arg url "$BACKUP_URL" '
+    [.items[] | select(.spec.fromBackup == $url)]
+    | sort_by(.metadata.creationTimestamp)
+    | last
+    | .metadata.name')
+
 # watch it fill: restoreRequired false and state detached means it is ready to mount
-kubectl -n longhorn-system get volume.longhorn.io ${BACKUP_NAME}-restored \
+kubectl -n longhorn-system get volume.longhorn.io "$RESTORED_VOLUME" \
   -o custom-columns=STATE:.status.state,RESTORE:.status.restoreRequired,ROBUST:.status.robustness
 ```
 
-**3.** Free the claim, then give it to the restored volume:
+**3.** Free the claim, then give it to the restored volume. Completed setup and provision Job
+pods still count as PVC users, so remove only terminal pods that reference this claim first. Do
+not remove the `kubernetes.io/pvc-protection` finalizer by hand.
 
 ```bash
-kubectl -n <namespace> delete pvc <pvc>
-kubectl delete pv "$PV"          # with Retain from step 1 the old volume survives, detached
+while IFS= read -r pod; do
+  kubectl -n "$NS" delete pod "$pod"
+done < <(
+  kubectl -n "$NS" get pods -o json |
+    jq -r --arg pvc "$PVC" '
+      .items[]
+      | select(.status.phase == "Succeeded" or .status.phase == "Failed")
+      | select(any(.spec.volumes[]?; .persistentVolumeClaim.claimName == $pvc))
+      | .metadata.name'
+)
+
+kubectl -n "$NS" delete pvc "$PVC" --wait=false
+kubectl -n "$NS" wait --for=delete pvc/"$PVC" --timeout=2m
+kubectl delete pv "$OLD_PV" --ignore-not-found
 ```
 
-**4.** UI → Volume → `${BACKUP_NAME}-restored` → **Create PV/PVC**, with the original namespace
-and PVC name. The PVC name is the only identity that matters — the Deployment mounts it by
+**4.** UI → Volume → `$RESTORED_VOLUME` → **Create PV/PVC**, with namespace `$NS` and PVC name
+`$PVC` from above. The PVC name is the only identity that matters — the Deployment mounts it by
 `claimName`, and on the farm it is derived from the session id (`vta-data-<id>`), so it has to be
 the old one. The Longhorn volume's own name is read by nothing.
 
-```bash
-# 5. the UI creates a bare PVC; put the platform's label back on it
-kubectl -n <namespace> label pvc <pvc> managed-by=vtafarm --overwrite
+**5.** The UI creates a bare PVC; put the platform's label back on it:
 
-kubectl -n <namespace> scale deploy <workload> --replicas=1     # 6. bring it back up
+```bash
+kubectl -n "$NS" label pvc "$PVC" managed-by=vtafarm --overwrite
 ```
 
-To undo, repeat steps 3–4 with the original volume, then delete the restored one.
+**6.** Bring the Deployment back and wait for its rollout:
+
+```bash
+kubectl -n "$NS" scale deploy "$DEPLOY" --replicas=1
+kubectl -n "$NS" rollout status deploy/"$DEPLOY"
+```
+
+**7.** Only after step 6 is correct, permanently remove the old Longhorn volume. Resolve the
+current PVC through its PV and refuse deletion unless it points to the restored volume:
+
+```bash
+CURRENT_PV=$(kubectl -n "$NS" get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
+CURRENT_VOLUME=$(kubectl get pv "$CURRENT_PV" -o jsonpath='{.spec.csi.volumeHandle}')
+
+printf 'old=%s restored=%s current=%s\n' \
+  "$OLD_VOLUME" "$RESTORED_VOLUME" "$CURRENT_VOLUME"
+
+if [[ -z "$OLD_VOLUME" || -z "$RESTORED_VOLUME" || \
+      "$OLD_VOLUME" == "$CURRENT_VOLUME" || "$RESTORED_VOLUME" != "$CURRENT_VOLUME" ]]; then
+  echo 'Refusing to delete: the current PVC is not proven to use the restored volume.' >&2
+else
+  kubectl -n longhorn-system delete volume.longhorn.io "$OLD_VOLUME"
+fi
+```
+
+Before step 7, undo by repeating steps 3–4 with the original volume and then deleting the
+restored one. After step 7, the S3 backup is the way back.
 
 > **This does not disturb upgrades.** vtafarm-api upgrades a tenant by fetching the Deployment by
 > name and setting the image on it (`internal/k8s/upgrade.go`, `SetDeploymentImage`); it never
@@ -449,33 +515,22 @@ The VTA's ACL lives on its own 200Mi RWO PVC, and `pnm` reads and writes it agai
 service — so only the restore costs downtime. The entries already there are the surviving half:
 `pnm acl list` authenticates as one of them, so the command answering at all proves that side.
 
-**1.** Find the workload and its volume:
+**1.** Run the discovery block at the start of section 4 to set `HOST`, `NS`, `DEPLOY`, `PVC`,
+`OLD_PV` and `OLD_VOLUME`. Prefer a `vta_only` tenant — one Deployment, one PVC. A full stack
+shares the window with its VTC.
 
 ```bash
-export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/<cluster>/kubeconfig.yaml
-
-HOST=$(pnm vta info | sed $'s/\033\\[[0-9;]*m//g' |
-  sed -n 's|.*URL:[[:space:]]*https://\([^ ]*\).*|\1|p')
-read -r NS WORKLOAD <<<"$(kubectl get ingress -A -o json |
-  jq -r --arg h "$HOST" '.items[] | select(.spec.rules[]?.host == $h)
-    | [.metadata.namespace, .metadata.name] | @tsv')"
-PVC=$(kubectl -n "$NS" get deploy "$WORKLOAD" \
-  -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}')
-PV=$(kubectl -n "$NS" get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
-
-printf 'ns=%s deploy=%s pvc=%s pv=%s\n' "$NS" "$WORKLOAD" "$PVC" "$PV"
+printf 'ns=%s deploy=%s pvc=%s old-pv=%s old-volume=%s\n' \
+  "$NS" "$DEPLOY" "$PVC" "$OLD_PV" "$OLD_VOLUME"
 ```
-
-Prefer a `vta_only` tenant — one Deployment, one PVC. A full stack shares the window with its VTC.
 
 **2.** Record the ACL. Every entry has to come back:
 
 ```bash
-pnm acl list --full-display
+pnm acl list
 ```
 
-**3.** Back that volume up — the two objects from section 4, with
-`BACKUP_NAME=drill-c-$(date -u +%Y%m%d-%H%M%S)`.
+**3.** Back that volume up — the two objects from section 4.
 
 **4.** The entry that must **disappear**. `reader` with no `--contexts` grants nothing, and the DID
 is hash-derived — nobody holds the key:
@@ -493,22 +548,10 @@ Longhorn will not move a RWO claim out from under a running pod.
 **6.** Prove it:
 
 ```bash
-kubectl -n "$NS" rollout status deploy/"$WORKLOAD"
-pnm acl list        # step 2's list, without drill-extra
+kubectl -n "$NS" rollout status deploy/"$DEPLOY"
+# step 2's list, without drill-extra
+pnm acl list
 ```
 
-**7.** Stop there. The restored volume *is* the state the tenant should be on; swapping the
-original back would carry `drill-extra` in with it.
-
-**Step 5 deletes the PVC, and that destroys the old volume** — these PVs come from the default
-`longhorn` class, which is `Delete`. Patch it to `Retain` first if you want the original kept;
-without that, step 3's backup is the only copy. Fine on a scratch tenant, less so on one with
-data in it.
-
-```bash
-kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
-```
-
-> **A rehearsal, if a live tenant is too much.** Do the restore, but give the restored volume a
-> PV/PVC under a different name in a scratch namespace and mount it on a `busybox` pod. Same
-> evidence, nothing stopped. What it does not prove is that the app starts on restored data.
+**7.** The restored volume *is* the state the tenant should be on; swapping the original back
+would carry `drill-extra` in with it. Run section 4 step 7 to delete the old Longhorn volume.
