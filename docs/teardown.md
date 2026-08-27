@@ -7,11 +7,37 @@ the platform, then the downstream cluster, and last the management cluster.
 
 The PersistentVolumeClaim of the database has the annotation `helm.sh/resource-policy: keep`,
 and its storage class keeps the volume. The data therefore survives, and a later apply
-connects to the same volume again:
+connects to the same volume again. Its password survives too: the secret holding it is
+`prevent_destroy`, and the destroy excludes it, because the volume is unreadable without it.
 
 ```bash
 make destroy-vtafarm-app CLUSTER=rke2-vtafarm-production
 ```
+
+### Including the database
+
+That command leaves three objects behind on purpose, and OpenTofu manages none of them: the
+PVC, the PV that `longhorn-retain` keeps, and the Longhorn volume underneath it. Deleting the
+PVC alone frees no disk — under `Retain` the volume outlives its claim. Remove all of it by
+hand when the data really is meant to go:
+
+```bash
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/<cluster>/kubeconfig.yaml
+APP=stacks/05-vtafarm-app/clusters/<cluster>
+PV="$(kubectl get pvc vtafarm-api-postgresql -n default -o jsonpath='{.spec.volumeName}')"
+
+tofu -chdir="$APP" state rm module.app.kubernetes_secret_v1.postgres
+kubectl delete secret vtafarm-api-postgresql -n default
+kubectl delete pvc    vtafarm-api-postgresql -n default
+kubectl delete pv     "$PV"
+kubectl delete volumes.longhorn.io "$PV" -n longhorn-system
+```
+
+Read the PV name before anything else — it comes from the PVC, which is the first thing to go.
+`state rm` leads because `prevent_destroy` has no command-line override; it only makes OpenTofu
+forget the secret and does not touch the cluster. `-n default` follows `namespace` in the app's
+tfvars. A later apply recreates the secret from the password still held in state and initialises
+an empty database on a new volume.
 
 ## One cluster's platform layer
 
@@ -66,3 +92,26 @@ cluster that no longer exists.
 When you are finished, open the Hetzner Console and look for Volumes that remain. OpenTofu
 does not manage the PVs that the CSI driver creates. Volumes with `reclaimPolicy: Delete`
 disappear by themselves, but volumes with `Retain` stay and you keep paying for them.
+
+## Resetting the checkout
+
+`make clean` removes what a fresh clone would not have: every `.terraform` directory, the
+`terraform.tfvars` of stacks 01 and 02, and the `clusters/` directory of stacks 03 to 05. It
+asks first, and it touches nothing remote — the state bucket keeps both the state files and
+the tfvars, and any running cluster keeps running.
+
+Destroy before you clean. `make destroy` finds the RKE2 clusters by reading
+`stacks/03-rke2-clusters/clusters/*`; with those roots gone it destroys stack 01 and leaves
+the downstream Rancher and Hetzner resources behind.
+
+Coming back afterwards is the same path a second operator takes:
+
+```bash
+make init
+make tfvars-pull
+make new-rke2-cluster CLUSTER=rke2-vtafarm-production
+make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make new-vtafarm-app CLUSTER=rke2-vtafarm-production
+make tfvars-pull    # the cluster roots now exist, so their tfvars land too
+make init-rke2 CLUSTER=rke2-vtafarm-production
+```

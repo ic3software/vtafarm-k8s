@@ -5,7 +5,7 @@ snapshots and the Rancher backups. Every stack locks that state while it runs, s
 cannot apply at the same time, and nobody is the single machine that holds the cluster together.
 
 This document is the whole story: how the bucket is laid out, what a second operator needs, and
-how to migrate a checkout that still keeps its state on disk.
+what to do when a lock or a state file goes wrong.
 
 ## Contents
 
@@ -13,7 +13,6 @@ how to migrate a checkout that still keeps its state on disk.
 - [How the backend is configured](#how-the-backend-is-configured)
 - [How locking works](#how-locking-works)
 - [One-time setup](#one-time-setup)
-- [Migrating existing local state](#migrating-existing-local-state)
 - [Onboarding a second operator](#onboarding-a-second-operator)
 - [Changing a tfvars value](#changing-a-tfvars-value)
 - [When a lock is stuck](#when-a-lock-is-stuck)
@@ -24,7 +23,7 @@ how to migrate a checkout that still keeps its state on disk.
 
 ## What lives where
 
-Three things must reach a second operator, and each takes a different route:
+What a second operator needs arrives by one of three routes:
 
 | | Route | Why |
 | --- | --- | --- |
@@ -32,36 +31,31 @@ Three things must reach a second operator, and each takes a different route:
 | State | The bucket, `$TF_PREFIX/tfstate` | Written by OpenTofu, locked while in use |
 | `terraform.tfvars` | The bucket, `$TF_PREFIX/tfvars` | Site-specific and secret, so never in Git |
 | `.env` | Password manager, by hand | It holds the key to the bucket, so it cannot come from the bucket |
+| The SSH key pair | Password manager, by hand | The nodes only accept the key that was uploaded when they were created |
 
-`.env` is the only thing handed over out of band. Everything else follows from it.
-
-`TF_PREFIX` in `.env` names the folder that holds all of it. With the default it looks like
-this:
+Those last two are the only things handed over out of band; everything else follows from them.
+`TF_PREFIX` names the folder holding both trees, one key per stack:
 
 ```text
 <your-bucket>/                              versioning on, non-current kept 30 days
 ├── <k3s cluster name>/                     etcd snapshots, written by k3s
 ├── rancher-backup/                         Rancher backups, written by rancher-backup
-└── opentofu/                            TF_PREFIX
+└── opentofu/                               TF_PREFIX
     ├── tfstate/
     │   ├── 01-infra/terraform.tfstate
     │   ├── 02-rancher/terraform.tfstate
-    │   ├── 03-rke2-clusters/<cluster>/terraform.tfstate
-    │   ├── 04-vtafarm-platform/<cluster>/terraform.tfstate
-    │   └── 05-vtafarm-app/<cluster>/terraform.tfstate
-    └── tfvars/
-        ├── 01-infra/terraform.tfvars
-        ├── 02-rancher/terraform.tfvars
-        └── 0{3,4,5}-*/<cluster>/terraform.tfvars
+    │   └── 0{3,4,5}-*/<cluster>/terraform.tfstate
+    └── tfvars/                              same layout, terraform.tfvars
 ```
 
-Pick `TF_PREFIX` before you migrate. Changing it afterwards makes OpenTofu look for state that
-is not there and offer to create everything from scratch; you would have to copy the objects
-across first.
+Pick `TF_PREFIX` before the first init. Changing it afterwards makes OpenTofu look for state
+that is not there and offer to create everything from scratch; you would have to copy the
+objects across first.
 
 Two files are deliberately **not** synced:
 
-- `kubeconfig.yaml` — regenerate it with `make kubeconfig-rke2 CLUSTER=<name>`
+- `kubeconfig.yaml` — regenerate it with `make kubeconfig` for the management cluster, or
+  `make kubeconfig-rke2 CLUSTER=<name>` for a downstream one
 - `vault-init-*.json` — Vault recovery keys and root tokens. Password manager only, never a
   bucket. See [vault.md](vault.md).
 
@@ -69,44 +63,21 @@ Two files are deliberately **not** synced:
 
 ## How the backend is configured
 
-Each stack has a `backend.tf` that is tracked in Git and carries no site-specific value:
-
-```hcl
-terraform {
-  backend "s3" {
-    use_path_style = true
-    use_lockfile   = true
-
-    skip_credentials_validation = true
-    skip_region_validation      = true
-    skip_requesting_account_id  = true
-    skip_metadata_api_check     = true
-  }
-}
-```
-
-Every stack's copy is identical. The bucket, the region and the key are supplied at init time,
-which is why every init goes through `make` rather than a bare `tofu init`:
+Every stack's `backend.tf` is identical and carries no site value. The bucket, the region and
+the key arrive at init time from `-backend-config`, which the Makefile builds out of `.env`:
 
 ```makefile
-backend_config = -backend-config="bucket=$(TF_STATE_BUCKET)" \
-                 -backend-config="region=$(AWS_REGION)" \
-                 -backend-config="key=$(TF_PREFIX)/tfstate/$(1)/terraform.tfstate"
+key=$(TF_PREFIX)/tfstate/$(1)/terraform.tfstate
 ```
 
 `$(1)` is the stack's path — `01-infra`, or `03-rke2-clusters/<cluster>` for the three stacks
-that keep one root per cluster. The endpoint and the credentials come from the environment:
-`AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The Makefile loads all
-of it from `.env`.
+that keep one root per cluster. That indirection is what lets this repository be cloned and
+pointed at a different Hetzner project without editing a tracked file. The cost is that a bare
+`tofu init` has no key and will prompt for one, and a wrong answer points a stack at another
+stack's state. Use the `make` targets.
 
-Keeping every site value out of `backend.tf` is what lets this repository be cloned and pointed
-at a different Hetzner project, with different prefixes, without editing a tracked file. The
-cost is that a bare `tofu init` has no key and will prompt for one — answering it wrongly points
-a stack at another stack's state. Use the `make` targets.
-
-The four `skip_*` settings turn off the parts of the AWS provider that only exist on AWS.
 `use_path_style` is required because Hetzner addresses buckets as `endpoint/bucket`, not
-`bucket.endpoint`.
+`bucket.endpoint`. The four `skip_*` settings turn off provider checks that only exist on AWS.
 
 ---
 
@@ -132,7 +103,7 @@ and must stay **disabled**: it would stop OpenTofu from ever updating a state fi
 
 ## One-time setup
 
-Do this once per bucket, before the first migration.
+Do this once per bucket, before the first init.
 
 ```bash
 cp .env.example .env
@@ -155,119 +126,68 @@ a month of history. Override it with `NONCURRENT_DAYS=… make state-bucket-setu
 
 ---
 
-## Migrating existing local state
-
-Only needed for a checkout that predates this change and still has `terraform.tfstate` files on
-disk. Do the stacks one at a time and verify each before moving on.
-
-1. Back up first. These files hold the k3s token, the Rancher password, the JWT secret and the
-   database password, so treat the archive as a secret:
-
-   ```bash
-   tar czf ~/vtafarm-state-backup-$(date +%F).tar.gz $(find stacks -name 'terraform.tfstate*')
-   ```
-
-2. Upload the tfvars, so the bucket is complete before state moves:
-
-   ```bash
-   make tfvars-push
-   ```
-
-3. Migrate stack 01, then verify. Each `migrate-state` target prompts once — `tofu` has
-   noticed the backend changed and is offering to copy the existing state up. Answer `yes`:
-
-   ```bash
-   make migrate-state
-   make plan
-   ```
-
-   `make plan` must report no changes. If it wants to create everything, the state did not come
-   across: stop, and see the warning below.
-
-4. Do the rest one at a time, verifying between each. Stacks 03 to 05 take the cluster name:
-
-   | Stack | Migrate | Verify |
-   | --- | --- | --- |
-   | 02 | `make migrate-state-rancher` | `make plan-rancher` |
-   | 03 | `make migrate-state-rke2 CLUSTER=<name>` | `make plan-rke2 CLUSTER=<name>` |
-   | 04 | `make migrate-state-vtafarm-platform CLUSTER=<name>` | `make plan-vtafarm-platform CLUSTER=<name>` |
-   | 05 | `make migrate-state-vtafarm-app CLUSTER=<name>` | `make plan-vtafarm-app CLUSTER=<name>` |
-
-   These targets exist because plain `init` refuses to run once `backend.tf` appears until it is
-   told what to do with the old state. They are ordinary inits with `-migrate-state` added, and
-   they derive the key exactly as `make init` does, so the two cannot drift apart.
-
-   > At the prompt, `yes` copies your state up. **Never answer the `-reconfigure` suggestion**
-   > if `tofu` offers one — that starts from an empty state, and the next apply would try to
-   > rebuild infrastructure that already exists. Your local `terraform.tfstate` is untouched
-   > until step 6, so a wrong answer is recoverable: re-run the migrate target.
-
-5. Confirm every state file arrived:
-
-   ```bash
-   set -a && . ./.env && set +a
-   aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 ls --recursive \
-     "s3://$TF_STATE_BUCKET/$TF_PREFIX/tfstate/"
-   ```
-
-6. Remove the local copies, so nobody can apply from a stale file by accident. The
-   `-not -path` is load-bearing: each stack's `.terraform/terraform.tfstate` has the same
-   filename but is the backend configuration cache, and deleting it makes every later command
-   fail with `Backend initialization required` until you re-run the init targets:
-
-   ```bash
-   find stacks -not -path '*/.terraform/*' \
-     \( -name 'terraform.tfstate' -o -name 'terraform.tfstate.backup' \) -delete
-   ```
-
----
-
 ## Onboarding a second operator
 
-Give them `.env` through the password manager. Nothing else is handed over by hand.
+Give them `.env` and the SSH key pair through the password manager. Nothing else is handed
+over by hand.
 
 ```bash
 git clone <repo> && cd vtafarm-k8s
 cp .env.example .env
 ```
 
-Paste the values they were given into that `.env`. Stacks 01 and 02 are tracked, so they need
-nothing further beyond their tfvars and an init:
+Paste the values into that `.env`. The SSH key pair goes in `~/.ssh/`, under the filename
+`ssh_private_key_path` names in `stacks/01-infra/terraform.tfvars`:
 
 ```bash
-make tfvars-pull
-make init
-make plan
+mv <key> <key>.pub ~/.ssh/
+chmod 600 ~/.ssh/<key>
 ```
 
-`make plan` must report no changes.
-
-Stacks 03 to 05 keep one directory per cluster, and those directories are gitignored — they are
-generated from `_template`, not shared. Scaffold them **before** pulling, because `tfvars-pull`
-skips a cluster whose directory does not exist and the scaffold refuses to overwrite one that
-does:
+Generate the cluster scaffolds:
 
 ```bash
 make new-rke2-cluster     CLUSTER=rke2-vtafarm-production
 make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
 make new-vtafarm-app      CLUSTER=rke2-vtafarm-production
-
-make tfvars-pull
-
-make init-rke2 CLUSTER=rke2-vtafarm-production
-make plan-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
-The `tfvars-pull` in the middle is what replaces the placeholder `terraform.tfvars` each
-scaffold wrote with the real one from the bucket.
-
-The scaffold copies `backend.tf` unchanged — it holds no cluster name. `make init-rke2` is what
-supplies the key, derived from `CLUSTER`.
-
-Finally, the kubeconfigs, which stacks 04 and 05 read from the cluster directory:
+Then initialize every stack. `tofu init` reads no `terraform.tfvars` — the bucket, the region and
+the key all arrive from `.env` — so the whole init pass comes before the pull:
 
 ```bash
-make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
+make init
+make init-rke2             CLUSTER=rke2-vtafarm-production
+make kubeconfig-rke2       CLUSTER=rke2-vtafarm-production
+make init-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make init-vtafarm-app      CLUSTER=rke2-vtafarm-production
+```
+
+Every directory now exists, so one pull fills them all, replacing the placeholder
+`terraform.tfvars` each scaffold wrote with the real one from the bucket:
+
+```bash
+make tfvars-pull
+```
+
+Then plan. Each of these must report no changes:
+
+```bash
+make plan
+make plan-rancher
+make plan-rke2             CLUSTER=rke2-vtafarm-production
+make plan-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make plan-vtafarm-app      CLUSTER=rke2-vtafarm-production
+```
+
+Stacks 04 and 05 have their kubeconfig already — `make kubeconfig-rke2` wrote it during the init
+pass. Two more targets fetch the management cluster's and put both in `~/.kube/config`, so
+`kubectl` can reach either one:
+
+```bash
+make kubeconfig
+make kubeconfig-merge
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
 ---
@@ -320,24 +240,30 @@ aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 rm \
 
 ## Recovering a bad state
 
-Versioning keeps every previous copy for 30 days. List them, then download the one you want:
+Versioning keeps every previous copy for 30 days. List them:
 
 ```bash
-aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3api list-object-versions \
-  --bucket "$TF_STATE_BUCKET" --prefix "$TF_PREFIX/tfstate/01-infra/terraform.tfstate"
-
-aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3api get-object \
-  --bucket "$TF_STATE_BUCKET" --key "$TF_PREFIX/tfstate/01-infra/terraform.tfstate" \
-  --version-id <VersionId> ./recovered.tfstate
+make state-versions STACK=01-infra
+make state-versions STACK=03-rke2-clusters CLUSTER=rke2-vtafarm-production
 ```
 
-Inspect it before you put it back — `tofu show -json ./recovered.tfstate` — then:
+`STACK` is the path below `$TF_PREFIX/tfstate`, and stacks 03 to 05 take `CLUSTER` as well. The
+row marked `LATEST` is the state in use now. Push an older one back with its version id:
 
 ```bash
-tofu -chdir=stacks/01-infra state push ./recovered.tfstate
+make state-restore STACK=01-infra VERSION=<VERSION_ID>
 ```
 
-`state push` takes the lock like any other write, so it is safe against a concurrent run.
+That downloads the version, prints the serial, the lineage and the resource count of both it and
+the state currently in the bucket, and asks before it writes. It refuses to run without a
+terminal to ask in.
+
+The push is `tofu state push -force`. Restoring rewinds the serial, and without `-force` OpenTofu
+declines to move a state backwards. `-force` is not a lock override: the push takes the lock like
+any other write, so it is still safe against a concurrent run.
+
+A restored state is a claim about the world, not the world itself. Plan the stack afterwards and
+read the result before you apply anything.
 
 ---
 

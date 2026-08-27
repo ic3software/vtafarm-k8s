@@ -66,7 +66,9 @@ locals {
 
     etcd-snapshot-schedule-cron = var.etcd_snapshot_schedule_cron
     etcd-snapshot-retention     = var.etcd_snapshot_retention
-    etcd-snapshot-compress      = true
+    # A compressed snapshot cannot be restored: k3s joins the snapshot dir onto
+    # the already-absolute path when it decompresses. See docs/backup-restore.md.
+    etcd-snapshot-compress = false
 
     etcd-s3            = true
     etcd-s3-endpoint   = var.etcd_s3_endpoint

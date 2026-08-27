@@ -46,10 +46,16 @@ local_pairs() {
   done
 }
 
+# `aws s3 ls` exits non-zero for an empty prefix and for a real failure alike;
+# only stderr tells them apart.
 remote_keys() {
-  "${S3[@]}" ls --recursive "${PREFIX}/" 2>/dev/null |
-    awk '{print $4}' |
-    sed -n "s|^${TFVARS_PREFIX}/||p"
+  local out="${SCRATCH_DIR}/listing" err="${SCRATCH_DIR}/listing-err"
+  if ! "${S3[@]}" ls --recursive "${PREFIX}/" >"$out" 2>"$err" && [ -s "$err" ]; then
+    echo "could not list ${PREFIX}/" >&2
+    sed 's/^/  /' "$err" >&2
+    return 1
+  fi
+  awk '{print $4}' "$out" | sed -n "s|^${TFVARS_PREFIX}/||p"
 }
 
 local_path_for_key() {
@@ -74,13 +80,20 @@ changed_variables() {
 # Prints one status line per file and returns 0 when at least one differs.
 report() {
   local direction="$1" path key names found=1
-  local scratch="${SCRATCH_DIR}/remote"
+  local scratch="${SCRATCH_DIR}/remote" keys
+  keys="$(remote_keys)" || exit 1
 
   while IFS=$'\t' read -r path key; do
-    if ! "${S3[@]}" cp "${PREFIX}/${key}" "$scratch" --only-show-errors 2>/dev/null; then
+    if ! grep -qxF "$key" <<<"$keys"; then
       echo "  ${path}: not in the bucket yet"
       found=0
       continue
+    fi
+    # errexit is off inside a function the caller tested with `||`, so a failed
+    # download has to be caught here or it reads as a file full of differences.
+    if ! "${S3[@]}" cp "${PREFIX}/${key}" "$scratch" --only-show-errors; then
+      echo "could not download ${TFVARS_PREFIX}/${key}" >&2
+      exit 1
     fi
     names="$(changed_variables "$scratch" "${REPO_ROOT}/${path}")"
     if [ -z "$names" ]; then
@@ -120,6 +133,9 @@ push)
   ;;
 
 pull)
+  # Listing up front, not in a process substitution feeding the loop: there its
+  # failure would arrive as end of input and read as an empty bucket.
+  keys="$(remote_keys)" || exit 1
   pulled=0
   while read -r key; do
     [ -n "$key" ] || continue
@@ -137,9 +153,11 @@ pull)
     "${S3[@]}" cp "${PREFIX}/${key}" "${REPO_ROOT}/${path}" --only-show-errors
     echo "  pulled ${path}"
     pulled=$((pulled + 1))
-  done < <(remote_keys)
-  if [ "$pulled" -eq 0 ]; then
-    echo "  nothing pulled - is ${PREFIX}/ empty?"
+  done <<<"$keys"
+  if [ -z "$keys" ]; then
+    echo "  nothing pulled - ${PREFIX}/ is empty"
+  elif [ "$pulled" -eq 0 ]; then
+    echo "  nothing pulled - every key was skipped"
   fi
   ;;
 esac

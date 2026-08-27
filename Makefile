@@ -65,28 +65,17 @@ tfvars-push: check-state-env ## Upload every terraform.tfvars to the state bucke
 tfvars-diff: check-state-env ## Name the tfvars variables that differ from the bucket
 	@bash $(ROOT)/scripts/tfvars-sync.sh diff
 
-# One-time, for a checkout whose state is still on disk. Plain `init` refuses to
-# run once backend.tf appears until it is told what to do with the old state;
-# -migrate-state is what offers to copy it up. Harmless to re-run afterwards.
-.PHONY: migrate-state
-migrate-state: check-state-env ## One-time: move stack 01 state into the bucket
-	tofu -chdir=$(INFRA) init -migrate-state $(call backend_config,01-infra)
+# The stack path is the key below $(TF_PREFIX)/tfstate; stacks 03 to 05 keep one
+# per cluster, so CLUSTER completes it.
+state_path = $(if $(CLUSTER),$(STACK)/$(CLUSTER),$(STACK))
 
-.PHONY: migrate-state-rancher
-migrate-state-rancher: check-state-env ## One-time: move stack 02 state into the bucket
-	tofu -chdir=$(RANCHER) init -migrate-state $(call backend_config,02-rancher)
+.PHONY: state-versions
+state-versions: check-state-env ## List a stack's saved state versions (STACK=01-infra [CLUSTER=name])
+	@bash $(ROOT)/scripts/state-restore.sh list "$(state_path)"
 
-.PHONY: migrate-state-rke2
-migrate-state-rke2: check-rke2-cluster check-state-env ## One-time: move stack 03 state (CLUSTER=name)
-	tofu -chdir=$(RKE2_CLUSTER_DIR) init -migrate-state $(call backend_config,03-rke2-clusters/$(CLUSTER))
-
-.PHONY: migrate-state-vtafarm-platform
-migrate-state-vtafarm-platform: check-vtafarm-platform check-state-env ## One-time: move stack 04 state (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_PLATFORM_CLUSTER_DIR) init -migrate-state $(call backend_config,04-vtafarm-platform/$(CLUSTER))
-
-.PHONY: migrate-state-vtafarm-app
-migrate-state-vtafarm-app: check-vtafarm-app check-state-env ## One-time: move stack 05 state (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) init -migrate-state $(call backend_config,05-vtafarm-app/$(CLUSTER))
+.PHONY: state-restore
+state-restore: check-state-env ## Push an older state version back (STACK=… [CLUSTER=…] VERSION=…)
+	@bash $(ROOT)/scripts/state-restore.sh restore "$(state_path)" "$(VERSION)"
 
 # --- stack 01: infrastructure + k3s ----------------------------------------
 
@@ -334,9 +323,11 @@ apply-vtafarm-app: check-vtafarm-app ## Install the frontend and the API (CLUSTE
 outputs-vtafarm-app: check-vtafarm-app ## Print the URLs and the DNS records to create (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) output
 
+# The database password is prevent_destroy: the retained volume is useless
+# without it, so the teardown has to leave that secret behind.
 .PHONY: destroy-vtafarm-app
-destroy-vtafarm-app: check-vtafarm-app ## Remove both releases; the database volume survives (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) destroy
+destroy-vtafarm-app: check-vtafarm-app ## Remove both releases; the database volume and its password survive (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) destroy -exclude=module.app.kubernetes_secret_v1.postgres
 
 # Both Vaults come up sealed, and unsealing needs keys that must never reach
 # OpenTofu state - so init and unseal stay manual. See docs/vault.md.
@@ -376,6 +367,14 @@ snapshot: ## Take an on-demand etcd snapshot on the first server
 snapshots: ## List etcd snapshots (local + S3)
 	@bash $(ROOT)/scripts/etcd-snapshot.sh list
 
+.PHONY: restore
+restore: ## Restore the cluster from a snapshot (SNAPSHOT=name, LOCAL=1 for disk)
+	@test -n "$(SNAPSHOT)" || { \
+	  echo "set SNAPSHOT=<file> - list them with: make snapshots" >&2; \
+	  exit 2; \
+	}
+	@bash $(ROOT)/scripts/etcd-restore.sh $(if $(LOCAL),--local,) "$(SNAPSHOT)"
+
 .PHONY: upgrade-os
 export TARGET_IMAGE
 upgrade-os: ## Replace nodes one at a time with TARGET_IMAGE (for example ubuntu-26.04)
@@ -403,3 +402,25 @@ destroy: ## Tear down RKE2 clusters, then infrastructure; drop the stale stack 0
 	@$(MAKE) --no-print-directory destroy-all-rke2
 	tofu -chdir=$(INFRA) destroy
 	@bash $(ROOT)/scripts/drop-state.sh "02-rancher"
+
+# --- housekeeping -----------------------------------------------------------
+
+# Nothing here is a last copy: `make init` refetches the providers, `make
+# tfvars-pull` the tfvars, and the scaffolds rebuild a cluster root around the
+# state that stays in the bucket.
+.PHONY: clean
+clean: ## Delete every .terraform dir, the stack 01/02 tfvars and all cluster roots
+	@set -euo pipefail; \
+	echo "this deletes, leaving the state bucket and every running cluster alone:"; \
+	echo "  every .terraform directory under stacks/ and modules/"; \
+	echo "  the terraform.tfvars of stacks 01-infra and 02-rancher"; \
+	echo "  clusters/ of stacks 03-rke2-clusters, 04-vtafarm-platform and 05-vtafarm-app"; \
+	echo "destroy a live RKE2 cluster first - make destroy reads those roots to find it"; \
+	if [[ -t 0 ]]; then \
+	  read -r -p "continue? [y/N] " answer; \
+	  [[ "$$answer" =~ ^[Yy]$$ ]] || { echo "aborted"; exit 1; }; \
+	fi; \
+	find "$(ROOT)/stacks" "$(ROOT)/modules" -type d -name .terraform -prune -exec rm -rf {} +; \
+	rm -f "$(INFRA)/terraform.tfvars" "$(RANCHER)/terraform.tfvars"; \
+	rm -rf "$(RKE2_ROOT)" "$(VTAFARM_PLATFORM_ROOT)" "$(VTAFARM_APP_ROOT)"; \
+	echo "==> cleaned - restore with: make init, make tfvars-pull, make new-rke2-cluster CLUSTER=..."

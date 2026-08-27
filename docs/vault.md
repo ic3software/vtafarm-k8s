@@ -130,9 +130,8 @@ Set `API_SECRET_NS` if vtafarm-api runs somewhere other than `default`.
 
 Vault refuses every request once an audit device cannot write, so a PersistentVolume for the
 audit log is a liability: it fills, and Vault stops. The device therefore writes to the pods'
-stdout, and kubelet's container-log rotation bounds and prunes it — sized by
-`container-log-max-size` and `container-log-max-files` in the RKE2 cluster config, currently
-100Mi across 5 files per container.
+stdout, and kubelet's container-log rotation bounds and prunes it — the default 10Mi across
+5 files per container.
 
 ```bash
 kubectl -n vault logs vault-0 | grep '"type":"request"'

@@ -36,6 +36,10 @@ ssh-add ~/.ssh/my_key
 Then run `make apply` again. `ssh_private_key_path` in `stacks/01-infra/terraform.tfvars` must
 point at that same key.
 
+A key that other users can read hangs the same way for a different reason: `ssh` skips it and
+asks for a password instead. A key copied out of a password manager usually lands that way, so
+check it with `ls -l` and fix it with `chmod 600 ~/.ssh/my_key`.
+
 ---
 
 ## Nodes stay `NotReady` with an `uninitialized` taint

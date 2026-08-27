@@ -1,364 +1,550 @@
-# Backup and Disaster Recovery Runbook
+# Backup and Restore
 
-> **A backup you have never restored is not a backup.** The last section is a drill — run it
-> once before you rely on this cluster.
+> **A backup you have never restored is not a backup.** Section 6 is how you find out.
 
----
+Three layers back themselves up independently, all into the same Hetzner bucket. Each covers
+something the other two do not, and each gets a section below: how to back it up by hand, and
+how to put it back.
 
-## 1. What is being backed up
+| Layer | Holds | Restores |
+| --- | --- | --- |
+| **etcd** | the management cluster's whole datastore, Rancher included | the whole cluster, to a point in time |
+| **Rancher** | Rancher's own state: users, roles, cluster registrations | Rancher, onto any cluster |
+| **Longhorn** | the farm's data, one backup per volume | one volume at a time |
 
-| Layer | By | Contents | Frequency | Destination |
-| --- | --- | --- | --- | --- |
-| etcd snapshot | k3s built-in | the whole Kubernetes datastore | every 6h, on each server | 12 per server locally (3 days) + 360 in Hetzner Object Storage (30 days) |
-| Rancher backup | rancher-backup operator | Rancher CRDs, users, downstream cluster registrations | daily 03:00 | 30 in Hetzner Object Storage |
-| Longhorn backup | Longhorn recurring job | every Longhorn volume in a downstream cluster | daily 00:00 UTC | 30 per volume in Hetzner Object Storage |
-
-Configured in:
-
-- etcd: `etcd_snapshot_*` / `etcd_s3_*` in `stacks/01-infra/terraform.tfvars`
-- Rancher: `rancher_backup_*` / `backup_s3_*` in `stacks/02-rancher/terraform.tfvars`
-- Longhorn: `longhorn_backup_*` in each stack 04 cluster's `terraform.tfvars`
+Schedules and retention are set in `terraform.tfvars` and summarised in
+[operations.md](operations.md).
 
 ---
 
-## 2. Three things you must store outside the cluster
+## 1. Keep these outside the cluster
 
-The snapshot files alone will **not** get you a cluster back. Keep these in a password manager
-or a separate backup location.
+The bucket holds the OpenTofu state as well as the backups, so it already holds the k3s token.
+What it cannot hold is the way in:
 
-### (a) The k3s token
+| | Lives in |
+| --- | --- |
+| the S3 access key and secret key | `.env` and `terraform.tfvars` |
+| the Hetzner API token and your SSH key | `stacks/01-infra/terraform.tfvars`, `~/.ssh` |
+| `vault-init-transit.json`, `vault-init-farm.json` | this checkout only, gitignored |
+| this repository | GitHub |
 
-```bash
-make token
-```
+Put the first three in a password manager. Without the S3 keys there are no backups at all;
+without the Vault keys the restored Vault volumes are unreadable, and every VTA's master seed
+with them.
 
-This token encrypts the bootstrap data inside etcd. **Without it a snapshot cannot be
-decrypted.**
-
-### (b) OpenTofu state
-
-```text
-stacks/01-infra/terraform.tfstate
-stacks/02-rancher/terraform.tfstate
-```
-
-Lose it and OpenTofu forgets everything it built; the next apply tries to recreate the world.
-
-Consider a remote backend (add `backend "s3"` to `versions.tf`), or at minimum copy it
-regularly:
-
-```bash
-s3cmd put stacks/*/terraform.tfstate s3://your-bucket/tfstate/
-```
-
-### (c) The S3 credentials
-
-The Hetzner S3 access key and secret key. If they only live in a `terraform.tfvars` that gets
-lost, so do the backups you carefully took. The Hetzner Cloud API token cannot replace them.
+> **The k3s token needs no separate copy.** `random_password.k3s_token` is in the OpenTofu state,
+> and the state is in the bucket. Pull the state before you apply and the rebuilt cluster keeps
+> its original token. `make token` prints it.
 
 ---
 
-## 3. Verify backups are actually running
+## 2. etcd — the whole management cluster
+
+### Back up
+
+Take one before anything risky: an upgrade, a CRD change, a bulk delete.
 
 ```bash
-make snapshots
+make snapshot                          # or: ./scripts/etcd-snapshot.sh save before-upgrade
+make snapshots                         # everything that exists, local and S3
 ```
 
-Confirm:
+`make snapshot` prints the filename it ended up with — k3s appends the node name and a
+timestamp — together with the `make restore` line that uses it. **Keep that filename.**
 
-- the newest entry matches the schedule (within the last 6 hours)
-- the `LOCATION` column contains `s3://` entries, meaning the upload really succeeded
-- all three servers appear — each one snapshots independently and stamps its own name into
-  the filename, so `etcd-snapshot-<node>-<timestamp>` should show up three times per cycle
-
-Or read it from the source:
-
-```bash
-ssh root@<server-1> 'journalctl -u k3s | grep -i "etcd-snapshot\|s3" | tail -20'
-```
-
-Rancher backups:
-
-```bash
-kubectl get backup
-kubectl describe backup rancher-scheduled-backup | tail -20
-```
-
-Longhorn volume backups on one downstream cluster:
-
-```bash
-export KUBECONFIG=stacks/03-rke2-clusters/clusters/<cluster>/kubeconfig.yaml
-kubectl -n longhorn-system get recurringjob longhorn-daily-backup
-kubectl -n longhorn-system get backups.longhorn.io
-kubectl -n longhorn-system get backuptargets.longhorn.io
-```
-
-The recurring job should show `0 0 * * *`, and the backup target must report `Available`.
-Longhorn only creates a new incremental backup when the volume contains data changed since the
-previous backup.
-
----
-
-## 4. On-demand snapshot
-
-Take one before anything risky — upgrades, CustomResourceDefinition (CRD) changes, bulk deletions:
-
-```bash
-make snapshot
-# or with a name you will recognise later
-./scripts/etcd-snapshot.sh save before-rancher-upgrade
-```
-
----
-
-## 5. Scenario A — a single node died
-
-**No backup needed.** etcd still has quorum (1 of 3 lost), the cluster keeps serving. Just
-replace the node.
-
-```bash
-# 1. remove it from Kubernetes
-kubectl delete node k3s-rancher-server-2
-
-# 2. confirm the remaining cluster is healthy
-kubectl get nodes
-ssh root@<healthy-node> 'k3s kubectl get --raw "/healthz?verbose"' | grep etcd
-
-# 3. rebuild that one server
-tofu -chdir=stacks/01-infra apply -replace='hcloud_server.server[1]'
-```
-
-The replacement boots, waits for the load balancer to be serving, and joins by itself.
-
-```bash
-kubectl get nodes -w
-```
-
-> **Why index `[1]`?** OpenTofu's `count` is zero-based, so `server-2` is
-> `hcloud_server.server[1]`.
-
----
-
-## 6. Scenario B — etcd lost quorum (two or more servers down)
-
-The API server stops responding entirely. Reset the cluster down to a single etcd member, then
-let the others rejoin.
-
-On **all** surviving servers:
-
-```bash
-ssh root@<each-server> 'systemctl stop k3s'
-```
-
-On **one** of them (pick the most up-to-date, usually server-1):
-
-```bash
-ssh root@<server-1>
-k3s server --cluster-reset
-```
-
-Wait for:
-
-```text
-Managed etcd cluster membership has been reset, restart without --cluster-reset flag now.
-```
-
-Press Ctrl-C, then:
-
-```bash
-systemctl start k3s
-```
-
-On **every other** server:
-
-```bash
-systemctl stop k3s
-rm -rf /var/lib/rancher/k3s/server/db/
-systemctl start k3s
-```
-
-They rejoin as fresh members.
-
-```bash
-kubectl get nodes
-```
-
----
-
-## 7. Scenario C — full restore from a snapshot
-
-For accidental deletion, a failed upgrade, or rebuilding the cluster. This follows the
-[k3s etcd-snapshot documentation](https://docs.k3s.io/cli/etcd-snapshot).
-
-### Step 1 — find the snapshot
-
-```bash
-make snapshots
-```
-
-Note the filename, e.g. `etcd-snapshot-k3s-rancher-server-1-1754812800`.
-
-### Step 2 — stop k3s everywhere
-
-```bash
-for ip in <server-1> <server-2> <server-3>; do
-  ssh root@$ip 'systemctl stop k3s'
-done
-```
-
-### Step 3 — restore on server-1
-
-From a local snapshot:
-
-```bash
-ssh root@<server-1>
-k3s server \
-  --cluster-reset \
-  --cluster-reset-restore-path=/var/lib/rancher/k3s/server/db/snapshots/<snapshot-file>
-```
-
-From S3 — pass only the **filename**, not a path:
-
-```bash
-ssh root@<server-1>
-k3s server \
-  --cluster-reset \
-  --etcd-s3 \
-  --cluster-reset-restore-path=<snapshot-file>
-```
-
-> The S3 endpoint, bucket and credentials are already in `/etc/rancher/k3s/config.yaml`, and so
-> is the token — k3s reads them, so there is no need to repeat them on the command line.
->
-> **Restoring onto a brand-new host** (whose config.yaml does not yet hold the original token)
-> requires all of them explicitly:
+> **Nothing in `s3://`?** The cluster records every attempt, failures included — faster than
+> `journalctl`, and it names the node:
 >
 > ```bash
-> k3s server --cluster-reset --etcd-s3 \
->   --cluster-reset-restore-path=<snapshot-file> \
->   --etcd-s3-endpoint=nbg1.your-objectstorage.com \
->   --etcd-s3-region=nbg1 \
->   --etcd-s3-bucket=<bucket> \
->   --etcd-s3-access-key=<key> \
->   --etcd-s3-secret-key=<secret> \
->   --token=<the k3s token you saved>
+> kubectl get etcdsnapshotfile -o json | jq -r '.items[] | select(.spec.s3)
+>   | [.status.creationTime, .spec.nodeName, (.status.error.message // "OK")] | @tsv'
 > ```
 >
-> The token decrypts the bootstrap data inside the snapshot. **A wrong token fails outright.**
+> `InvalidAccessKeyId` on the upload, or a bare `Access Denied` from the bucket test, both mean the
+> node is holding a key that has been rotated away — one dead key reads two ways because HEAD has
+> no response body to carry the real code. `NoSuchBucket` → wrong bucket or region, try
+> `etcd_s3_bucket_lookup_type = "path"`. `no such host` → bad endpoint (no `https://` prefix, no
+> bucket name in it).
+>
+> **Editing tfvars fixes nothing by itself.** `user_data` is under `ignore_changes` and cloud-init
+> runs only on first boot, so `/etc/rancher/k3s/config.yaml` on a running node keeps whatever it
+> was born with. Put the new pair in `/etc/rancher/k3s/config.yaml.d/10-etcd-s3-creds.yaml` and
+> restart k3s one node at a time, waiting for Ready in between so etcd keeps quorum.
 
-Wait for `Managed etcd cluster membership has been reset...`, press Ctrl-C, then:
+### Restore
+
+All of it, to the moment of the snapshot. There is no per-namespace restore: for that, Longhorn
+is the per-volume tool and the Rancher backup is the Rancher-scoped one.
+
+The farm keeps running throughout. It has its own etcd, and its kubeconfig points straight at
+its own API server rather than through Rancher.
 
 ```bash
-systemctl start k3s
+make snapshots                                        # find the filename
+make restore SNAPSHOT=<snapshot-file>                 # from S3
+make restore SNAPSHOT=<snapshot-file> LOCAL=1         # from server-1's disk instead
 ```
 
-### Step 4 — rejoin the other servers
+> **A `.zip` snapshot cannot be restored as it is.** When k3s decompresses, it joins the
+> snapshot directory onto a path that is already absolute, and dies on the doubled result —
+> from S3 and from disk alike. `etcd-snapshot-compress` is off for that reason, but every
+> snapshot taken before it was turned off is compressed. To use one: download it, unzip it,
+> put the uncompressed file back in the bucket under the same prefix, and restore *that* name.
+> `make snapshot` warns you when the file it just wrote is one of these.
+>
+> Turning compression off in `locals.tf` only reaches new servers — `user_data` is under
+> `ignore_changes`. Existing nodes need `etcd-snapshot-compress: false` in a
+> `/etc/rancher/k3s/config.yaml.d/` drop-in and a restart, one at a time.
 
-```bash
-for ip in <server-2> <server-3>; do
-  ssh root@$ip 'rm -rf /var/lib/rancher/k3s/server/db/ && systemctl start k3s'
-done
-```
+It reads the node addresses out of the state, asks you to type the cluster name, and then does
+the whole sequence: stop k3s everywhere, reset and restore on server-1, wipe `db/` on the others
+so they rejoin as fresh members, and wait for the API server to answer. Add `--yes` to
+`scripts/etcd-restore.sh` to skip the prompt when scripting it.
 
-### Step 5 — verify
+Rancher lives in etcd, so it comes back with it. Give it five minutes before worrying; then
+`kubectl -n cattle-system logs -l app=rancher --tail=100`.
+
+> **Doing it by hand instead**, one server at a time:
+> `systemctl stop k3s` everywhere, then on server-1
+> `k3s server --cluster-reset --etcd-s3 --cluster-reset-restore-path=<file>` — the endpoint,
+> bucket, credentials and token are already in `/etc/rancher/k3s/config.yaml`, so pass only the
+> **filename**, never a path. Wait for `Managed etcd cluster membership has been reset...`,
+> Ctrl-C, `systemctl start k3s`. Then on the others,
+> `rm -rf /var/lib/rancher/k3s/server/db/ && systemctl --no-block start k3s` — k3s is
+> `Type=notify` and a rejoin routinely outruns systemd's 90s start timeout, so a blocking
+> start reports failure on a join that is in fact working.
+>
+> **Same procedure, no snapshot, when etcd has lost quorum** (two of three servers down): stop
+> k3s everywhere, run `k3s server --cluster-reset` on the most up-to-date survivor, then wipe
+> `db/` on the others and start them.
+
+---
+
+## 3. Rancher — users, roles, cluster registrations
 
 ```bash
 export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
-kubectl get nodes
-kubectl get pods -A
-kubectl -n cattle-system get pods
 ```
+
+### Back up
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: resources.cattle.io/v1
+kind: Backup
+metadata:
+  name: manual-backup
+spec:
+  resourceSetName: rancher-resource-set-full
+EOF
+
+kubectl wait --for=condition=Ready backup/manual-backup --timeout=5m
+kubectl get backup manual-backup -o jsonpath='{.status.filename}{"\n"}'
+```
+
+> The tarball carries Rancher's secrets and tokens and is **not encrypted**: the `Backup` sets no
+> `encryptionConfigSecretName`. Whoever holds the S3 keys holds Rancher.
+
+### Restore
+
+Rancher's controllers reconcile the objects the operator is about to write, so stand them down
+first.
+
+```bash
+kubectl -n cattle-system scale deploy rancher --replicas=0
+
+kubectl apply -f - <<EOF
+apiVersion: resources.cattle.io/v1
+kind: Restore
+metadata:
+  name: manual-restore
+spec:
+  backupFilename: <the filename from above>
+  prune: true
+EOF
+
+kubectl wait --for=condition=Ready restore/manual-restore --timeout=15m
+kubectl -n cattle-system scale deploy rancher --replicas=3
+```
+
+> **`prune` is on by default, and it deletes.** Anything in the resource set that the backup does
+> not contain goes away — a downstream cluster registered after the backup included. Restore a
+> recent backup, never last month's.
 
 ---
 
-## 8. Scenario D — the entire Hetzner project is gone
-
-Worst case: all you have left is the S3 snapshots, the k3s token, and this git repo.
+## 4. Longhorn — the farm's volumes
 
 ```bash
-# 1. Rebuild infrastructure with a single server first
-#    (temporarily set server_count = 1 in stacks/01-infra/terraform.tfvars)
-tofu -chdir=stacks/01-infra apply
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/<cluster>/kubeconfig.yaml
 
-# 2. Restore onto the new server-1 — the --token flag is mandatory here
-ssh root@<new server-1>
-systemctl stop k3s
-k3s server --cluster-reset --etcd-s3 \
-  --cluster-reset-restore-path=<snapshot-file> \
-  --etcd-s3-endpoint=nbg1.your-objectstorage.com \
-  --etcd-s3-region=nbg1 \
-  --etcd-s3-bucket=<bucket> \
-  --etcd-s3-access-key=<key> \
-  --etcd-s3-secret-key=<secret> \
-  --token=<the original k3s token>
-# wait for the message → Ctrl-C → systemctl start k3s
+HOST=$(pnm vta info | sed $'s/\033\\[[0-9;]*m//g' |
+  sed -n 's|.*URL:[[:space:]]*https://\([^ ]*\).*|\1|p')
+read -r NS DEPLOY <<<"$(kubectl get ingress -A -o json |
+  jq -r --arg h "$HOST" '.items[] | select(.spec.rules[]?.host == $h)
+    | [.metadata.namespace, .metadata.name] | @tsv')"
+PVC=$(kubectl -n "$NS" get deploy "$DEPLOY" \
+  -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}')
+OLD_PV=$(kubectl -n "$NS" get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
+OLD_VOLUME=$(kubectl get pv "$OLD_PV" -o jsonpath='{.spec.csi.volumeHandle}')
 
-# 3. Set server_count back to 3 and apply so the other two join
-tofu -chdir=stacks/01-infra apply
+printf 'ns=%s deploy=%s pvc=%s old-pv=%s old-volume=%s\n' \
+  "$NS" "$DEPLOY" "$PVC" "$OLD_PV" "$OLD_VOLUME"
+kubectl -n longhorn-system get backuptargets.longhorn.io
 ```
 
-> ⚠️ **Token mismatch is the trap here.** A fresh `tofu apply` generates a *new*
-> `random_password.k3s_token`, but the restored cluster runs on the *old* token from the
-> snapshot. New nodes would be handed the new token and fail to join.
+### Back up
+
+```bash
+BACKUP_NAME="manual-${OLD_VOLUME}-$(date -u +%Y%m%d-%H%M%S)"
+
+kubectl apply -f - <<EOF
+apiVersion: longhorn.io/v1beta2
+kind: Snapshot
+metadata:
+  name: ${BACKUP_NAME}
+  namespace: longhorn-system
+spec:
+  volume: ${OLD_VOLUME}
+  createSnapshot: true
+EOF
+kubectl -n longhorn-system wait --for=jsonpath='{.status.readyToUse}'=true \
+  snapshot.longhorn.io/${BACKUP_NAME} --timeout=5m
+
+kubectl apply -f - <<EOF
+apiVersion: longhorn.io/v1beta2
+kind: Backup
+metadata:
+  name: ${BACKUP_NAME}
+  namespace: longhorn-system
+  labels:
+    backup-target: default
+    backup-volume: ${OLD_VOLUME}
+spec:
+  snapshotName: ${BACKUP_NAME}
+EOF
+kubectl -n longhorn-system wait --for=jsonpath='{.status.state}'=Completed \
+  backup.longhorn.io/${BACKUP_NAME} --timeout=15m
+
+kubectl -n longhorn-system get backup.longhorn.io ${BACKUP_NAME} -o jsonpath='{.status.url}{"\n"}'
+```
+
+That last URL is what a restore is addressed by. **Keep it.**
+
+### Restore
+
+**Longhorn never rolls a volume back in place.** A restore grows a *new* volume from the backup,
+and you move the claim onto it. Nothing is finished until the workload runs on the new volume.
+
+**1.** Keep the old Longhorn volume as the rollback copy until the restored workload has passed
+verification. These PVs come from the default `longhorn` class, which is `Delete`, so temporarily
+change its reclaim policy to `Retain`.
+
+```bash
+kubectl patch pv "$OLD_PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+```
+
+**2.** Detach the volume, and grow the restored one beside it. The spec is the old volume's, plus
+`fromBackup`:
+
+```bash
+kubectl -n "$NS" scale deploy "$DEPLOY" --replicas=0
+
+BACKUP_URL=$(kubectl -n longhorn-system get backup.longhorn.io "$BACKUP_NAME" \
+  -o jsonpath='{.status.url}')
+# Longhorn volume names are limited to 40 characters.
+RESTORED_VOLUME="restore-${DEPLOY:0:12}-$(date -u +%Y%m%d-%H%M%S)"
+
+kubectl apply -f - <<EOF
+apiVersion: longhorn.io/v1beta2
+kind: Volume
+metadata:
+  name: ${RESTORED_VOLUME}
+  namespace: longhorn-system
+spec:
+  fromBackup: "${BACKUP_URL}"
+  size: "$(kubectl -n longhorn-system get volume.longhorn.io ${OLD_VOLUME} -o jsonpath='{.spec.size}')"
+  numberOfReplicas: 1
+  dataEngine: v1
+  accessMode: rwo
+  frontend: blockdev
+  backupTargetName: default
+EOF
+
+# Resolve the actual name by backup URL. This also finds volumes created with the old long name,
+# which Longhorn silently shortened.
+RESTORED_VOLUME=$(kubectl -n longhorn-system get volume.longhorn.io -o json |
+  jq -er --arg url "$BACKUP_URL" '
+    [.items[] | select(.spec.fromBackup == $url)]
+    | sort_by(.metadata.creationTimestamp)
+    | last
+    | .metadata.name')
+
+# watch it fill: restoreRequired false and state detached means it is ready to mount
+kubectl -n longhorn-system get volume.longhorn.io "$RESTORED_VOLUME" \
+  -o custom-columns=STATE:.status.state,RESTORE:.status.restoreRequired,ROBUST:.status.robustness
+```
+
+**3.** Free the claim, then give it to the restored volume. Completed setup and provision Job
+pods still count as PVC users, so remove only terminal pods that reference this claim first. Do
+not remove the `kubernetes.io/pvc-protection` finalizer by hand.
+
+```bash
+while IFS= read -r pod; do
+  kubectl -n "$NS" delete pod "$pod"
+done < <(
+  kubectl -n "$NS" get pods -o json |
+    jq -r --arg pvc "$PVC" '
+      .items[]
+      | select(.status.phase == "Succeeded" or .status.phase == "Failed")
+      | select(any(.spec.volumes[]?; .persistentVolumeClaim.claimName == $pvc))
+      | .metadata.name'
+)
+
+kubectl -n "$NS" delete pvc "$PVC" --wait=false
+kubectl -n "$NS" wait --for=delete pvc/"$PVC" --timeout=2m
+kubectl delete pv "$OLD_PV" --ignore-not-found
+```
+
+**4.** UI → Volume → `$RESTORED_VOLUME` → **Create PV/PVC**, with namespace `$NS` and PVC name
+`$PVC` from above. The PVC name is the only identity that matters — the Deployment mounts it by
+`claimName`, and on the farm it is derived from the session id (`vta-data-<id>`), so it has to be
+the old one. The Longhorn volume's own name is read by nothing.
+
+**5.** The UI creates a bare PVC; put the platform's label back on it:
+
+```bash
+kubectl -n "$NS" label pvc "$PVC" managed-by=vtafarm --overwrite
+```
+
+**6.** Bring the Deployment back and wait for its rollout:
+
+```bash
+kubectl -n "$NS" scale deploy "$DEPLOY" --replicas=1
+kubectl -n "$NS" rollout status deploy/"$DEPLOY"
+```
+
+**7.** Only after step 6 is correct, permanently remove the old Longhorn volume. Resolve the
+current PVC through its PV and refuse deletion unless it points to the restored volume:
+
+```bash
+CURRENT_PV=$(kubectl -n "$NS" get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
+CURRENT_VOLUME=$(kubectl get pv "$CURRENT_PV" -o jsonpath='{.spec.csi.volumeHandle}')
+
+printf 'old=%s restored=%s current=%s\n' \
+  "$OLD_VOLUME" "$RESTORED_VOLUME" "$CURRENT_VOLUME"
+
+if [[ -z "$OLD_VOLUME" || -z "$RESTORED_VOLUME" || \
+      "$OLD_VOLUME" == "$CURRENT_VOLUME" || "$RESTORED_VOLUME" != "$CURRENT_VOLUME" ]]; then
+  echo 'Refusing to delete: the current PVC is not proven to use the restored volume.' >&2
+else
+  kubectl -n longhorn-system delete volume.longhorn.io "$OLD_VOLUME"
+fi
+```
+
+Before step 7, undo by repeating steps 3–4 with the original volume and then deleting the
+restored one. After step 7, the S3 backup is the way back.
+
+---
+
+## 5. If everything is gone
+
+The Hetzner project is deleted. All you have is the bucket, the keys from section 1, and this
+repository.
+
+```bash
+# 1. .env with the bucket and the S3 keys, then pull the site's real values
+make tfvars-pull
+
+# 2. state comes back from the bucket - with the original k3s token inside it
+make init
+
+# 3. three new servers, already holding that token in their config.yaml
+make apply
+
+# 4. restore the newest snapshot (section 2). Rancher and the cluster
+#    registrations come back with it.
+
+# 5. rebuild the farm cluster's machines - it comes up EMPTY
+make apply-rke2 CLUSTER=<cluster>
+
+# 6. Longhorn returns pointed at the same backup target and lists every volume backup
+make apply-vtafarm-platform CLUSTER=<cluster>
+
+# 7. restore each volume and give it its PV/PVC (section 4)
+
+# 8. unseal the transit Vault with the old Shamir keys; the farm Vault auto-unseals against it
+
+# 9. the app - domain and did_hosting_* must be identical to before
+make apply-vtafarm-app CLUSTER=<cluster>
+
+# 10. recreate the tenant workloads, then point DNS at the new load balancer
+```
+
+> **Three gaps stand between this and a real recovery. Close them before you need them.**
 >
-> If this scenario is part of your threat model, replace `random_password.k3s_token` in
-> `stacks/01-infra/network.tf` with a fixed value supplied through a variable, and keep that
-> value in your password manager.
+> - **The farm cluster's etcd is backed up nowhere.** `spec.rkeConfig.etcd` is unset, so Rancher
+>   keeps snapshots on the nodes only. Tenant namespaces are created by the API at runtime, not
+>   by OpenTofu, so their Deployments, Services and PVCs exist in that etcd and nowhere else.
+>   Longhorn returns the volumes' contents and nothing that says what to attach them to — which
+>   is what makes step 10 manual.
+> - **`04-vtafarm-platform` and `05-vtafarm-app` have never been pushed to `tfvars/`.** Run
+>   `make tfvars-push`. One of those values, `did_hosting_private_key`, cannot be regenerated:
+>   see [cluster-migration.md](cluster-migration.md) §2.
+> - **`vault-init-*.json` exists only in your checkout.** Losing it makes step 8 impossible.
 
 ---
 
-## 9. The drill — run this once
+## 6. Drills
 
-On a **throwaway cluster**. Takes about 20 minutes.
+Back up → change something → restore → prove. Run each one once before you rely on the cluster.
+
+Every drill is **two-sided**: something that existed *before* the backup must survive, and
+something created *after* it must disappear. Prove only one half and you cannot tell a working
+restore from one that wiped everything.
+
+Let the cluster as it stands be the surviving half wherever it can. Then the only thing a drill
+creates is the marker the restore itself deletes, and finishing leaves nothing to tidy up — no
+drill users, no drill namespaces, nothing for the next person to wonder about.
+
+| Drill | Proves | Down for | Way back |
+| --- | --- | --- | --- |
+| A — etcd | the whole management cluster | the UI and k3s `kubectl`, ~10 min | a newer snapshot |
+| B — Rancher | Rancher's own state | the Rancher UI, ~5 min | the backup you just took |
+| C — Longhorn | one volume's data | one workload | the original volume, kept |
+
+Run them in that order. A proves the net that B and C fall back on, and an etcd snapshot nobody
+has ever restored is a poor thing to be holding when a later drill goes wrong. Take a fresh
+snapshot before B and C as well. Do not run `tofu apply` between a backup and the end of its
+restore: state is in the bucket, not in the cluster, so rolling the cluster back would leave
+OpenTofu believing in objects that no longer exist.
+
+### Drill A — etcd
+
+This is the one drill that has to create its surviving half. A timestamp written before the
+snapshot proves the restore landed on that *moment*; objects that were already there only prove
+they were not deleted. Step 6 removes it again.
+
+**1.** The marker that must **survive**:
 
 ```bash
-# 1. leave a marker
+export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
 kubectl create namespace restore-drill
-kubectl -n restore-drill create configmap marker --from-literal=created="$(date -Is)"
-
-# 2. snapshot it
-./scripts/etcd-snapshot.sh save drill-$(date +%Y%m%d)
-make snapshots        # confirm it reached S3
-
-# 3. cause the "disaster"
-kubectl delete namespace restore-drill
-
-# 4. restore following Scenario C above
-
-# 5. prove the data came back
-kubectl -n restore-drill get configmap marker -o yaml
+kubectl -n restore-drill create configmap marker --from-literal=created="$(date -u +%FT%TZ)"
 ```
 
-Seeing the marker return means your backups genuinely work.
-
-**Also write down how long it took.** That number is your real Recovery Time Objective (RTO).
-
----
-
-## 10. Common problems
-
-### Snapshots are not reaching S3
+**2.** The snapshot under test — note the filename it prints:
 
 ```bash
-ssh root@<server-1> 'journalctl -u k3s | grep -i s3 | tail -30'
+make snapshot
 ```
 
-- `NoSuchBucket` / 404 → wrong bucket or region; try setting
-  `etcd_s3_bucket_lookup_type = "path"` in `stacks/01-infra/terraform.tfvars`
-- `SignatureDoesNotMatch` → wrong access key or secret key
-- `no such host` → bad endpoint (no `https://` prefix, and no bucket name in it)
+**3.** The change that must **disappear**: Rancher UI → Cluster Management → Import Existing →
+Generic, named `drill-cluster`. **Never run the registration command it prints** — the cluster
+stays Pending and no machine is created. Do not use `make apply-rke2` for this: it builds real
+servers and records them in the state, which a restore does not roll back.
 
-Note that fixing tfvars and running `make apply` will **not** push the change to running nodes —
-`user_data` is protected by `ignore_changes` (see
-[opentofu-primer.md](opentofu-primer.md)). Either edit `/etc/rancher/k3s/config.yaml` on each
-node and `systemctl restart k3s`, or roll the nodes one at a time with `-replace`.
+**4.** Restore it:
 
-### Rancher is missing or crash-looping after `--cluster-reset`
+```bash
+make restore SNAPSHOT=<the filename step 2 printed>
+```
 
-Rancher's state lives in etcd, so a successful restore brings it back. Give it five minutes,
-then check `kubectl -n cattle-system logs -l app=rancher --tail=100`.
+**5.** Prove it:
 
-### Can I restore just one namespace?
+```bash
+kubectl -n restore-drill get configmap marker -o yaml   # back, original timestamp
+kubectl get clusters.management.cattle.io               # drill-cluster gone
+kubectl get nodes                                       # three Ready
+```
 
-No — an etcd snapshot is all-or-nothing. For granular recovery install Velero, or use the
-Rancher backup operator, which restores Rancher-scoped resources only.
+**6.** Take the marker back out, and the cluster is as you found it:
+
+```bash
+kubectl delete namespace restore-drill
+```
+
+The farm cluster returns to Active in the Rancher UI a few minutes later, once its agent
+reconnects. **Write down how long steps 4–5 took: that is your real Recovery Time Objective.**
+
+### Drill B — Rancher
+
+The users already in the cluster are the half that must survive, so this drill creates nothing for
+that side. The one thing it does add, the restore takes away again.
+
+**1.** Record who is there now. Every one of them must come back:
+
+```bash
+export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
+kubectl get users.management.cattle.io -o custom-columns=NAME:.metadata.name,USER:.username
+```
+
+**2.** Take a Rancher backup (section 3) and note the filename.
+
+**3.** Rancher UI → Users & Authentication → create user `drill-extra`. **Must disappear.**
+
+**4.** Restore that backup (section 3).
+
+**5.** Prove it — step 1's list, unchanged, without `drill-extra`:
+
+```bash
+kubectl get users.management.cattle.io -o custom-columns=NAME:.metadata.name,USER:.username
+```
+
+**6.** The restore removed the only thing the drill created, so all that is left is the pair of
+CRs. The tarball stays in the bucket; delete it there if you want it gone.
+
+```bash
+kubectl delete restore/manual-restore backup/manual-backup
+```
+
+> **Expect to be signed out.** `prune` deletes what the backup does not contain, and that includes
+> the token behind any Rancher session opened after step 2 — the one you are using included.
+
+### Drill C — Longhorn
+
+The VTA's ACL lives on its own 200Mi RWO PVC, and `pnm` reads and writes it against the running
+service — so only the restore costs downtime. The entries already there are the surviving half:
+`pnm acl list` authenticates as one of them, so the command answering at all proves that side.
+
+**1.** Run the discovery block at the start of section 4 to set `HOST`, `NS`, `DEPLOY`, `PVC`,
+`OLD_PV` and `OLD_VOLUME`. Prefer a `vta_only` tenant — one Deployment, one PVC. A full stack
+shares the window with its VTC.
+
+```bash
+printf 'ns=%s deploy=%s pvc=%s old-pv=%s old-volume=%s\n' \
+  "$NS" "$DEPLOY" "$PVC" "$OLD_PV" "$OLD_VOLUME"
+```
+
+**2.** Record the ACL. Every entry has to come back:
+
+```bash
+pnm acl list
+```
+
+**3.** Back that volume up — the two objects from section 4.
+
+**4.** The entry that must **disappear**. `reader` with no `--contexts` grants nothing, and the DID
+is hash-derived — nobody holds the key:
+
+```bash
+pnm acl create --role reader --label drill-extra \
+  --did did:key:z6MkvVbgFfLtpVz6XqcB83ytE7TXcSueQ4YHPA6wUGvFfxo6
+
+pnm acl list        # one more than step 2
+```
+
+**5.** Restore that backup onto the workload (section 4). The Deployment goes to 0 and back —
+Longhorn will not move a RWO claim out from under a running pod.
+
+**6.** Prove it:
+
+```bash
+kubectl -n "$NS" rollout status deploy/"$DEPLOY"
+# step 2's list, without drill-extra
+pnm acl list
+```
+
+**7.** The restored volume *is* the state the tenant should be on; swapping the original back
+would carry `drill-extra` in with it. Run section 4 step 7 to delete the old Longhorn volume.

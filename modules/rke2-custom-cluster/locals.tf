@@ -64,12 +64,6 @@ locals {
     secrets-encryption       = true
     tls-san                  = local.tls_sans
     write-kubeconfig-mode    = "0600"
-
-    # Bounds Vault's stdout audit log; kubelet's 10Mi x 5 default is too short.
-    kubelet-arg = [
-      "container-log-max-size=100Mi",
-      "container-log-max-files=5",
-    ]
   })
 
   hcloud_secret_manifest = yamlencode({

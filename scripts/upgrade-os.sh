@@ -168,6 +168,7 @@ STATE_SERVER_COUNT="$(tofu -chdir="$INFRA" state list |
 
 SSH_KEY="$(tofu -chdir="$INFRA" output -raw ssh_private_key_path 2>/dev/null)" ||
   die "cannot read ssh_private_key_path from OpenTofu"
+SSH_KEY="${SSH_KEY/#\~/$HOME}"
 [ -f "$SSH_KEY" ] || die "SSH private key not found: ${SSH_KEY}"
 
 kubectl version --request-timeout=10s >/dev/null 2>&1 ||

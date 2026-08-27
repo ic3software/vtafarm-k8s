@@ -2,6 +2,11 @@ resource "kubernetes_namespace" "vault" {
   metadata {
     name = var.config.vault_namespace
   }
+
+  # Rancher's namespace controller keeps rewriting its own annotations; leave them to it.
+  lifecycle {
+    ignore_changes = [metadata[0].annotations]
+  }
 }
 
 resource "helm_release" "vault_pki" {
