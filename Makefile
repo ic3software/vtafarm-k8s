@@ -323,9 +323,11 @@ apply-vtafarm-app: check-vtafarm-app ## Install the frontend and the API (CLUSTE
 outputs-vtafarm-app: check-vtafarm-app ## Print the URLs and the DNS records to create (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) output
 
+# The database password is prevent_destroy: the retained volume is useless
+# without it, so the teardown has to leave that secret behind.
 .PHONY: destroy-vtafarm-app
-destroy-vtafarm-app: check-vtafarm-app ## Remove both releases; the database volume survives (CLUSTER=name)
-	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) destroy
+destroy-vtafarm-app: check-vtafarm-app ## Remove both releases; the database volume and its password survive (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) destroy -exclude=module.app.kubernetes_secret_v1.postgres
 
 # Both Vaults come up sealed, and unsealing needs keys that must never reach
 # OpenTofu state - so init and unseal stay manual. See docs/vault.md.

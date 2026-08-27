@@ -7,11 +7,37 @@ the platform, then the downstream cluster, and last the management cluster.
 
 The PersistentVolumeClaim of the database has the annotation `helm.sh/resource-policy: keep`,
 and its storage class keeps the volume. The data therefore survives, and a later apply
-connects to the same volume again:
+connects to the same volume again. Its password survives too: the secret holding it is
+`prevent_destroy`, and the destroy excludes it, because the volume is unreadable without it.
 
 ```bash
 make destroy-vtafarm-app CLUSTER=rke2-vtafarm-production
 ```
+
+### Including the database
+
+That command leaves three objects behind on purpose, and OpenTofu manages none of them: the
+PVC, the PV that `longhorn-retain` keeps, and the Longhorn volume underneath it. Deleting the
+PVC alone frees no disk — under `Retain` the volume outlives its claim. Remove all of it by
+hand when the data really is meant to go:
+
+```bash
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/<cluster>/kubeconfig.yaml
+APP=stacks/05-vtafarm-app/clusters/<cluster>
+PV="$(kubectl get pvc vtafarm-api-postgresql -n default -o jsonpath='{.spec.volumeName}')"
+
+tofu -chdir="$APP" state rm module.app.kubernetes_secret_v1.postgres
+kubectl delete secret vtafarm-api-postgresql -n default
+kubectl delete pvc    vtafarm-api-postgresql -n default
+kubectl delete pv     "$PV"
+kubectl delete volumes.longhorn.io "$PV" -n longhorn-system
+```
+
+Read the PV name before anything else — it comes from the PVC, which is the first thing to go.
+`state rm` leads because `prevent_destroy` has no command-line override; it only makes OpenTofu
+forget the secret and does not touch the cluster. `-n default` follows `namespace` in the app's
+tfvars. A later apply recreates the secret from the password still held in state and initialises
+an empty database on a new volume.
 
 ## One cluster's platform layer
 
