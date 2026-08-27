@@ -95,7 +95,7 @@ fi
 # `k3s server --cluster-reset` does not exit on its own: it prints the "restart
 # without --cluster-reset" line and keeps running, expecting an interactive
 # Ctrl-C. Watch the log for that line instead, then stop it.
-ssh "${SSH_OPTS[@]}" "root@${FIRST_IP}" "bash -s -- ${RESET_FLAGS}" <<'REMOTE'
+if ! ssh "${SSH_OPTS[@]}" "root@${FIRST_IP}" "bash -s -- ${RESET_FLAGS}" <<'REMOTE'
 set -euo pipefail
 
 readonly done_line='Managed etcd cluster membership has been reset'
@@ -127,11 +127,24 @@ fi
 
 systemctl start k3s
 REMOTE
+then
+  # Every server is stopped at this point and nothing has been deleted yet, so
+  # starting them again puts the cluster back exactly as it was.
+  log "the reset failed - starting k3s again so the cluster comes back"
+  all_ips | while read -r ip; do
+    echo "    ${ip}"
+    on_node "$ip" 'systemctl --no-block start k3s' || true
+  done
+  echo "nothing was deleted; the cluster is as it was before the restore" >&2
+  exit 1
+fi
 
+# --no-block because k3s is Type=notify and rejoining routinely outruns systemd's
+# 90s start timeout: a blocking start reports failure on a join that is working.
 log "the other servers rejoin as fresh members"
 rest_ips | while read -r ip; do
   echo "    ${ip}"
-  on_node "$ip" 'rm -rf /var/lib/rancher/k3s/server/db/ && systemctl start k3s'
+  on_node "$ip" 'rm -rf /var/lib/rancher/k3s/server/db/ && systemctl --no-block start k3s'
 done
 
 log "waiting for the API server"
@@ -139,6 +152,15 @@ for _ in $(seq 1 60); do
   if on_node "$FIRST_IP" 'k3s kubectl get --raw /readyz' >/dev/null 2>&1; then
     break
   fi
+  sleep 5
+done
+
+log "waiting for every server to rejoin"
+expected="$(all_ips | wc -l | tr -d ' ')"
+for _ in $(seq 1 60); do
+  ready="$(on_node "$FIRST_IP" 'k3s kubectl get nodes --no-headers' 2>/dev/null |
+    awk '$2 == "Ready"' | wc -l | tr -d ' ')"
+  [ "$ready" = "$expected" ] && break
   sleep 5
 done
 

@@ -84,6 +84,15 @@ save)
   FILE="$(run_snapshot list 2>/dev/null | awk -v n="$NAME" '$1 ~ "^" n "-" { print $1 }' | sort -u | tail -1)"
   if [ -n "$FILE" ]; then
     printf '\n==> saved as\n\n    %s\n\n    restore it with: make restore SNAPSHOT=%s\n' "$FILE" "$FILE"
+    # The line above is meant to be pasted, so say when it cannot work.
+    case "$FILE" in
+    *.zip)
+      printf '\n    WARNING: a compressed snapshot cannot be restored - k3s joins the\n'
+      printf '             snapshot dir onto the already-absolute path when it\n'
+      printf '             decompresses. This node still sets etcd-snapshot-compress;\n'
+      printf '             see docs/backup-restore.md.\n'
+      ;;
+    esac
   fi
   ;;
 list)

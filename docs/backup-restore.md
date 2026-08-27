@@ -86,6 +86,17 @@ make restore SNAPSHOT=<snapshot-file>                 # from S3
 make restore SNAPSHOT=<snapshot-file> LOCAL=1         # from server-1's disk instead
 ```
 
+> **A `.zip` snapshot cannot be restored as it is.** When k3s decompresses, it joins the
+> snapshot directory onto a path that is already absolute, and dies on the doubled result —
+> from S3 and from disk alike. `etcd-snapshot-compress` is off for that reason, but every
+> snapshot taken before it was turned off is compressed. To use one: download it, unzip it,
+> put the uncompressed file back in the bucket under the same prefix, and restore *that* name.
+> `make snapshot` warns you when the file it just wrote is one of these.
+>
+> Turning compression off in `locals.tf` only reaches new servers — `user_data` is under
+> `ignore_changes`. Existing nodes need `etcd-snapshot-compress: false` in a
+> `/etc/rancher/k3s/config.yaml.d/` drop-in and a restart, one at a time.
+
 It reads the node addresses out of the state, asks you to type the cluster name, and then does
 the whole sequence: stop k3s everywhere, reset and restore on server-1, wipe `db/` on the others
 so they rejoin as fresh members, and wait for the API server to answer. Add `--yes` to
@@ -100,7 +111,9 @@ Rancher lives in etcd, so it comes back with it. Give it five minutes before wor
 > bucket, credentials and token are already in `/etc/rancher/k3s/config.yaml`, so pass only the
 > **filename**, never a path. Wait for `Managed etcd cluster membership has been reset...`,
 > Ctrl-C, `systemctl start k3s`. Then on the others,
-> `rm -rf /var/lib/rancher/k3s/server/db/ && systemctl start k3s`.
+> `rm -rf /var/lib/rancher/k3s/server/db/ && systemctl --no-block start k3s` — k3s is
+> `Type=notify` and a rejoin routinely outruns systemd's 90s start timeout, so a blocking
+> start reports failure on a join that is in fact working.
 >
 > **Same procedure, no snapshot, when etcd has lost quorum** (two of three servers down): stop
 > k3s everywhere, run `k3s server --cluster-reset` on the most up-to-date survivor, then wipe
@@ -287,17 +300,20 @@ OpenTofu believing in objects that no longer exist.
 
 This is the one drill that has to create its surviving half. A timestamp written before the
 snapshot proves the restore landed on that *moment*; objects that were already there only prove
-they were not deleted. Step 5 removes it again.
+they were not deleted. Step 6 removes it again.
+
+**1.** The marker that must **survive**:
 
 ```bash
 export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
-
-# 1. the marker that must SURVIVE
 kubectl create namespace restore-drill
-kubectl -n restore-drill create configmap marker --from-literal=created="$(date -Is)"
+kubectl -n restore-drill create configmap marker --from-literal=created="$(date -u +%FT%TZ)"
+```
 
-# 2. the snapshot under test - note the filename it prints
-./scripts/etcd-snapshot.sh save drill-$(date +%Y%m%d)
+**2.** The snapshot under test — note the filename it prints:
+
+```bash
+make snapshot
 ```
 
 **3.** The change that must **disappear**: Rancher UI → Cluster Management → Import Existing →
@@ -305,7 +321,11 @@ Generic, named `drill-cluster`. **Never run the registration command it prints**
 stays Pending and no machine is created. Do not use `make apply-rke2` for this: it builds real
 servers and records them in the state, which a restore does not roll back.
 
-**4.** `make restore SNAPSHOT=<the filename step 2 printed>`
+**4.** Restore it:
+
+```bash
+make restore SNAPSHOT=<the filename step 2 printed>
+```
 
 **5.** Prove it:
 
