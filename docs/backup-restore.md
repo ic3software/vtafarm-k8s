@@ -184,38 +184,38 @@ kubectl -n longhorn-system get backuptargets.longhorn.io
 ### Back up
 
 ```bash
-NAME=<a name you will recognise>
 PV=$(kubectl -n <namespace> get pvc <pvc> -o jsonpath='{.spec.volumeName}')
+BACKUP_NAME="manual-${PV}-$(date -u +%Y%m%d-%H%M%S)"
 
 kubectl apply -f - <<EOF
 apiVersion: longhorn.io/v1beta2
 kind: Snapshot
 metadata:
-  name: ${NAME}
+  name: ${BACKUP_NAME}
   namespace: longhorn-system
 spec:
   volume: ${PV}
   createSnapshot: true
 EOF
 kubectl -n longhorn-system wait --for=jsonpath='{.status.readyToUse}'=true \
-  snapshot.longhorn.io/${NAME} --timeout=5m
+  snapshot.longhorn.io/${BACKUP_NAME} --timeout=5m
 
 kubectl apply -f - <<EOF
 apiVersion: longhorn.io/v1beta2
 kind: Backup
 metadata:
-  name: ${NAME}
+  name: ${BACKUP_NAME}
   namespace: longhorn-system
   labels:
     backup-target: default
     backup-volume: ${PV}
 spec:
-  snapshotName: ${NAME}
+  snapshotName: ${BACKUP_NAME}
 EOF
 kubectl -n longhorn-system wait --for=jsonpath='{.status.state}'=Completed \
-  backup.longhorn.io/${NAME} --timeout=15m
+  backup.longhorn.io/${BACKUP_NAME} --timeout=15m
 
-kubectl -n longhorn-system get backup.longhorn.io ${NAME} -o jsonpath='{.status.url}{"\n"}'
+kubectl -n longhorn-system get backup.longhorn.io ${BACKUP_NAME} -o jsonpath='{.status.url}{"\n"}'
 ```
 
 That last URL is what a restore is addressed by. **Keep it.**
@@ -242,10 +242,10 @@ kubectl apply -f - <<EOF
 apiVersion: longhorn.io/v1beta2
 kind: Volume
 metadata:
-  name: ${NAME}-restored
+  name: ${BACKUP_NAME}-restored
   namespace: longhorn-system
 spec:
-  fromBackup: "$(kubectl -n longhorn-system get backup.longhorn.io ${NAME} -o jsonpath='{.status.url}')"
+  fromBackup: "$(kubectl -n longhorn-system get backup.longhorn.io ${BACKUP_NAME} -o jsonpath='{.status.url}')"
   size: "$(kubectl -n longhorn-system get volume.longhorn.io ${PV} -o jsonpath='{.spec.size}')"
   numberOfReplicas: 1
   dataEngine: v1
@@ -255,7 +255,7 @@ spec:
 EOF
 
 # watch it fill: restoreRequired false and state detached means it is ready to mount
-kubectl -n longhorn-system get volume.longhorn.io ${NAME}-restored \
+kubectl -n longhorn-system get volume.longhorn.io ${BACKUP_NAME}-restored \
   -o custom-columns=STATE:.status.state,RESTORE:.status.restoreRequired,ROBUST:.status.robustness
 ```
 
@@ -266,10 +266,10 @@ kubectl -n <namespace> delete pvc <pvc>
 kubectl delete pv "$PV"          # with Retain from step 1 the old volume survives, detached
 ```
 
-**4.** UI → Volume → `${NAME}-restored` → **Create PV/PVC**, with the original namespace and PVC
-name. The PVC name is the only identity that matters — the Deployment mounts it by `claimName`,
-and on the farm it is derived from the session id (`vta-data-<id>`), so it has to be the old one.
-The Longhorn volume's own name is read by nothing.
+**4.** UI → Volume → `${BACKUP_NAME}-restored` → **Create PV/PVC**, with the original namespace
+and PVC name. The PVC name is the only identity that matters — the Deployment mounts it by
+`claimName`, and on the farm it is derived from the session id (`vta-data-<id>`), so it has to be
+the old one. The Longhorn volume's own name is read by nothing.
 
 ```bash
 # 5. the UI creates a bare PVC; put the platform's label back on it
@@ -474,7 +474,8 @@ Prefer a `vta_only` tenant — one Deployment, one PVC. A full stack shares the 
 pnm acl list --full-display
 ```
 
-**3.** Back that volume up — the two objects from section 4, with `NAME=drill-c-$(date +%Y%m%d)`.
+**3.** Back that volume up — the two objects from section 4, with
+`BACKUP_NAME=drill-c-$(date -u +%Y%m%d-%H%M%S)`.
 
 **4.** The entry that must **disappear**. `reader` with no `--contexts` grants nothing, and the DID
 is hash-derived — nobody holds the key:
