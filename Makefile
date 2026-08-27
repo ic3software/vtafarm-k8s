@@ -402,3 +402,25 @@ destroy: ## Tear down RKE2 clusters, then infrastructure; drop the stale stack 0
 	@$(MAKE) --no-print-directory destroy-all-rke2
 	tofu -chdir=$(INFRA) destroy
 	@bash $(ROOT)/scripts/drop-state.sh "02-rancher"
+
+# --- housekeeping -----------------------------------------------------------
+
+# Nothing here is a last copy: `make init` refetches the providers, `make
+# tfvars-pull` the tfvars, and the scaffolds rebuild a cluster root around the
+# state that stays in the bucket.
+.PHONY: clean
+clean: ## Delete every .terraform dir, the stack 01/02 tfvars and all cluster roots
+	@set -euo pipefail; \
+	echo "this deletes, leaving the state bucket and every running cluster alone:"; \
+	echo "  every .terraform directory under stacks/ and modules/"; \
+	echo "  the terraform.tfvars of stacks 01-infra and 02-rancher"; \
+	echo "  clusters/ of stacks 03-rke2-clusters, 04-vtafarm-platform and 05-vtafarm-app"; \
+	echo "destroy a live RKE2 cluster first - make destroy reads those roots to find it"; \
+	if [[ -t 0 ]]; then \
+	  read -r -p "continue? [y/N] " answer; \
+	  [[ "$$answer" =~ ^[Yy]$$ ]] || { echo "aborted"; exit 1; }; \
+	fi; \
+	find "$(ROOT)/stacks" "$(ROOT)/modules" -type d -name .terraform -prune -exec rm -rf {} +; \
+	rm -f "$(INFRA)/terraform.tfvars" "$(RANCHER)/terraform.tfvars"; \
+	rm -rf "$(RKE2_ROOT)" "$(VTAFARM_PLATFORM_ROOT)" "$(VTAFARM_APP_ROOT)"; \
+	echo "==> cleaned - restore with: make init, make tfvars-pull, make new-rke2-cluster CLUSTER=..."

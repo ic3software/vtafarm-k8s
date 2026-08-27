@@ -92,3 +92,26 @@ cluster that no longer exists.
 When you are finished, open the Hetzner Console and look for Volumes that remain. OpenTofu
 does not manage the PVs that the CSI driver creates. Volumes with `reclaimPolicy: Delete`
 disappear by themselves, but volumes with `Retain` stay and you keep paying for them.
+
+## Resetting the checkout
+
+`make clean` removes what a fresh clone would not have: every `.terraform` directory, the
+`terraform.tfvars` of stacks 01 and 02, and the `clusters/` directory of stacks 03 to 05. It
+asks first, and it touches nothing remote — the state bucket keeps both the state files and
+the tfvars, and any running cluster keeps running.
+
+Destroy before you clean. `make destroy` finds the RKE2 clusters by reading
+`stacks/03-rke2-clusters/clusters/*`; with those roots gone it destroys stack 01 and leaves
+the downstream Rancher and Hetzner resources behind.
+
+Coming back afterwards is the same path a second operator takes:
+
+```bash
+make init
+make tfvars-pull
+make new-rke2-cluster CLUSTER=rke2-vtafarm-production
+make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make new-vtafarm-app CLUSTER=rke2-vtafarm-production
+make tfvars-pull    # the cluster roots now exist, so their tfvars land too
+make init-rke2 CLUSTER=rke2-vtafarm-production
+```
