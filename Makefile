@@ -65,6 +65,18 @@ tfvars-push: check-state-env ## Upload every terraform.tfvars to the state bucke
 tfvars-diff: check-state-env ## Name the tfvars variables that differ from the bucket
 	@bash $(ROOT)/scripts/tfvars-sync.sh diff
 
+# The stack path is the key below $(TF_PREFIX)/tfstate; stacks 03 to 05 keep one
+# per cluster, so CLUSTER completes it.
+state_path = $(if $(CLUSTER),$(STACK)/$(CLUSTER),$(STACK))
+
+.PHONY: state-versions
+state-versions: check-state-env ## List a stack's saved state versions (STACK=01-infra [CLUSTER=name])
+	@bash $(ROOT)/scripts/state-restore.sh list "$(state_path)"
+
+.PHONY: state-restore
+state-restore: check-state-env ## Push an older state version back (STACK=… [CLUSTER=…] VERSION=…)
+	@bash $(ROOT)/scripts/state-restore.sh restore "$(state_path)" "$(VERSION)"
+
 # --- stack 01: infrastructure + k3s ----------------------------------------
 
 .PHONY: lint

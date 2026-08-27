@@ -235,24 +235,30 @@ aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 rm \
 
 ## Recovering a bad state
 
-Versioning keeps every previous copy for 30 days. List them, then download the one you want:
+Versioning keeps every previous copy for 30 days. List them:
 
 ```bash
-aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3api list-object-versions \
-  --bucket "$TF_STATE_BUCKET" --prefix "$TF_PREFIX/tfstate/01-infra/terraform.tfstate"
-
-aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3api get-object \
-  --bucket "$TF_STATE_BUCKET" --key "$TF_PREFIX/tfstate/01-infra/terraform.tfstate" \
-  --version-id <VersionId> ./recovered.tfstate
+make state-versions STACK=01-infra
+make state-versions STACK=03-rke2-clusters CLUSTER=rke2-vtafarm-production
 ```
 
-Inspect it before you put it back — `tofu show -json ./recovered.tfstate` — then:
+`STACK` is the path below `$TF_PREFIX/tfstate`, and stacks 03 to 05 take `CLUSTER` as well. The
+row marked `LATEST` is the state in use now. Push an older one back with its version id:
 
 ```bash
-tofu -chdir=stacks/01-infra state push ./recovered.tfstate
+make state-restore STACK=01-infra VERSION=<VERSION_ID>
 ```
 
-`state push` takes the lock like any other write, so it is safe against a concurrent run.
+That downloads the version, prints the serial, the lineage and the resource count of both it and
+the state currently in the bucket, and asks before it writes. It refuses to run without a
+terminal to ask in.
+
+The push is `tofu state push -force`. Restoring rewinds the serial, and without `-force` OpenTofu
+declines to move a state backwards. `-force` is not a lock override: the push takes the lock like
+any other write, so it is still safe against a concurrent run.
+
+A restored state is a claim about the world, not the world itself. Plan the stack afterwards and
+read the result before you apply anything.
 
 ---
 
