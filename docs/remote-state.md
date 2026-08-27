@@ -136,8 +136,13 @@ git clone <repo> && cd vtafarm-k8s
 cp .env.example .env
 ```
 
-Paste the values into that `.env`, and put the SSH key pair where
-`stacks/01-infra/terraform.tfvars`.
+Paste the values into that `.env`. The SSH key pair goes in `~/.ssh/`, under the filename
+`ssh_private_key_path` names in `stacks/01-infra/terraform.tfvars`:
+
+```bash
+mv <key> <key>.pub ~/.ssh/
+chmod 600 ~/.ssh/<key>
+```
 
 Generate the cluster scaffolds:
 
