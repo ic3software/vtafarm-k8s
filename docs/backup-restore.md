@@ -53,11 +53,24 @@ make snapshots                         # everything that exists, local and S3
 `make snapshot` prints the filename it ended up with — k3s appends the node name and a
 timestamp — together with the `make restore` line that uses it. **Keep that filename.**
 
-> **Nothing in `s3://`?** `make ssh`, then `journalctl -u k3s | grep -i s3 | tail -30`.
-> `NoSuchBucket` → wrong bucket or region, try `etcd_s3_bucket_lookup_type = "path"`.
-> `SignatureDoesNotMatch` → wrong keys. `no such host` → bad endpoint (no `https://` prefix, no
-> bucket name in it). Fixing tfvars is not enough on its own: `user_data` is under
-> `ignore_changes`, so edit `/etc/rancher/k3s/config.yaml` on each node and restart k3s.
+> **Nothing in `s3://`?** The cluster records every attempt, failures included — faster than
+> `journalctl`, and it names the node:
+>
+> ```bash
+> kubectl get etcdsnapshotfile -o json | jq -r '.items[] | select(.spec.s3)
+>   | [.status.creationTime, .spec.nodeName, (.status.error.message // "OK")] | @tsv'
+> ```
+>
+> `InvalidAccessKeyId` on the upload, or a bare `Access Denied` from the bucket test, both mean the
+> node is holding a key that has been rotated away — one dead key reads two ways because HEAD has
+> no response body to carry the real code. `NoSuchBucket` → wrong bucket or region, try
+> `etcd_s3_bucket_lookup_type = "path"`. `no such host` → bad endpoint (no `https://` prefix, no
+> bucket name in it).
+>
+> **Editing tfvars fixes nothing by itself.** `user_data` is under `ignore_changes` and cloud-init
+> runs only on first boot, so `/etc/rancher/k3s/config.yaml` on a running node keeps whatever it
+> was born with. Put the new pair in `/etc/rancher/k3s/config.yaml.d/10-etcd-s3-creds.yaml` and
+> restart k3s one node at a time, waiting for Ready in between so etcd keeps quorum.
 
 ### Restore
 
@@ -113,10 +126,9 @@ spec:
   resourceSetName: rancher-resource-set-full
 EOF
 
+kubectl wait --for=condition=Ready backup/manual-backup --timeout=5m
 kubectl get backup manual-backup -o jsonpath='{.status.filename}{"\n"}'
 ```
-
-No `schedule`, so it runs once. **Keep that filename** — a restore is addressed by it.
 
 > The tarball carries Rancher's secrets and tokens and is **not encrypted**: the `Backup` sets no
 > `encryptionConfigSecretName`. Whoever holds the S3 keys holds Rancher.
@@ -139,7 +151,7 @@ spec:
   prune: true
 EOF
 
-kubectl get restore manual-restore -w       # wait for Completed
+kubectl wait --for=condition=Ready restore/manual-restore --timeout=15m
 kubectl -n cattle-system scale deploy rancher --replicas=3
 ```
 
@@ -251,37 +263,31 @@ make apply-vtafarm-app CLUSTER=<cluster>
 
 Back up → change something → restore → prove. Run each one once before you rely on the cluster.
 
-Every drill is **two-sided**: something created *before* the backup must survive, and something
-created *after* it must disappear. Prove only one half and you cannot tell a working restore from
-one that wiped everything.
+Every drill is **two-sided**: something that existed *before* the backup must survive, and
+something created *after* it must disappear. Prove only one half and you cannot tell a working
+restore from one that wiped everything.
+
+Let the cluster as it stands be the surviving half wherever it can. Then the only thing a drill
+creates is the marker the restore itself deletes, and finishing leaves nothing to tidy up — no
+drill users, no drill namespaces, nothing for the next person to wonder about.
 
 | Drill | Proves | Down for | Way back |
 | --- | --- | --- | --- |
-| A — Rancher | Rancher's own state | the Rancher UI, ~5 min | the backup you just took |
-| B — etcd | the whole management cluster | the UI and k3s `kubectl`, ~10 min | a newer snapshot |
+| A — etcd | the whole management cluster | the UI and k3s `kubectl`, ~10 min | a newer snapshot |
+| B — Rancher | Rancher's own state | the Rancher UI, ~5 min | the backup you just took |
 | C — Longhorn | one volume's data | one workload | the original volume, kept |
 
-Run them in that order — the blast radius grows with each — and take an etcd snapshot before
-starting, as the net under all three. Do not run `tofu apply` between a backup and the end of its
+Run them in that order. A proves the net that B and C fall back on, and an etcd snapshot nobody
+has ever restored is a poor thing to be holding when a later drill goes wrong. Take a fresh
+snapshot before B and C as well. Do not run `tofu apply` between a backup and the end of its
 restore: state is in the bucket, not in the cluster, so rolling the cluster back would leave
 OpenTofu believing in objects that no longer exist.
 
-### Drill A — Rancher
+### Drill A — etcd
 
-1. Rancher UI → Users & Authentication → create user `drill-keep`. **Must survive.**
-2. Take a Rancher backup (section 3) and note the filename.
-3. Delete `drill-keep`, then create a second user `drill-extra`. **Must disappear.**
-4. Restore that backup (section 3).
-5. Prove it:
-
-```bash
-kubectl get users.management.cattle.io -o custom-columns=NAME:.metadata.name,USER:.username
-```
-
-`drill-keep` is back and `drill-extra` is gone. Clean up: delete `drill-keep`, then
-`kubectl delete backup manual-backup`.
-
-### Drill B — etcd
+This is the one drill that has to create its surviving half. A timestamp written before the
+snapshot proves the restore landed on that *moment*; objects that were already there only prove
+they were not deleted. Step 5 removes it again.
 
 ```bash
 export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
@@ -307,11 +313,50 @@ servers and records them in the state, which a restore does not roll back.
 kubectl -n restore-drill get configmap marker -o yaml   # back, original timestamp
 kubectl get clusters.management.cattle.io               # drill-cluster gone
 kubectl get nodes                                       # three Ready
+```
+
+**6.** Take the marker back out, and the cluster is as you found it:
+
+```bash
 kubectl delete namespace restore-drill
 ```
 
 The farm cluster returns to Active in the Rancher UI a few minutes later, once its agent
 reconnects. **Write down how long steps 4–5 took: that is your real Recovery Time Objective.**
+
+### Drill B — Rancher
+
+The users already in the cluster are the half that must survive, so this drill creates nothing for
+that side. The one thing it does add, the restore takes away again.
+
+**1.** Record who is there now. Every one of them must come back:
+
+```bash
+export KUBECONFIG=$PWD/stacks/01-infra/kubeconfig.yaml
+kubectl get users.management.cattle.io -o custom-columns=NAME:.metadata.name,USER:.username
+```
+
+**2.** Take a Rancher backup (section 3) and note the filename.
+
+**3.** Rancher UI → Users & Authentication → create user `drill-extra`. **Must disappear.**
+
+**4.** Restore that backup (section 3).
+
+**5.** Prove it — step 1's list, unchanged, without `drill-extra`:
+
+```bash
+kubectl get users.management.cattle.io -o custom-columns=NAME:.metadata.name,USER:.username
+```
+
+**6.** The restore removed the only thing the drill created, so all that is left is the pair of
+CRs. The tarball stays in the bucket; delete it there if you want it gone.
+
+```bash
+kubectl delete restore/manual-restore backup/manual-backup
+```
+
+> **Expect to be signed out.** `prune` deletes what the backup does not contain, and that includes
+> the token behind any Rancher session opened after step 2 — the one you are using included.
 
 ### Drill C — Longhorn
 
