@@ -2,6 +2,11 @@ resource "kubernetes_namespace" "cattle_resources_system" {
   metadata {
     name = "cattle-resources-system"
   }
+
+  # Rancher's namespace controller keeps rewriting its own annotations; leave them to it.
+  lifecycle {
+    ignore_changes = [metadata[0].annotations]
+  }
 }
 
 resource "kubernetes_secret" "backup_s3" {
