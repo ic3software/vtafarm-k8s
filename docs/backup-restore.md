@@ -346,13 +346,6 @@ fi
 Before step 7, undo by repeating steps 3–4 with the original volume and then deleting the
 restored one. After step 7, the S3 backup is the way back.
 
-> **This does not disturb upgrades.** vtafarm-api upgrades a tenant by fetching the Deployment by
-> name and setting the image on it (`internal/k8s/upgrade.go`, `SetDeploymentImage`); it never
-> reads the PVC, the PV or the volume. Nothing selects on the `managed-by` label either — it is
-> written at creation and never read back, so step 5 is for the next person, not for the code.
-> What this section cannot answer is whether a *much older* volume is still readable by a much
-> newer binary: that is the app's own on-disk format, not Kubernetes'.
-
 ---
 
 ## 5. If everything is gone
