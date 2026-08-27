@@ -207,6 +207,7 @@ export KUBECONFIG
 # file. Override with SSH_KEY= when a cluster uses a different key.
 SSH_KEY="${SSH_KEY:-$(tofu -chdir="$INFRA" output -raw ssh_private_key_path 2>/dev/null ||
   echo "${HOME}/.ssh/id_ed25519")}"
+SSH_KEY="${SSH_KEY/#\~/$HOME}"
 [ -f "$SSH_KEY" ] || die "SSH private key not found: ${SSH_KEY}"
 
 NODES=()

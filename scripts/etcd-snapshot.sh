@@ -13,6 +13,7 @@ INFRA="${ROOT}/stacks/01-infra"
 
 HOST="$(tofu -chdir="$INFRA" output -json server_nodes | jq -r '.[0].public_ip')"
 KEY="$(tofu -chdir="$INFRA" output -raw ssh_private_key_path 2>/dev/null || echo "$HOME/.ssh/id_ed25519")"
+KEY="${KEY/#\~/$HOME}"
 
 SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 

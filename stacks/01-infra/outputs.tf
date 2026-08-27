@@ -42,9 +42,11 @@ output "ssh_command" {
   value       = "ssh root@${hcloud_server.server[0].ipv4_address}"
 }
 
+# Left unexpanded: state is shared, so expanding ~ here writes one operator's
+# home directory into everybody else's state. Callers expand it themselves.
 output "ssh_private_key_path" {
   description = "Private key the helper scripts use to reach the nodes."
-  value       = pathexpand(var.ssh_private_key_path)
+  value       = var.ssh_private_key_path
 }
 
 output "dns_record_required" {
