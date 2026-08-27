@@ -23,7 +23,7 @@ what to do when a lock or a state file goes wrong.
 
 ## What lives where
 
-Three things must reach a second operator, and each takes a different route:
+What a second operator needs arrives by one of three routes:
 
 | | Route | Why |
 | --- | --- | --- |
@@ -31,9 +31,10 @@ Three things must reach a second operator, and each takes a different route:
 | State | The bucket, `$TF_PREFIX/tfstate` | Written by OpenTofu, locked while in use |
 | `terraform.tfvars` | The bucket, `$TF_PREFIX/tfvars` | Site-specific and secret, so never in Git |
 | `.env` | Password manager, by hand | It holds the key to the bucket, so it cannot come from the bucket |
+| The SSH key pair | Password manager, by hand | The nodes only accept the key that was uploaded when they were created |
 
-`.env` is the only thing handed over out of band; everything else follows from it. `TF_PREFIX`
-names the folder holding both trees, one key per stack:
+Those last two are the only things handed over out of band; everything else follows from them.
+`TF_PREFIX` names the folder holding both trees, one key per stack:
 
 ```text
 <your-bucket>/                              versioning on, non-current kept 30 days
@@ -53,7 +54,8 @@ objects across first.
 
 Two files are deliberately **not** synced:
 
-- `kubeconfig.yaml` — regenerate it with `make kubeconfig-rke2 CLUSTER=<name>`
+- `kubeconfig.yaml` — regenerate it with `make kubeconfig` for the management cluster, or
+  `make kubeconfig-rke2 CLUSTER=<name>` for a downstream one
 - `vault-init-*.json` — Vault recovery keys and root tokens. Password manager only, never a
   bucket. See [vault.md](vault.md).
 
@@ -126,50 +128,61 @@ a month of history. Override it with `NONCURRENT_DAYS=… make state-bucket-setu
 
 ## Onboarding a second operator
 
-Give them `.env` through the password manager. Nothing else is handed over by hand.
+Give them `.env` and the SSH key pair through the password manager. Nothing else is handed
+over by hand.
 
 ```bash
 git clone <repo> && cd vtafarm-k8s
 cp .env.example .env
 ```
 
-Paste the values they were given into that `.env`. Stacks 01 and 02 are tracked, so they need
-nothing further beyond their tfvars and an init:
+Paste the values into that `.env`, and put the SSH key pair where
+`stacks/01-infra/terraform.tfvars`.
 
-```bash
-make tfvars-pull
-make init
-make plan
-```
-
-`make plan` must report no changes.
-
-Stacks 03 to 05 keep one directory per cluster, and those directories are gitignored — they are
-generated from `_template`, not shared. Scaffold them **before** pulling, because `tfvars-pull`
-skips a cluster whose directory does not exist and the scaffold refuses to overwrite one that
-does:
+Generate the cluster scaffolds:
 
 ```bash
 make new-rke2-cluster     CLUSTER=rke2-vtafarm-production
 make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
 make new-vtafarm-app      CLUSTER=rke2-vtafarm-production
-
-make tfvars-pull
-
-make init-rke2 CLUSTER=rke2-vtafarm-production
-make plan-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
-The `tfvars-pull` in the middle is what replaces the placeholder `terraform.tfvars` each
-scaffold wrote with the real one from the bucket.
-
-The scaffold copies `backend.tf` unchanged — it holds no cluster name. `make init-rke2` is what
-supplies the key, derived from `CLUSTER`.
-
-Finally, the kubeconfigs, which stacks 04 and 05 read from the cluster directory:
+Then initialize every stack. `tofu init` reads no `terraform.tfvars` — the bucket, the region and
+the key all arrive from `.env` — so the whole init pass comes before the pull:
 
 ```bash
-make kubeconfig-rke2 CLUSTER=rke2-vtafarm-production
+make init
+make init-rke2             CLUSTER=rke2-vtafarm-production
+make kubeconfig-rke2       CLUSTER=rke2-vtafarm-production
+make init-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make init-vtafarm-app      CLUSTER=rke2-vtafarm-production
+```
+
+Every directory now exists, so one pull fills them all, replacing the placeholder
+`terraform.tfvars` each scaffold wrote with the real one from the bucket:
+
+```bash
+make tfvars-pull
+```
+
+Then plan. Each of these must report no changes:
+
+```bash
+make plan
+make plan-rancher
+make plan-rke2             CLUSTER=rke2-vtafarm-production
+make plan-vtafarm-platform CLUSTER=rke2-vtafarm-production
+make plan-vtafarm-app      CLUSTER=rke2-vtafarm-production
+```
+
+Stacks 04 and 05 have their kubeconfig already — `make kubeconfig-rke2` wrote it during the init
+pass. Two more targets fetch the management cluster's and put both in `~/.kube/config`, so
+`kubectl` can reach either one:
+
+```bash
+make kubeconfig
+make kubeconfig-merge
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production
 ```
 
 ---
