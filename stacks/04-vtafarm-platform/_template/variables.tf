@@ -28,6 +28,12 @@ variable "longhorn_replica_count" {
   default     = 1
 }
 
+variable "longhorn_node_drain_policy" {
+  description = "Longhorn policy for safely evacuating volume replicas during a Kubernetes node drain."
+  type        = string
+  default     = "block-for-eviction-if-contains-last-replica"
+}
+
 variable "longhorn_default_class" {
   description = <<-EOT
     Make longhorn the cluster's default StorageClass and demote hcloud-volumes.

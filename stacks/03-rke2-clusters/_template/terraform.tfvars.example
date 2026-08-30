@@ -18,6 +18,10 @@ server_type  = "cx33"
 worker_count = 0
 worker_type  = "cx23"
 
+# Keep false unless workloads using emptyDir have been verified safe to recreate.
+control_plane_delete_empty_dir_data = false
+worker_delete_empty_dir_data        = false
+
 # Reuse an existing SSH key from this Hetzner project.
 # Unless you changed it, the name is <k3s_cluster_name>-admin. See stack 01.
 ssh_key_name = "k3s-rancher-admin"

@@ -12,9 +12,10 @@ kubeconfig_path = ""
 # --- Storage ---------------------------------------------------------------
 # Longhorn becomes the default class, demoting the hcloud-volumes class the RKE2
 # module installs. Each replica costs another volume-size of node disk.
-longhorn_version       = "1.12.1"
-longhorn_replica_count = 1
-longhorn_default_class = true
+longhorn_version           = "1.12.1"
+longhorn_replica_count     = 1
+longhorn_node_drain_policy = "block-for-eviction-if-contains-last-replica"
+longhorn_default_class     = true
 
 # Reuse the private bucket and S3 credential pair used by the other backup
 # layers. The default prefix isolates this cluster at longhorn/<cluster-name>.

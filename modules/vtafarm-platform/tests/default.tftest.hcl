@@ -79,6 +79,11 @@ run "default_topology" {
   }
 
   assert {
+    condition     = yamldecode(helm_release.longhorn.values[0]).defaultSettings.nodeDrainPolicy == "block-for-eviction-if-contains-last-replica"
+    error_message = "Longhorn must evacuate last healthy replicas before allowing a node drain to continue."
+  }
+
+  assert {
     condition = (
       yamldecode(helm_release.vault_transit_pki.values[0]).networkPolicy.enabled == true &&
       yamldecode(helm_release.vault_transit_pki.values[0]).networkPolicy.allowFromNamespace == "vault"

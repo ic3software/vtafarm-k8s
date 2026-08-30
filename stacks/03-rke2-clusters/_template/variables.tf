@@ -146,6 +146,18 @@ variable "worker_upgrade_concurrency" {
   default     = "1"
 }
 
+variable "control_plane_delete_empty_dir_data" {
+  description = "Allow Rancher to discard emptyDir data while draining control-plane nodes."
+  type        = bool
+  default     = false
+}
+
+variable "worker_delete_empty_dir_data" {
+  description = "Allow Rancher to discard emptyDir data while draining worker nodes."
+  type        = bool
+  default     = false
+}
+
 variable "hcloud_ccm_version" {
   description = "Hetzner Cloud Controller Manager chart version."
   type        = string

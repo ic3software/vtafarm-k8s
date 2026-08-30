@@ -8,6 +8,10 @@ variable "config" {
     longhorn_version = optional(string, "1.12.1")
     # Vault's Raft already replicates, and node NVMe is the whole budget.
     longhorn_replica_count = optional(number, 1)
+    longhorn_node_drain_policy = optional(
+      string,
+      "block-for-eviction-if-contains-last-replica",
+    )
     # Longhorn owns the default class, so Vault's PVCs land on it without every
     # chart naming it. hcloud-volumes stays available by name.
     longhorn_default_class = optional(bool, true)
@@ -51,6 +55,17 @@ variable "config" {
   validation {
     condition     = var.config.longhorn_replica_count >= 1 && var.config.longhorn_replica_count <= 5
     error_message = "longhorn_replica_count must be between 1 and 5."
+  }
+
+  validation {
+    condition = contains([
+      "block-if-contains-last-replica",
+      "allow-if-replica-is-stopped",
+      "always-allow",
+      "block-for-eviction",
+      "block-for-eviction-if-contains-last-replica",
+    ], var.config.longhorn_node_drain_policy)
+    error_message = "longhorn_node_drain_policy must be a supported Longhorn node drain policy."
   }
 
   validation {

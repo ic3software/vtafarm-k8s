@@ -18,9 +18,10 @@ module "platform" {
 
     cert_manager_version = var.cert_manager_version
 
-    longhorn_version       = var.longhorn_version
-    longhorn_replica_count = var.longhorn_replica_count
-    longhorn_default_class = var.longhorn_default_class
+    longhorn_version           = var.longhorn_version
+    longhorn_replica_count     = var.longhorn_replica_count
+    longhorn_node_drain_policy = var.longhorn_node_drain_policy
+    longhorn_default_class     = var.longhorn_default_class
 
     longhorn_backup_enabled       = var.longhorn_backup_enabled
     longhorn_backup_s3_endpoint   = var.longhorn_backup_s3_endpoint
