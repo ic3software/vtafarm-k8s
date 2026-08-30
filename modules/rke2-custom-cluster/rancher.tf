@@ -27,7 +27,7 @@ resource "rancher2_cluster_v2" "this" {
 
       control_plane_drain_options {
         enabled                              = true
-        delete_empty_dir_data                = false
+        delete_empty_dir_data                = var.config.control_plane_delete_empty_dir_data
         ignore_daemon_sets                   = true
         timeout                              = 300
         skip_wait_for_delete_timeout_seconds = 60
@@ -35,7 +35,7 @@ resource "rancher2_cluster_v2" "this" {
 
       worker_drain_options {
         enabled                              = true
-        delete_empty_dir_data                = false
+        delete_empty_dir_data                = var.config.worker_delete_empty_dir_data
         ignore_daemon_sets                   = true
         timeout                              = 300
         skip_wait_for_delete_timeout_seconds = 60

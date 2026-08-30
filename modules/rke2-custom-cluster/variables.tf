@@ -26,8 +26,10 @@ variable "config" {
     cni                = optional(string, "canal")
     ingress_controller = optional(string, "traefik")
 
-    control_plane_upgrade_concurrency = optional(string, "1")
-    worker_upgrade_concurrency        = optional(string, "1")
+    control_plane_upgrade_concurrency   = optional(string, "1")
+    worker_upgrade_concurrency          = optional(string, "1")
+    control_plane_delete_empty_dir_data = optional(bool, false)
+    worker_delete_empty_dir_data        = optional(bool, false)
 
     hcloud_ccm_version = optional(string, "1.34.0")
     hcloud_csi_version = optional(string, "2.22.1")

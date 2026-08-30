@@ -79,6 +79,14 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition = (
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].delete_empty_dir_data == false &&
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == false
+    )
+    error_message = "Drain options must preserve emptyDir data unless a cluster explicitly opts in."
+  }
+
+  assert {
     condition     = local.nodes["server-1"].private_ip == "10.10.1.101"
     error_message = "Server private addresses must remain deterministic."
   }
@@ -174,11 +182,13 @@ run "worker_scale_does_not_renumber_servers" {
 
   variables {
     config = {
-      cluster_name = "production"
-      ssh_key_name = "k3s-rancher-admin"
-      server_type  = "cx33"
-      worker_count = 2
-      worker_type  = "cx43"
+      cluster_name                        = "production"
+      ssh_key_name                        = "k3s-rancher-admin"
+      server_type                         = "cx33"
+      worker_count                        = 2
+      worker_type                         = "cx43"
+      control_plane_delete_empty_dir_data = true
+      worker_delete_empty_dir_data        = true
     }
     hcloud_token = "test-token"
   }
@@ -220,6 +230,14 @@ run "worker_scale_does_not_renumber_servers" {
       hcloud_server.node["worker-1"].server_type == "cx43"
     )
     error_message = "Server and worker node types must honor their independent configuration values."
+  }
+
+  assert {
+    condition = (
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].delete_empty_dir_data == true &&
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == true
+    )
+    error_message = "Clusters must be able to opt in to deleting emptyDir data for each node role."
   }
 }
 
