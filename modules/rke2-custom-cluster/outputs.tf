@@ -9,13 +9,15 @@ output "cluster_v1_id" {
 }
 
 output "kubernetes_api_endpoint" {
-  description = "Direct RKE2 API endpoint through the OpenTofu-managed load balancer."
-  value       = "https://${var.config.api_hostname != "" ? var.config.api_hostname : hcloud_load_balancer.api.ipv4}:6443"
+  description = "Direct RKE2 API endpoint through the load balancer, or the node in dev."
+  value = "https://${var.config.api_hostname != "" ? var.config.api_hostname : (
+    var.config.dev ? hcloud_server.node["server-1"].ipv4_address : hcloud_load_balancer.api[0].ipv4
+  )}:6443"
 }
 
 output "load_balancer_ipv4" {
-  description = "Public IPv4 of the RKE2 API load balancer."
-  value       = hcloud_load_balancer.api.ipv4
+  description = "Public IPv4 of the RKE2 API load balancer; null in dev."
+  value       = var.config.dev ? null : hcloud_load_balancer.api[0].ipv4
 }
 
 output "nodes" {

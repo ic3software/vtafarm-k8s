@@ -9,7 +9,11 @@ rancher_token_key = "token-REPLACE_ME:REPLACE_ME"
 # ash = Ashburn, hil = Hillsboro, sin = Singapore.
 location = "nbg1"
 
-# RKE2 server-node shape. server_count must be odd: 3, 5, 7, or 9.
+# Set dev = true for one all-in-one RKE2 node with no private network or load
+# balancer. The node uses server_type; server_count and worker_count are ignored.
+dev = false
+
+# RKE2 server-node shape. Outside dev, server_count must be odd: 3, 5, 7, or 9.
 # Common x86 types include cx23, cx33, cx43, cx53, cpx22, and cpx32.
 server_count = 3
 server_type  = "cx33"

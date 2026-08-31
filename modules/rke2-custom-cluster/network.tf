@@ -1,11 +1,15 @@
 resource "hcloud_network" "this" {
+  count = var.config.dev ? 0 : 1
+
   name     = var.config.cluster_name
   ip_range = var.config.network_cidr
   labels   = local.common_labels
 }
 
 resource "hcloud_network_subnet" "nodes" {
-  network_id   = hcloud_network.this.id
+  count = var.config.dev ? 0 : 1
+
+  network_id   = hcloud_network.this[0].id
   type         = "cloud"
   network_zone = local.network_zones[var.config.location]
   ip_range     = var.config.subnet_cidr
@@ -21,6 +25,8 @@ data "hcloud_image" "os" {
 }
 
 resource "hcloud_placement_group" "nodes" {
+  count = var.config.dev ? 0 : 1
+
   name   = "${var.config.cluster_name}-servers"
   type   = "spread"
   labels = local.common_labels

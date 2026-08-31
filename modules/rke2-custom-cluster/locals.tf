@@ -14,7 +14,8 @@ locals {
     distro  = "rke2"
   }
 
-  lb_private_ip = cidrhost(var.config.subnet_cidr, 10)
+  use_private_network = !var.config.dev
+  lb_private_ip       = cidrhost(var.config.subnet_cidr, 10)
 
   # Hetzner private networks run at MTU 1450.
   private_interface_mtu   = 1450
@@ -26,19 +27,19 @@ locals {
   private_subnet_regex = "^${replace(regex("^\\d+\\.\\d+\\.\\d+", cidrhost(var.config.subnet_cidr, 0)), ".", "\\.")}\\."
 
   server_nodes = {
-    for i in range(var.config.server_count) : "server-${i + 1}" => {
+    for i in range(var.config.dev ? 1 : var.config.server_count) : "server-${i + 1}" => {
       name        = "${var.config.cluster_name}-server-${i + 1}"
-      private_ip  = cidrhost(var.config.subnet_cidr, 101 + i)
+      private_ip  = var.config.dev ? null : cidrhost(var.config.subnet_cidr, 101 + i)
       server_type = var.config.server_type
       roles = concat(
         ["etcd", "controlplane"],
-        var.config.servers_are_workers ? ["worker"] : [],
+        var.config.dev || var.config.servers_are_workers ? ["worker"] : [],
       )
     }
   }
 
   worker_nodes = {
-    for i in range(var.config.worker_count) : "worker-${i + 1}" => {
+    for i in range(var.config.dev ? 0 : var.config.worker_count) : "worker-${i + 1}" => {
       name        = "${var.config.cluster_name}-worker-${i + 1}"
       private_ip  = cidrhost(var.config.subnet_cidr, 151 + i)
       server_type = var.config.worker_type
@@ -48,8 +49,10 @@ locals {
 
   nodes = merge(local.server_nodes, local.worker_nodes)
 
-  tls_sans = compact([
-    hcloud_load_balancer.api.ipv4,
+  tls_sans = var.config.dev ? compact([
+    var.config.api_hostname,
+    ]) : compact([
+    hcloud_load_balancer.api[0].ipv4,
     local.lb_private_ip,
     var.config.api_hostname,
   ])
@@ -73,10 +76,10 @@ locals {
       name      = "hcloud"
       namespace = "kube-system"
     }
-    stringData = {
-      token   = var.hcloud_token
-      network = hcloud_network.this.name
-    }
+    stringData = merge(
+      { token = var.hcloud_token },
+      var.config.dev ? {} : { network = hcloud_network.this[0].name },
+    )
   })
 
   hcloud_ccm_manifest = yamlencode({
@@ -92,24 +95,26 @@ locals {
       version         = var.config.hcloud_ccm_version
       targetNamespace = "kube-system"
       bootstrap       = true
-      valuesContent = yamlencode({
-        networking = { enabled = false }
-        env = {
-          HCLOUD_NETWORK = {
-            valueFrom = {
-              secretKeyRef = {
-                name = "hcloud"
-                key  = "network"
+      valuesContent = yamlencode(merge(
+        { networking = { enabled = false } },
+        var.config.dev ? {} : {
+          env = {
+            HCLOUD_NETWORK = {
+              valueFrom = {
+                secretKeyRef = {
+                  name = "hcloud"
+                  key  = "network"
+                }
               }
             }
+            # Network attachment is already guaranteed by hcloud_server.node.
+            # Skipping the metadata check prevents a bad link-local DHCP route
+            # from leaving the CCM crash-looping and every node uninitialized.
+            HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK = { value = "true" }
+            HCLOUD_NETWORK_ROUTES_ENABLED         = { value = "false" }
           }
-          # Network attachment is already guaranteed by hcloud_server.node.
-          # Skipping the metadata check prevents a bad link-local DHCP route
-          # from leaving the CCM crash-looping and every node uninitialized.
-          HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK = { value = "true" }
-          HCLOUD_NETWORK_ROUTES_ENABLED         = { value = "false" }
-        }
-      })
+        },
+      ))
     }
   })
 
@@ -164,7 +169,7 @@ locals {
       local.hcloud_ccm_manifest,
       local.hcloud_csi_manifest,
     ],
-    var.config.cni == "canal" ? [local.canal_manifest] : [],
+    var.config.cni == "canal" && local.use_private_network ? [local.canal_manifest] : [],
   ))
 
   # Rancher owns the bundled Traefik's configuration on a cluster it manages, so
@@ -173,13 +178,15 @@ locals {
   #
   # The redirect replaces ingress-nginx's per-Ingress ssl-redirect annotation,
   # which is why the Ingresses vtafarm-api creates carry none.
+  # Dev keeps the Service internal so the CCM cannot provision a cloud load
+  # balancer, and publishes the DaemonSet directly through host ports instead.
   chart_values = yamlencode({
-    rke2-traefik = {
+    rke2-traefik = merge({
       ingressClass = {
         isDefaultClass = true
       }
       ports = {
-        web = {
+        web = merge({
           http = {
             redirections = {
               entryPoint = {
@@ -189,16 +196,19 @@ locals {
               }
             }
           }
-        }
-        websecure = {
+        }, var.config.dev ? { hostPort = 80 } : {})
+        websecure = merge({
           http = {
             tls = {
               enabled = true
             }
           }
-        }
+        }, var.config.dev ? { hostPort = 443 } : {})
       }
-    }
+      }, jsondecode(var.config.dev ? jsonencode({
+        deployment = { kind = "DaemonSet" }
+        service    = { spec = { type = "ClusterIP" } }
+    }) : "{}"))
   })
 
   registration_command = rancher2_cluster_v2.this.cluster_registration_token[0].node_command
@@ -206,15 +216,17 @@ locals {
   node_user_data = {
     for key, node in local.nodes : key => templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
       hostname                = node.name
-      node_private_ip         = node.private_ip
-      private_network_cidr    = var.config.network_cidr
-      private_network_gateway = local.private_network_gateway
+      use_private_network     = local.use_private_network
+      node_private_ip         = node.private_ip == null ? "" : node.private_ip
+      private_network_cidr    = local.use_private_network ? var.config.network_cidr : ""
+      private_network_gateway = local.use_private_network ? local.private_network_gateway : ""
       private_interface_mtu   = local.private_interface_mtu
       bootstrap_script        = file("${path.module}/templates/rancher-node-bootstrap.sh")
       registration_script = join(" ", concat(
         [local.registration_command],
         [for role in node.roles : "--${role}"],
-        ["--internal-address", node.private_ip, "--node-name", node.name],
+        local.use_private_network ? ["--internal-address", node.private_ip] : [],
+        ["--node-name", node.name],
       ))
     })
   }
