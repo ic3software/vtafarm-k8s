@@ -32,8 +32,14 @@ variable "location" {
   default     = "nbg1"
 }
 
+variable "dev" {
+  description = "Create a single-node development cluster without a private network or load balancer."
+  type        = bool
+  default     = false
+}
+
 variable "server_count" {
-  description = "Number of RKE2 server nodes. Must be an odd number between 3 and 9."
+  description = "Number of RKE2 server nodes. Must be an odd number between 3 and 9; ignored when dev is true."
   type        = number
   default     = 3
 }
@@ -75,7 +81,7 @@ variable "ssh_key_name" {
 }
 
 variable "ssh_allowed_cidrs" {
-  description = "Public CIDRs permitted to SSH to the nodes."
+  description = "Public CIDRs permitted to SSH to nodes and, in dev, access the Kubernetes API."
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

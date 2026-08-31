@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Configure the hot-plugged Hetzner private NIC, then run Rancher's generated
-# system-agent registration command. Logs are in /var/log/cloud-init-output.log.
+# Configure the hot-plugged Hetzner private NIC when enabled, then run Rancher's
+# generated system-agent registration command. Logs are in cloud-init-output.log.
 set -euo pipefail
 
 STATUS_DIR="/var/lib/rancher"
@@ -20,10 +20,14 @@ trap record_failure EXIT
 
 # shellcheck disable=SC1091
 source /etc/rancher-node-bootstrap.env
-: "${NODE_PRIVATE_IP:?not set in /etc/rancher-node-bootstrap.env}"
-: "${PRIVATE_NETWORK_CIDR:?not set in /etc/rancher-node-bootstrap.env}"
-: "${PRIVATE_NETWORK_GATEWAY:?not set in /etc/rancher-node-bootstrap.env}"
-: "${PRIVATE_IFACE_MTU:?not set in /etc/rancher-node-bootstrap.env}"
+: "${USE_PRIVATE_NETWORK:?not set in /etc/rancher-node-bootstrap.env}"
+
+if [ "$USE_PRIVATE_NETWORK" = "true" ]; then
+  : "${NODE_PRIVATE_IP:?not set in /etc/rancher-node-bootstrap.env}"
+  : "${PRIVATE_NETWORK_CIDR:?not set in /etc/rancher-node-bootstrap.env}"
+  : "${PRIVATE_NETWORK_GATEWAY:?not set in /etc/rancher-node-bootstrap.env}"
+  : "${PRIVATE_IFACE_MTU:?not set in /etc/rancher-node-bootstrap.env}"
+fi
 
 log() { echo "[rancher-node-bootstrap] $(date -Is) $*"; }
 
@@ -78,42 +82,43 @@ EOF
   netplan apply
 }
 
-PUBLIC_IFACE="$(ip -o -4 route show default | awk '{print $5; exit}')"
-if [ -z "$PUBLIC_IFACE" ]; then
-  log "ERROR: could not identify the public interface"
-  exit 1
-fi
-
-# Hetzner attaches the private NIC just after the server is created, so whether
-# cloud-init's metadata already carries it is a race each node runs on its own.
-# Leave the NIC alone once it has the address, whoever configured it.
-IFACE=""
-DETECTED_IFACE=""
-NETPLAN_CONFIGURED=0
-for _ in $(seq 1 60); do
-  IFACE="$(interface_with_ip)"
-  [ -n "$IFACE" ] && break
-
-  if [ -z "$DETECTED_IFACE" ]; then
-    DETECTED_IFACE="$(find_private_interface "$PUBLIC_IFACE" || true)"
+if [ "$USE_PRIVATE_NETWORK" = "true" ]; then
+  PUBLIC_IFACE="$(ip -o -4 route show default | awk '{print $5; exit}')"
+  if [ -z "$PUBLIC_IFACE" ]; then
+    log "ERROR: could not identify the public interface"
+    exit 1
   fi
 
-  if [ -z "$DETECTED_IFACE" ]; then
-    log "waiting for the private network interface"
-  elif [ "$NETPLAN_CONFIGURED" -eq 0 ]; then
-    configure_private_interface "$DETECTED_IFACE"
-    NETPLAN_CONFIGURED=1
-  else
-    log "waiting for private IP ${NODE_PRIVATE_IP}"
-  fi
-  sleep 5
-done
+  # Hetzner attaches the private NIC just after the server is created, so
+  # whether cloud-init's metadata already carries it is a race on each node.
+  IFACE=""
+  DETECTED_IFACE=""
+  NETPLAN_CONFIGURED=0
+  for _ in $(seq 1 60); do
+    IFACE="$(interface_with_ip)"
+    [ -n "$IFACE" ] && break
 
-if [ -z "$IFACE" ]; then
-  log "ERROR: private IP ${NODE_PRIVATE_IP} never appeared"
-  ip -o link show || true
-  ip -o -4 addr show || true
-  exit 1
+    if [ -z "$DETECTED_IFACE" ]; then
+      DETECTED_IFACE="$(find_private_interface "$PUBLIC_IFACE" || true)"
+    fi
+
+    if [ -z "$DETECTED_IFACE" ]; then
+      log "waiting for the private network interface"
+    elif [ "$NETPLAN_CONFIGURED" -eq 0 ]; then
+      configure_private_interface "$DETECTED_IFACE"
+      NETPLAN_CONFIGURED=1
+    else
+      log "waiting for private IP ${NODE_PRIVATE_IP}"
+    fi
+    sleep 5
+  done
+
+  if [ -z "$IFACE" ]; then
+    log "ERROR: private IP ${NODE_PRIVATE_IP} never appeared"
+    ip -o link show || true
+    ip -o -4 addr show || true
+    exit 1
+  fi
 fi
 
 log "registering node with Rancher"

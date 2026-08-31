@@ -1,4 +1,6 @@
 resource "hcloud_load_balancer" "api" {
+  count = var.config.dev ? 0 : 1
+
   name               = "${var.config.cluster_name}-api"
   load_balancer_type = var.config.load_balancer_type
   location           = var.config.location
@@ -11,16 +13,18 @@ resource "hcloud_load_balancer" "api" {
 }
 
 resource "hcloud_load_balancer_network" "api" {
-  load_balancer_id = hcloud_load_balancer.api.id
-  subnet_id        = hcloud_network_subnet.nodes.id
+  count = var.config.dev ? 0 : 1
+
+  load_balancer_id = hcloud_load_balancer.api[0].id
+  subnet_id        = hcloud_network_subnet.nodes[0].id
   ip               = local.lb_private_ip
 }
 
 resource "hcloud_load_balancer_target" "servers" {
-  for_each = local.server_nodes
+  for_each = var.config.dev ? {} : local.server_nodes
 
   type             = "server"
-  load_balancer_id = hcloud_load_balancer.api.id
+  load_balancer_id = hcloud_load_balancer.api[0].id
   server_id        = hcloud_server.node[each.key].id
   use_private_ip   = true
 
@@ -28,7 +32,9 @@ resource "hcloud_load_balancer_target" "servers" {
 }
 
 resource "hcloud_load_balancer_service" "kubernetes_api" {
-  load_balancer_id = hcloud_load_balancer.api.id
+  count = var.config.dev ? 0 : 1
+
+  load_balancer_id = hcloud_load_balancer.api[0].id
   protocol         = "tcp"
   listen_port      = 6443
   destination_port = 6443
@@ -43,7 +49,9 @@ resource "hcloud_load_balancer_service" "kubernetes_api" {
 }
 
 resource "hcloud_load_balancer_service" "rke2_supervisor" {
-  load_balancer_id = hcloud_load_balancer.api.id
+  count = var.config.dev ? 0 : 1
+
+  load_balancer_id = hcloud_load_balancer.api[0].id
   protocol         = "tcp"
   listen_port      = 9345
   destination_port = 9345
@@ -58,7 +66,9 @@ resource "hcloud_load_balancer_service" "rke2_supervisor" {
 }
 
 resource "hcloud_load_balancer_service" "ingress_http" {
-  load_balancer_id = hcloud_load_balancer.api.id
+  count = var.config.dev ? 0 : 1
+
+  load_balancer_id = hcloud_load_balancer.api[0].id
   protocol         = "tcp"
   listen_port      = 80
   destination_port = 80
@@ -73,7 +83,9 @@ resource "hcloud_load_balancer_service" "ingress_http" {
 }
 
 resource "hcloud_load_balancer_service" "ingress_https" {
-  load_balancer_id = hcloud_load_balancer.api.id
+  count = var.config.dev ? 0 : 1
+
+  load_balancer_id = hcloud_load_balancer.api[0].id
   protocol         = "tcp"
   listen_port      = 443
   destination_port = 443

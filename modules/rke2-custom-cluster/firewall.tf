@@ -1,5 +1,5 @@
-# Hetzner Cloud Firewalls filter public interfaces only. RKE2, etcd, the CNI,
-# and kubelet communicate on the private network and are not exposed here.
+# Hetzner Cloud Firewalls filter public interfaces only. Normal clusters keep
+# node traffic private; dev runs every RKE2 component locally on its sole node.
 resource "hcloud_firewall" "nodes" {
   name   = "${var.config.cluster_name}-nodes"
   labels = local.common_labels
@@ -10,6 +10,42 @@ resource "hcloud_firewall" "nodes" {
     protocol    = "tcp"
     port        = "22"
     source_ips  = var.config.ssh_allowed_cidrs
+  }
+
+  dynamic "rule" {
+    for_each = var.config.dev ? [1] : []
+
+    content {
+      description = "Kubernetes API"
+      direction   = "in"
+      protocol    = "tcp"
+      port        = "6443"
+      source_ips  = var.config.ssh_allowed_cidrs
+    }
+  }
+
+  dynamic "rule" {
+    for_each = var.config.dev ? [1] : []
+
+    content {
+      description = "HTTP ingress"
+      direction   = "in"
+      protocol    = "tcp"
+      port        = "80"
+      source_ips  = ["0.0.0.0/0"]
+    }
+  }
+
+  dynamic "rule" {
+    for_each = var.config.dev ? [1] : []
+
+    content {
+      description = "HTTPS ingress"
+      direction   = "in"
+      protocol    = "tcp"
+      port        = "443"
+      source_ips  = ["0.0.0.0/0"]
+    }
   }
 
   rule {

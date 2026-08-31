@@ -5,6 +5,7 @@ module "rke2" {
   config = {
     cluster_name                        = basename(abspath(path.root)) == "_template" ? "template" : basename(abspath(path.root))
     location                            = var.location
+    dev                                 = var.dev
     server_count                        = var.server_count
     server_type                         = var.server_type
     servers_are_workers                 = var.servers_are_workers

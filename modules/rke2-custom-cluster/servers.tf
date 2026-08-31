@@ -6,7 +6,7 @@ resource "hcloud_server" "node" {
   image              = data.hcloud_image.os.name
   location           = var.config.location
   ssh_keys           = [data.hcloud_ssh_key.admin.id]
-  placement_group_id = startswith(each.key, "server-") ? hcloud_placement_group.nodes.id : null
+  placement_group_id = var.config.dev ? null : (startswith(each.key, "server-") ? hcloud_placement_group.nodes[0].id : null)
   user_data          = sensitive(local.node_user_data[each.key])
 
   labels = merge(local.common_labels, {
@@ -18,9 +18,13 @@ resource "hcloud_server" "node" {
     ipv6_enabled = false
   }
 
-  network {
-    network_id = hcloud_network.this.id
-    ip         = each.value.private_ip
+  dynamic "network" {
+    for_each = local.use_private_network ? [each.value.private_ip] : []
+
+    content {
+      network_id = hcloud_network.this[0].id
+      ip         = network.value
+    }
   }
 
   lifecycle {

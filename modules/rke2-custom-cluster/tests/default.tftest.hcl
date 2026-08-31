@@ -15,7 +15,10 @@ mock_provider "hcloud" {
     defaults = { id = "4" }
   }
   mock_resource "hcloud_server" {
-    defaults = { id = "5" }
+    defaults = {
+      id           = "5"
+      ipv4_address = "203.0.113.10"
+    }
   }
 }
 
@@ -134,10 +137,10 @@ run "default_ha_topology" {
 
   assert {
     condition = (
-      hcloud_load_balancer_service.ingress_http.listen_port == 80 &&
-      hcloud_load_balancer_service.ingress_http.destination_port == 80 &&
-      hcloud_load_balancer_service.ingress_https.listen_port == 443 &&
-      hcloud_load_balancer_service.ingress_https.destination_port == 443
+      hcloud_load_balancer_service.ingress_http[0].listen_port == 80 &&
+      hcloud_load_balancer_service.ingress_http[0].destination_port == 80 &&
+      hcloud_load_balancer_service.ingress_https[0].listen_port == 443 &&
+      hcloud_load_balancer_service.ingress_https[0].destination_port == 443
     )
     error_message = "The load balancer must expose standard HTTP and HTTPS ports to the ingress controller."
   }
@@ -164,6 +167,133 @@ run "default_ha_topology" {
       yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_ROUTES_ENABLED.value == "false"
     )
     error_message = "The Hetzner CCM must trust OpenTofu's network attachment and leave private-network routing to Canal."
+  }
+}
+
+run "dev_single_node_topology" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name      = "development"
+      dev               = true
+      ssh_key_name      = "k3s-rancher-admin"
+      ssh_allowed_cidrs = ["0.0.0.0/0"]
+      server_count      = 8
+      server_type       = "cx43"
+      worker_count      = 3
+      worker_type       = "cx53"
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/development"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "development-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      length(hcloud_server.node) == 1 &&
+      hcloud_server.node["server-1"].server_type == "cx43" &&
+      local.server_nodes["server-1"].roles == ["etcd", "controlplane", "worker"]
+    )
+    error_message = "Dev must create exactly one all-in-one node using server_type."
+  }
+
+  assert {
+    condition = (
+      length(hcloud_network.this) == 0 &&
+      length(hcloud_network_subnet.nodes) == 0 &&
+      length(hcloud_placement_group.nodes) == 0 &&
+      length(hcloud_load_balancer.api) == 0 &&
+      length(hcloud_load_balancer_network.api) == 0 &&
+      length(hcloud_load_balancer_target.servers) == 0 &&
+      length(hcloud_load_balancer_service.kubernetes_api) == 0 &&
+      length(hcloud_load_balancer_service.rke2_supervisor) == 0 &&
+      length(hcloud_load_balancer_service.ingress_http) == 0 &&
+      length(hcloud_load_balancer_service.ingress_https) == 0
+    )
+    error_message = "Dev must not create a private network, placement group, or load balancer."
+  }
+
+  assert {
+    condition = (
+      length(hcloud_server.node["server-1"].network) == 0 &&
+      hcloud_server.node["server-1"].placement_group_id == null &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/etc/rancher-node-bootstrap.env"
+        ])),
+        "USE_PRIVATE_NETWORK=\"false\"",
+      ) &&
+      !strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/etc/rancher/node-registration.sh"
+        ])),
+        "--internal-address",
+      )
+    )
+    error_message = "Dev bootstrap must use only the public NIC and let Rancher detect its address."
+  }
+
+  assert {
+    condition = (
+      length(hcloud_firewall.nodes.rule) == 5 &&
+      anytrue([
+        for rule in hcloud_firewall.nodes.rule :
+        rule.port == "6443" && rule.source_ips == toset(["0.0.0.0/0"])
+      ]) &&
+      alltrue([
+        for port in ["80", "443"] : anytrue([
+          for rule in hcloud_firewall.nodes.rule :
+          rule.port == port && rule.source_ips == toset(["0.0.0.0/0"])
+        ])
+      ])
+    )
+    error_message = "Dev firewall must expose SSH, the API, HTTP, and HTTPS while leaving other ports closed."
+  }
+
+  assert {
+    condition = (
+      !strcontains(local.additional_manifest, local.canal_manifest) &&
+      !can(yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env) &&
+      yamldecode(local.chart_values)["rke2-traefik"].deployment.kind == "DaemonSet" &&
+      yamldecode(local.chart_values)["rke2-traefik"].service.spec.type == "ClusterIP" &&
+      yamldecode(local.chart_values)["rke2-traefik"].ports.web.hostPort == 80 &&
+      yamldecode(local.chart_values)["rke2-traefik"].ports.websecure.hostPort == 443 &&
+      output.load_balancer_ipv4 == null &&
+      output.kubernetes_api_endpoint == "https://203.0.113.10:6443"
+    )
+    error_message = "Dev manifests, ingress, and outputs must not depend on a private network or load balancer."
   }
 }
 

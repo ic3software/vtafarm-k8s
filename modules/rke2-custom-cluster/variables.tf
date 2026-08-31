@@ -4,6 +4,7 @@ variable "config" {
     cluster_name = string
 
     location            = optional(string, "nbg1")
+    dev                 = optional(bool, false)
     server_count        = optional(number, 3)
     server_type         = optional(string, "cx33")
     servers_are_workers = optional(bool, true)
@@ -46,8 +47,8 @@ variable "config" {
   }
 
   validation {
-    condition     = var.config.server_count >= 3 && var.config.server_count % 2 == 1 && var.config.server_count <= 9
-    error_message = "server_count must be an odd number between 3 and 9 so etcd has quorum and fits Hetzner's 10-server spread-group limit."
+    condition     = var.config.dev || (var.config.server_count >= 3 && var.config.server_count % 2 == 1 && var.config.server_count <= 9)
+    error_message = "Outside dev, server_count must be an odd number between 3 and 9 so etcd has quorum and fits Hetzner's 10-server spread-group limit."
   }
 
   validation {
