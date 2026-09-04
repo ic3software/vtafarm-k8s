@@ -28,6 +28,7 @@ and separated per user, which is what makes a farm safe enough to run vtafarm on
   - [Step 7 — Install the platform layer](#step-7--install-the-platform-layer)
   - [Step 8 — Install the applications](#step-8--install-the-applications)
 - [Runbooks](#runbooks)
+- [License](#license)
 
 ---
 
@@ -487,3 +488,8 @@ The farm is now running. Everything after this point is a runbook.
 | [docs/teardown.md](docs/teardown.md) | how to destroy one layer, one cluster, or everything |
 | [docs/opentofu-primer.md](docs/opentofu-primer.md) | a short introduction to OpenTofu, if it is new to you |
 | [docs/cost.md](docs/cost.md) | the monthly cost, and what each scaling step adds |
+
+## License
+
+VTA Farm is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+Contributions are welcome under the terms in [CONTRIBUTING.md](CONTRIBUTING.md).
