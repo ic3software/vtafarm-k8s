@@ -82,6 +82,11 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition     = !contains(keys(yamldecode(local.machine_global_config)), "write-kubeconfig-mode")
+    error_message = "The RKE2 machine plan must rely on the secure default kubeconfig mode to avoid metadata-driven plan churn."
+  }
+
+  assert {
     condition = (
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].delete_empty_dir_data == false &&
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == false

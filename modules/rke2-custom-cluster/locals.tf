@@ -66,7 +66,6 @@ locals {
     cloud-provider-name      = "external"
     secrets-encryption       = true
     tls-san                  = local.tls_sans
-    write-kubeconfig-mode    = "0600"
   })
 
   hcloud_secret_manifest = yamlencode({
