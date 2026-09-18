@@ -26,6 +26,15 @@ cloudflare_zone_id   = ""
 did_hosting_did         = ""
 did_hosting_private_key = ""
 
+# --- VTA Wallet login ------------------------------------------------------
+# Optional. Use a dedicated public did:webvh RP identity; do not reuse
+# did_hosting_did. Leave empty to keep SIOPv2 login disabled.
+siop_rp_did                         = ""
+siop_challenge_ttl_seconds          = 120
+siop_clock_skew_seconds             = 60
+siop_did_resolution_timeout_seconds = 5
+siop_max_body_bytes                 = 70000
+
 # --- Monitoring ------------------------------------------------------------
 # openssl rand -hex 32. Empty disables /api/v1/monitor/*.
 monitor_token = ""

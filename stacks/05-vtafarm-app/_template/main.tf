@@ -23,9 +23,14 @@ module "app" {
     cloudflare_api_token = var.cloudflare_api_token
     cloudflare_zone_id   = var.cloudflare_zone_id
 
-    did_hosting_did         = var.did_hosting_did
-    did_hosting_private_key = var.did_hosting_private_key
-    monitor_token           = var.monitor_token
+    did_hosting_did                     = var.did_hosting_did
+    did_hosting_private_key             = var.did_hosting_private_key
+    siop_rp_did                         = var.siop_rp_did
+    siop_challenge_ttl_seconds          = var.siop_challenge_ttl_seconds
+    siop_clock_skew_seconds             = var.siop_clock_skew_seconds
+    siop_did_resolution_timeout_seconds = var.siop_did_resolution_timeout_seconds
+    siop_max_body_bytes                 = var.siop_max_body_bytes
+    monitor_token                       = var.monitor_token
 
     vtafarm_version     = var.vtafarm_version
     vtafarm_api_version = var.vtafarm_api_version

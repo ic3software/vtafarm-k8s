@@ -59,6 +59,36 @@ variable "did_hosting_private_key" {
   sensitive   = true
 }
 
+variable "siop_rp_did" {
+  description = "Dedicated public did:webvh RP identity for VTA Wallet SIOPv2 login. Empty disables the feature."
+  type        = string
+  default     = ""
+}
+
+variable "siop_challenge_ttl_seconds" {
+  description = "Lifetime of a one-time SIOPv2 login challenge."
+  type        = number
+  default     = 120
+}
+
+variable "siop_clock_skew_seconds" {
+  description = "Clock skew allowed while validating SIOPv2 tokens."
+  type        = number
+  default     = 60
+}
+
+variable "siop_did_resolution_timeout_seconds" {
+  description = "Timeout for resolving the wallet's public DID."
+  type        = number
+  default     = 5
+}
+
+variable "siop_max_body_bytes" {
+  description = "Maximum request body size accepted by SIOPv2 endpoints."
+  type        = number
+  default     = 70000
+}
+
 variable "monitor_token" {
   description = "Shared secret gating /api/v1/monitor/*. Empty disables those endpoints."
   type        = string

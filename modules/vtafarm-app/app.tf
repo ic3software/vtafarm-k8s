@@ -18,6 +18,13 @@ resource "helm_release" "api" {
     frontendHost = local.frontend_host
     cluster      = { domain = var.config.domain }
     postgresql   = { storageClass = var.config.storage_class }
+    siop = {
+      rpDID                       = var.config.siop_rp_did
+      challengeTTLSeconds         = tostring(var.config.siop_challenge_ttl_seconds)
+      clockSkewSeconds            = tostring(var.config.siop_clock_skew_seconds)
+      didResolutionTimeoutSeconds = tostring(var.config.siop_did_resolution_timeout_seconds)
+      maxBodyBytes                = tostring(var.config.siop_max_body_bytes)
+    }
   })]
 
   depends_on = [
