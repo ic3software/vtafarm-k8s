@@ -23,6 +23,14 @@ variable "config" {
     did_hosting_did         = string
     did_hosting_private_key = string
 
+    # Optional VTA Wallet SIOPv2 login. This must be a dedicated public RP
+    # identity, separate from the DID-hosting control credential above.
+    siop_rp_did                         = optional(string, "")
+    siop_challenge_ttl_seconds          = optional(number, 120)
+    siop_clock_skew_seconds             = optional(number, 60)
+    siop_did_resolution_timeout_seconds = optional(number, 5)
+    siop_max_body_bytes                 = optional(number, 70000)
+
     # Shared secret gating /api/v1/monitor/*. Empty disables the endpoints.
     monitor_token = optional(string, "")
 
