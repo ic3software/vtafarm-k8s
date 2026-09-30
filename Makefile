@@ -93,7 +93,12 @@ lint: ## Check OpenTofu formatting and Markdown style
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) validate
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) test
+	$(MAKE) test-kubeconfig
 	markdownlint-cli2
+
+.PHONY: test-kubeconfig
+test-kubeconfig: ## Test kubeconfig renewal and safe merging without cluster access
+	bash scripts/tests/kubeconfig.sh
 
 .PHONY: fmt
 fmt: ## Auto-format OpenTofu and Markdown in place
@@ -203,8 +208,24 @@ outputs-rke2: check-rke2-cluster ## Print one RKE2 cluster's outputs (CLUSTER=na
 	tofu -chdir=$(RKE2_CLUSTER_DIR) output
 
 .PHONY: kubeconfig-rke2
-kubeconfig-rke2: check-rke2-cluster ## Write one RKE2 kubeconfig to its ignored directory
+kubeconfig-rke2: check-rke2-cluster ## Validate the local RKE2 kubeconfig (initially read from state)
 	@bash $(ROOT)/scripts/write-rke2-kubeconfig.sh "$(RKE2_CLUSTER_DIR)" "$(RKE2_KUBECONFIG_FILE)"
+
+# TTL is in seconds; zero uses Rancher's configured kubeconfig lifetime.
+TTL ?= 0
+AUTH_WAIT ?= 60
+
+.PHONY: kubeconfig-check-rke2
+kubeconfig-check-rke2: check-rke2-cluster ## Check local token scope, expiry and direct get nodes
+	@bash $(ROOT)/scripts/rke2-kubeconfig.sh check "$(RKE2_CLUSTER_DIR)" "$(RKE2_KUBECONFIG_FILE)"
+
+.PHONY: kubeconfig-renew-rke2
+kubeconfig-renew-rke2: check-rke2-cluster ## Request and validate a new kubeconfig before replacing the local file
+	@bash $(ROOT)/scripts/rke2-kubeconfig.sh renew "$(RKE2_CLUSTER_DIR)" "$(RKE2_KUBECONFIG_FILE)" "$(TTL)" "$(AUTH_WAIT)"
+
+.PHONY: kubeconfig-test-rke2
+kubeconfig-test-rke2: check-rke2-cluster ## Test a fresh short-lived token and then delete it; keep existing files
+	@bash $(ROOT)/scripts/rke2-kubeconfig.sh test "$(RKE2_CLUSTER_DIR)" "$(RKE2_KUBECONFIG_FILE)" "$(if $(filter 0,$(TTL)),600,$(TTL))" "$(AUTH_WAIT)"
 
 .PHONY: kubeconfig-merge-rke2
 kubeconfig-merge-rke2: kubeconfig-rke2 ## Merge one RKE2 kubeconfig into ~/.kube/config

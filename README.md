@@ -27,6 +27,7 @@ and separated per user, which is what makes a farm safe enough to run vtafarm on
   - [Step 6 — Create an RKE2 cluster](#step-6--create-an-rke2-cluster)
   - [Step 7 — Install the platform layer](#step-7--install-the-platform-layer)
   - [Step 8 — Install the applications](#step-8--install-the-applications)
+- [Force renew an RKE2 kubeconfig](#force-renew-an-rke2-kubeconfig)
 - [Runbooks](#runbooks)
 - [License](#license)
 
@@ -330,6 +331,8 @@ kubectl config use-context rke2-vtafarm-production
 ```
 
 Either way the file lands in the cluster's directory, where stacks 04 and 05 read it.
+For an expired token or to request fresh credentials, see
+[Force renew an RKE2 kubeconfig](#force-renew-an-rke2-kubeconfig).
 
 To add a second cluster, repeat this step with a different name, for example
 `make new-rke2-cluster CLUSTER=rke2-vtafarm-staging`. The two directories are independent.
@@ -470,6 +473,28 @@ kubectl exec -it deployment/vtafarm-api -- ./enroll
 The farm is now running. Everything after this point is a runbook.
 
 ---
+
+## Force renew an RKE2 kubeconfig
+
+To request fresh credentials and merge them, run from the repository root:
+
+```bash
+make kubeconfig-renew-rke2 CLUSTER=rke2-vtafarm-staging &&
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-staging
+```
+
+Renewal works even before the current token expires. It validates the new YAML kubeconfig
+before replacing the old file. `refresh-rke2` only refreshes state; merge does not renew tokens.
+Older tokens are not automatically revoked.
+
+To test a temporary token without replacing your kubeconfig:
+
+```bash
+make kubeconfig-test-rke2 CLUSTER=rke2-vtafarm-staging
+```
+
+The test deletes its token afterward. See [renewal details](docs/operations.md#renewing-credentials)
+and [troubleshooting](docs/troubleshooting.md#rke2-kubectl-returns-unauthorized).
 
 ## Runbooks
 

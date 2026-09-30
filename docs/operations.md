@@ -24,10 +24,13 @@ make kubeconfig-delete   # delete it from ~/.kube/config
 Every target takes `CLUSTER=<name>`:
 
 ```bash
-make kubeconfig-rke2       CLUSTER=rke2-vtafarm-production   # write its kubeconfig.yaml
-make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production   # and merge it into ~/.kube/config
-make refresh-rke2          CLUSTER=rke2-vtafarm-production   # re-read Rancher state
-make outputs-rke2          CLUSTER=rke2-vtafarm-production   # LB IP, node IPs
+make kubeconfig-rke2       CLUSTER=rke2-vtafarm-staging   # validate/write its kubeconfig.yaml
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-staging   # merge it into ~/.kube/config
+make kubeconfig-check-rke2 CLUSTER=rke2-vtafarm-staging   # check the local token and direct access
+make kubeconfig-renew-rke2 CLUSTER=rke2-vtafarm-staging   # request and validate fresh credentials
+make kubeconfig-test-rke2  CLUSTER=rke2-vtafarm-staging   # test a temporary token, then delete it
+make refresh-rke2         CLUSTER=rke2-vtafarm-staging   # refresh infrastructure state
+make outputs-rke2         CLUSTER=rke2-vtafarm-staging   # LB IP, node IPs
 
 make apply-vtafarm-platform   CLUSTER=rke2-vtafarm-production   # cert-manager, Longhorn, Vault
 make outputs-vtafarm-platform CLUSTER=rke2-vtafarm-production   # the in-cluster Vault address
@@ -45,23 +48,91 @@ The destroy targets are in [teardown.md](teardown.md).
 ## Kubeconfig contexts
 
 ```bash
-make kubeconfig-merge                                        # k3s cluster → ~/.kube/config
-make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-production   # a downstream cluster
-make kubeconfig-delete                                       # remove the k3s context again
-make kubeconfig-delete CLUSTER=rke2-vtafarm-production       # remove a downstream context
+make kubeconfig-merge                                    # k3s cluster → ~/.kube/config
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-staging    # a downstream cluster
+make kubeconfig-delete                                   # remove the k3s context
+make kubeconfig-delete CLUSTER=rke2-vtafarm-staging      # remove a downstream context
 ```
 
-The merge first backs up `~/.kube/config`. It does not change your other clusters and it does
-not change your current context. You can run it as often as you like: entries with the same
-name are replaced, not duplicated. If you rebuild a cluster and run it again, it simply updates
-the credentials. The context uses the cluster name.
+The merge builds a temporary config, backs up an existing `~/.kube/config`, then replaces it
+atomically. It preserves your other clusters and current context. Same-named entries are replaced,
+not duplicated. The context uses the cluster name. After rebuilding an RKE2 cluster, run
+`kubeconfig-renew-rke2` before merging so the endpoint, CA and credentials are updated together.
 
-Rancher also generates one context per control-plane server. `kubeconfig-rke2` keeps only the
-current-cluster context from Rancher, so kubectl shows one entry per cluster instead of one
-entry per server.
+Rancher also generates contexts for individual control-plane servers. `kubeconfig-rke2` uses
+an authorized cluster endpoint's CA and its referenced user token, and points it at the
+cluster's API endpoint from state. This bypasses Rancher's proxy rate limits.
+
+If the local file is missing, `kubeconfig-rke2` initially reads it from OpenTofu state.
+Otherwise, it validates the existing file without replacing it. Merge runs this validation
+first, so it preserves locally renewed credentials. `refresh-rke2` updates infrastructure
+state and does not guarantee a new token.
 
 The delete target also makes a backup first, and it keeps the cluster and user entries that
 other contexts still use. It changes nothing in Rancher or Hetzner.
+
+### Renewing credentials
+
+These commands require Bash, `curl`, `jq`, `kubectl`, initialized OpenTofu state, the state
+credentials in `.env`, and a valid `rancher_token_key` in the cluster's `terraform.tfvars`.
+The Rancher API credential must be able to create and delete kubeconfigs and read token metadata
+for that user. It is separate from the expiring token in the downloaded kubeconfig.
+`rancher_insecure` retains its existing meaning for Rancher API TLS verification;
+direct cluster TLS is always verified.
+
+To request fresh credentials, even before the current token expires, and merge them:
+
+```bash
+make kubeconfig-renew-rke2 CLUSTER=rke2-vtafarm-staging &&
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-staging
+```
+
+Renewal uses Rancher's [Kubeconfig API][kubeconfig-api] rather than the provider's cached
+`kube_config` output. It uses Rancher's default lifetime unless `TTL=<seconds>` is supplied.
+The lifetime must fit the server's `kubeconfig-default-token-ttl-minutes` limit. `AUTH_WAIT`
+controls how long to retry direct authentication failures: 60 seconds by default, from 0 to
+300 seconds. An in-flight request may finish after that window.
+
+Renewal validates token scope, expiry and direct `get nodes` access before writing YAML.
+It backs up the previous file alongside it; both files have mode `0600`. If validation fails,
+the candidate and its tokens are deleted from Rancher, and existing local and merged files
+remain intact.
+If cleanup itself fails, the error identifies the Rancher Kubeconfig resource to delete.
+
+Successful renewal prints the Rancher Kubeconfig resource name, which can be used for later
+revocation. Older credentials are not automatically revoked because other clients may still
+use them. Manage these resources through an authenticated Rancher Kubernetes API context;
+deleting a Kubeconfig also deletes its backing tokens.
+
+Renewal does not update the `kube_config` output in OpenTofu state. Use the local file or merged
+context for cluster operations. Keep the cluster directory and its configuration; if only
+`kubeconfig.yaml` is deleted, run renewal to obtain fresh credentials.
+
+To check the local cluster file without renewing it (this does not check `~/.kube/config`):
+
+```bash
+make kubeconfig-check-rke2 CLUSTER=rke2-vtafarm-staging
+```
+
+### Testing a new token without replacing the working one
+
+```bash
+# Create a 10-minute candidate, test direct access, then delete it even on failure.
+make kubeconfig-test-rke2 CLUSTER=rke2-vtafarm-staging
+
+# Optional shorter wait while investigating a known synchronization failure.
+make kubeconfig-test-rke2 CLUSTER=rke2-vtafarm-staging TTL=600 AUTH_WAIT=15
+
+# Offline regression tests: no credentials or live cluster required.
+make test-kubeconfig
+```
+
+The live test checks a separate temporary token and leaves the existing kubeconfig intact.
+If Rancher's proxy accepts the token but direct access fails, investigate `ClusterAuthToken`
+synchronization. The command reports the failure; repeating merge does not repair it.
+See [authentication troubleshooting](troubleshooting.md#rke2-kubectl-returns-unauthorized).
+
+[kubeconfig-api]: https://ranchermanager.docs.rancher.com/v2.14/api/workflows/kubeconfigs
 
 ---
 

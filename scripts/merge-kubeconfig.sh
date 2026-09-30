@@ -35,42 +35,35 @@ NEW_CONTEXTS="$(context_names "$SRC")"
 
 mkdir -p "$(dirname "$DEST")"
 
-# Nothing to merge into: just install it.
-if [ ! -s "$DEST" ]; then
-  install -m 600 "$SRC" "$DEST"
-  echo "==> ${DEST} did not exist - installed the cluster kubeconfig there"
-  echo "==> contexts now available:"
-  KUBECONFIG="$DEST" kubectl config get-contexts
-  exit 0
-fi
-
-BACKUP="${DEST}.backup.$(date +%Y%m%d-%H%M%S)"
-cp "$DEST" "$BACKUP"
-echo "==> backed up ${DEST} to ${BACKUP}"
-
-# Drop any same-named entries so a re-run updates in place rather than being
-# silently ignored - on a duplicate key, `kubectl config view --flatten` keeps
-# whichever file came first in KUBECONFIG.
-EXISTING="$(context_names "$DEST" || true)"
-while IFS= read -r name; do
-  [ -n "$name" ] || continue
-  if printf '%s\n' "$EXISTING" | grep -qxF "$name"; then
-    echo "==> replacing existing entries named '${name}'"
-    kubectl --kubeconfig "$DEST" config delete-context "$name" >/dev/null 2>&1 || true
-    kubectl --kubeconfig "$DEST" config delete-cluster "$name" >/dev/null 2>&1 || true
-    kubectl --kubeconfig "$DEST" config delete-user "$name" >/dev/null 2>&1 || true
-  fi
-done <<<"$NEW_CONTEXTS"
-
-TMP="$(mktemp)"
+# The first file wins on duplicate names. Build beside DEST so the final rename
+# is atomic, and never delete entries from the live file while building a merge.
+TMP="$(mktemp "${DEST}.tmp.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
-KUBECONFIG="${DEST}:${SRC}" kubectl config view --flatten >"$TMP"
+if [ -s "$DEST" ]; then
+  CURRENT="$(kubectl --kubeconfig "$DEST" config view -o jsonpath='{.current-context}')"
+  KUBECONFIG="${SRC}:${DEST}" kubectl config view --flatten --raw >"$TMP"
+  if [ -n "$CURRENT" ]; then
+    kubectl --kubeconfig "$TMP" config set current-context "$CURRENT" >/dev/null
+  else
+    kubectl --kubeconfig "$TMP" config unset current-context >/dev/null
+  fi
+else
+  kubectl --kubeconfig "$SRC" config view --flatten --raw >"$TMP"
+fi
 
 # Refuse to install an empty or unparseable result rather than destroying the
 # file we just merged from.
 KUBECONFIG="$TMP" kubectl config view >/dev/null
+[ -n "$(context_names "$TMP")" ] || { echo "==> ERROR: empty merged config" >&2; exit 1; }
 
-install -m 600 "$TMP" "$DEST"
+if [ -s "$DEST" ]; then
+  BACKUP="$(mktemp "${DEST}.backup.XXXXXX")"
+  cp "$DEST" "$BACKUP"
+  chmod 600 "$BACKUP"
+  echo "==> backed up ${DEST} to ${BACKUP}"
+fi
+chmod 600 "$TMP"
+mv "$TMP" "$DEST"
 
 echo "==> merged into ${DEST}"
 echo

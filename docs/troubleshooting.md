@@ -247,6 +247,36 @@ kubectl get nodes -w
 
 ---
 
+## RKE2 kubectl returns Unauthorized
+
+Run `make kubeconfig-check-rke2 CLUSTER=<name>` to distinguish expired or missing tokens,
+incorrect cluster scope, direct API TLS/connectivity errors and missing permissions.
+The check reads the local cluster file, not `~/.kube/config`.
+
+For an expired, missing or incorrectly scoped token, use:
+
+```bash
+make kubeconfig-renew-rke2 CLUSTER=rke2-vtafarm-dev
+make kubeconfig-merge-rke2 CLUSTER=rke2-vtafarm-dev
+kubectl --context rke2-vtafarm-dev get nodes
+```
+
+If the Rancher API credential itself is rejected, replace `rancher_token_key` in that cluster's
+ignored `terraform.tfvars` with a valid account API credential. Renewing the cluster kubeconfig
+cannot repair the separate credential needed to request it.
+
+If a valid scoped token works through Rancher's proxy but not the direct API, inspect the
+Rancher authentication controller and downstream `kube-api-auth` logs. Check whether the
+candidate's `ClusterAuthToken` and corresponding hash Secret exist in `cattle-system`.
+Token contents and hashes are sensitive: do not paste them into logs or issues.
+
+The September 2026 incidents had two distinct failures: a provider replacement token lost its
+cluster scope in staging, and a correctly scoped new token was not synchronized to dev.
+Manually fixing the affected auth records restored access, but did not prove that Rancher's
+automatic synchronization was repaired. Use `make kubeconfig-test-rke2 CLUSTER=<name>` to
+test fresh-token synchronization before declaring it fixed. The test cleans up its candidate
+and preserves the working kubeconfig. Repeating merge or refresh does not repair this condition.
+
 ## `make apply-rancher` fails with "cannot load kubeconfig"
 
 Stack 02 reads `../01-infra/kubeconfig.yaml`, which stack 01 writes.
