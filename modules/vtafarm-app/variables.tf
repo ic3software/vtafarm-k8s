@@ -31,6 +31,9 @@ variable "config" {
     siop_did_resolution_timeout_seconds = optional(number, 5)
     siop_max_body_bytes                 = optional(number, 70000)
 
+    # Dedicated HMAC secret for one-time mobile connection credentials.
+    mobile_connection_signing_key = string
+
     # Shared secret gating /api/v1/monitor/*. Empty disables the endpoints.
     monitor_token = optional(string, "")
 
