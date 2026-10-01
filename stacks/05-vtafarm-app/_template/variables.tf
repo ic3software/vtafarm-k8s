@@ -89,6 +89,17 @@ variable "siop_max_body_bytes" {
   default     = 70000
 }
 
+variable "mobile_connection_signing_key" {
+  description = "Dedicated HMAC secret for one-time mobile connection credentials. Generate with: openssl rand -hex 32"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.mobile_connection_signing_key) >= 32
+    error_message = "mobile_connection_signing_key must contain at least 32 characters."
+  }
+}
+
 variable "monitor_token" {
   description = "Shared secret gating /api/v1/monitor/*. Empty disables those endpoints."
   type        = string

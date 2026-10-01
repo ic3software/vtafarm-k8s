@@ -30,6 +30,7 @@ module "app" {
     siop_clock_skew_seconds             = var.siop_clock_skew_seconds
     siop_did_resolution_timeout_seconds = var.siop_did_resolution_timeout_seconds
     siop_max_body_bytes                 = var.siop_max_body_bytes
+    mobile_connection_signing_key       = var.mobile_connection_signing_key
     monitor_token                       = var.monitor_token
 
     vtafarm_version     = var.vtafarm_version

@@ -35,6 +35,10 @@ siop_clock_skew_seconds             = 60
 siop_did_resolution_timeout_seconds = 5
 siop_max_body_bytes                 = 70000
 
+# --- Mobile connection ----------------------------------------------------
+# Generate a different value for each environment with: openssl rand -hex 32
+mobile_connection_signing_key = ""
+
 # --- Monitoring ------------------------------------------------------------
 # openssl rand -hex 32. Empty disables /api/v1/monitor/*.
 monitor_token = ""

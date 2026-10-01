@@ -450,7 +450,8 @@ make apply-vtafarm-app CLUSTER=rke2-vtafarm-production
 ```
 
 This stack generates the JWT secret and the database password instead of taking them from you.
-They exist only in this stack's state file, so back that file up.
+Set a different `mobile_connection_signing_key` in each environment's `terraform.tfvars` using
+`openssl rand -hex 32`. These values exist in this stack's state file, so back it up.
 
 ```bash
 make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production
