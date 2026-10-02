@@ -94,11 +94,17 @@ lint: ## Check OpenTofu formatting and Markdown style
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) test
 	$(MAKE) test-kubeconfig
+	$(MAKE) test-retired-nodes
 	markdownlint-cli2
 
 .PHONY: test-kubeconfig
 test-kubeconfig: ## Test kubeconfig renewal and safe merging without cluster access
 	bash scripts/tests/kubeconfig.sh
+
+.PHONY: test-retired-nodes
+test-retired-nodes: ## Test Rancher and Longhorn node retirement without cluster access
+	bash scripts/tests/retired-nodes.sh
+	bash scripts/tests/rke2-apply.sh
 
 .PHONY: fmt
 fmt: ## Auto-format OpenTofu and Markdown in place
@@ -197,7 +203,7 @@ plan-rke2: check-rke2-cluster ## Plan one RKE2 cluster (CLUSTER=name)
 
 .PHONY: apply-rke2
 apply-rke2: check-rke2-cluster ## Apply one RKE2 cluster (CLUSTER=name)
-	tofu -chdir=$(RKE2_CLUSTER_DIR) apply
+	@bash $(ROOT)/scripts/rke2-apply.sh "$(RKE2_CLUSTER_DIR)"
 
 .PHONY: refresh-rke2
 refresh-rke2: check-rke2-cluster ## Re-read one RKE2 cluster's state from Rancher (CLUSTER=name)
