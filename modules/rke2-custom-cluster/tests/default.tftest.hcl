@@ -72,6 +72,13 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition = terraform_data.retired_nodes.triggers_replace.nodes == tolist([
+      "production-server-1", "production-server-2", "production-server-3",
+    ])
+    error_message = "Retirement reconciliation must track the desired server nodes."
+  }
+
+  assert {
     condition     = alltrue([for node in hcloud_server.node : node.server_type == "cx33"])
     error_message = "The default RKE2 server type must be cx33."
   }
@@ -352,6 +359,14 @@ run "worker_scale_does_not_renumber_servers" {
   assert {
     condition     = length(hcloud_server.node) == 5
     error_message = "Two workers should add nodes without replacing the three servers."
+  }
+
+  assert {
+    condition = terraform_data.retired_nodes.triggers_replace.nodes == tolist([
+      "production-server-1", "production-server-2", "production-server-3",
+      "production-worker-1", "production-worker-2",
+    ])
+    error_message = "Worker count changes must also trigger retirement reconciliation."
   }
 
   assert {

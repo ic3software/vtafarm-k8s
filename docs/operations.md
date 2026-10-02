@@ -43,6 +43,45 @@ make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production   # the URLs and the DN
 
 The destroy targets are in [teardown.md](teardown.md).
 
+### Scale down nodes
+
+Reduce `server_count` or `worker_count`, then run `make apply-rke2 CLUSTER=<name>`.
+The Make target saves an OpenTofu plan and asks for `yes` before starting retirement or apply.
+It executes that same saved plan only after retirement succeeds. No separate cleanup command is needed.
+The workflow requires the management kubeconfig at `stacks/01-infra/kubeconfig.yaml` and that
+downstream cluster's `kubeconfig.yaml`, including permission to exec into a surviving etcd pod.
+
+Before deleting any VM, the workflow validates Rancher ownership, VM identities and Ready
+remaining nodes. It cordons all retiring nodes and disables their Longhorn scheduling so data
+cannot move to another retiring node. It then processes each node sequentially:
+
+1. Request Longhorn eviction and wait up to 30 minutes for replicas and backing images to leave.
+2. Drain workloads, respecting PodDisruptionBudgets and protecting emptyDir data and unmanaged Pods.
+3. Wait for Longhorn volumes, engines and CSI VolumeAttachments to detach.
+4. Delete the Rancher Machine using normal finalizers; Rancher's etcd hook handles server retirement.
+5. Confirm the Kubernetes Node is gone, its etcd membership is removed, and etcd becomes healthy
+   within five minutes.
+
+Longhorn volumes must be healthy and the remaining nodes need enough disk space and eligible
+disks for rebuilding. Increasing node count does not increase each volume's replica count.
+A failed step prevents the saved VM plan from executing. Eviction, cordon or Rancher retirement
+already completed are not rolled back: inspect the reported dependency and rerun the same Make
+command after fixing it. Workloads may restart during draining; uninterrupted service depends
+on their replication, capacity and disruption budgets.
+
+Apply new nodes before retiring old ones in a separate run. Mixed growth and shrinkage, VM
+replacements, reductions below three servers, and unrelated infrastructure changes during
+retirement are rejected. Do not run concurrent applies from other checkouts or hosts. The
+workflow checks state freshness between retirements, but does not hold the backend lock across
+the Kubernetes operations. A local `.rke2-apply-lock` prevents overlapping runs in one cluster
+directory; inspect any surviving process before removing a lock left by an abrupt interruption.
+
+**Direct `tofu apply` bypasses the pre-retirement workflow.** Use the Make target for count reductions.
+The module's post-apply reconciliation remains for orphaned Rancher and Longhorn metadata.
+It removes records only when retiring Nodes are gone, desired Nodes are Ready, and storage no
+longer references the node or its disks. UID/resource-version preconditions and normal finalizers
+protect deletions. VM changes completed before a post-apply cleanup failure remain applied.
+
 ---
 
 ## Kubeconfig contexts
