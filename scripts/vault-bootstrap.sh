@@ -163,11 +163,11 @@ else
   vault auth enable -path="$APPROLE_MOUNT" approle
 fi
 
-# Deliberately no "read" on any seed path: vtafarm-api provisions and tears down
-# tenant access, it never reads a tenant's secret. Whenever EnsureUserAccess
-# grows a KV prefix, the matching delete grant belongs here too - the components
-# hold the per-user kubernetes-auth token while the API holds this AppRole, so a
-# prefix added to one and not the other leaves secrets nobody can delete.
+# Deliberately no "read" on any secret data: vtafarm-api provisions and tears
+# down tenant access, it never reads a tenant's secret. Metadata list is needed
+# only to enumerate the leaf keys below a component prefix before deleting each
+# one; Vault KV v2 metadata deletion is not recursive. Whenever EnsureUserAccess
+# grows a KV prefix, the matching list/delete grant belongs here too.
 echo "==> Writing policy '${API_POLICY_NAME}'"
 vault policy write "$API_POLICY_NAME" - <<POLICY
 path "sys/policies/acl/vta-user-*" {
@@ -189,21 +189,21 @@ path "${KV_MOUNT}/data/mediator/*" {
   capabilities = ["delete"]
 }
 path "${KV_MOUNT}/metadata/mediator/*" {
-  capabilities = ["delete"]
+  capabilities = ["list", "delete"]
 }
 
 path "${KV_MOUNT}/data/dids/*" {
   capabilities = ["delete"]
 }
 path "${KV_MOUNT}/metadata/dids/*" {
-  capabilities = ["delete"]
+  capabilities = ["list", "delete"]
 }
 
 path "${KV_MOUNT}/data/vtc/*" {
   capabilities = ["delete"]
 }
 path "${KV_MOUNT}/metadata/vtc/*" {
-  capabilities = ["delete"]
+  capabilities = ["list", "delete"]
 }
 POLICY
 
