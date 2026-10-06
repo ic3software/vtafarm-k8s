@@ -182,7 +182,7 @@ path "${KV_MOUNT}/data/vta/*" {
   capabilities = ["delete"]
 }
 path "${KV_MOUNT}/metadata/vta/*" {
-  capabilities = ["delete"]
+  capabilities = ["list", "delete"]
 }
 
 path "${KV_MOUNT}/data/mediator/*" {

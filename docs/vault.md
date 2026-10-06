@@ -164,11 +164,12 @@ namespace alone.
 creates the per-user policy and role at runtime, and `vta setup` writes the seed.
 
 > The `vtafarm-api-admin` policy deliberately has **no read capability** on any seed path. The
-> API provisions and tears down access; it never reads a tenant's secret. Metadata prefixes for
-> components that store multiple keys grant `list` as well as `delete`: Vault KV v2 metadata
-> deletion is not recursive, so teardown lists the tree and deletes every exact leaf. When
-> `EnsureUserAccess` grows a new KV prefix, both grants have to be added to the API policy in
-> `scripts/vault-bootstrap.sh` as well — the components hold the per-user token while the API
+> API provisions and tears down access; it never reads a tenant's secret. Every component's
+> metadata prefix grants `list` as well as `delete`: Vault KV v2 metadata deletion is not
+> recursive, so teardown lists the tree and deletes every exact leaf, including keys added by
+> future component versions. When `EnsureUserAccess` grows a new KV prefix, both grants have to
+> be added to the API policy in `scripts/vault-bootstrap.sh` as well — the components hold the
+> per-user token while the API
 > holds the AppRole, so a prefix added to one and not the other leaves secrets nobody can delete.
 
 ---
