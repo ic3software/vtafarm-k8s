@@ -23,16 +23,10 @@ variable "config" {
     did_hosting_did         = string
     did_hosting_private_key = string
 
-    # Optional VTA Wallet SIOPv2 login. This must be a dedicated public RP
-    # identity, separate from the DID-hosting control credential above.
-    siop_rp_did                         = optional(string, "")
-    siop_challenge_ttl_seconds          = optional(number, 120)
-    siop_clock_skew_seconds             = optional(number, 60)
-    siop_did_resolution_timeout_seconds = optional(number, 5)
-    siop_max_body_bytes                 = optional(number, 70000)
-
-    # Dedicated HMAC secret for one-time mobile connection credentials.
-    mobile_connection_signing_key = string
+    # Public VTA Farm protocol identity and its dedicated Ed25519 signing seed.
+    # The TrustTaskHTTPS endpoint is derived from api_host.
+    farm_did         = string
+    farm_signing_key = string
 
     # Shared secret gating /api/v1/monitor/*. Empty disables the endpoints.
     monitor_token = optional(string, "")
@@ -60,5 +54,15 @@ variable "config" {
   validation {
     condition     = can(regex("^[a-z0-9.-]+\\.[a-z]{2,}$", var.config.domain))
     error_message = "domain must be a bare DNS name, for example example.org."
+  }
+
+  validation {
+    condition     = can(regex("^did:webvh:[^#]+$", var.config.farm_did))
+    error_message = "farm_did must be a did:webvh DID without a fragment."
+  }
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9+/]{43}=$", var.config.farm_signing_key))
+    error_message = "farm_signing_key must be a base64-encoded 32-byte Ed25519 seed."
   }
 }
