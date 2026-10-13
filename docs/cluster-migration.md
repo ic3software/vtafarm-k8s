@@ -73,6 +73,8 @@ kubectl --context <old> -n default get secret vtafarm-api-secrets \
 | `cloudflare_api_token` | same rights on that zone | a new token is fine, the same permissions are not optional |
 | `did_hosting_did` | **identical** | see below |
 | `did_hosting_private_key` | **identical** | it is the key behind that DID |
+| `farm_did` | **identical** | wallets address Trust Tasks to this public Farm identity |
+| `farm_signing_key` | **identical** | it signs Farm replies and must match the DID's published assertion method |
 | `monitor_token` | identical, or update UptimeRobot | it is a shared secret with whatever polls `/api/v1/monitor/*` |
 | `vtafarm_version`, `vtafarm_api_version` | identical to what the old cluster runs | migrate, then upgrade — never both at once |
 | `cluster_ingress_ip` | **must differ** | it is the new load balancer, and the API stamps it into every tenant A record it creates from now on |

@@ -59,44 +59,24 @@ variable "did_hosting_private_key" {
   sensitive   = true
 }
 
-variable "siop_rp_did" {
-  description = "Dedicated public did:webvh RP identity for VTA Wallet SIOPv2 login. Empty disables the feature."
+variable "farm_did" {
+  description = "Public did:webvh identity used by VTA Farm for VTA Claim Trust Tasks."
   type        = string
-  default     = ""
+
+  validation {
+    condition     = can(regex("^did:webvh:[^#]+$", var.farm_did))
+    error_message = "farm_did must be a did:webvh DID without a fragment."
+  }
 }
 
-variable "siop_challenge_ttl_seconds" {
-  description = "Lifetime of a one-time SIOPv2 login challenge."
-  type        = number
-  default     = 120
-}
-
-variable "siop_clock_skew_seconds" {
-  description = "Clock skew allowed while validating SIOPv2 tokens."
-  type        = number
-  default     = 60
-}
-
-variable "siop_did_resolution_timeout_seconds" {
-  description = "Timeout for resolving the wallet's public DID."
-  type        = number
-  default     = 5
-}
-
-variable "siop_max_body_bytes" {
-  description = "Maximum request body size accepted by SIOPv2 endpoints."
-  type        = number
-  default     = 70000
-}
-
-variable "mobile_connection_signing_key" {
-  description = "Dedicated HMAC secret for one-time mobile connection credentials. Generate with: openssl rand -hex 32"
+variable "farm_signing_key" {
+  description = "Base64-encoded 32-byte Ed25519 seed matching the Farm DID assertionMethod."
   type        = string
   sensitive   = true
 
   validation {
-    condition     = length(var.mobile_connection_signing_key) >= 32
-    error_message = "mobile_connection_signing_key must contain at least 32 characters."
+    condition     = can(regex("^[A-Za-z0-9+/]{43}=$", var.farm_signing_key))
+    error_message = "farm_signing_key must be a base64-encoded 32-byte Ed25519 seed."
   }
 }
 

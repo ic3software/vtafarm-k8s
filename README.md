@@ -450,8 +450,11 @@ make apply-vtafarm-app CLUSTER=rke2-vtafarm-production
 ```
 
 This stack generates the JWT secret and the database password instead of taking them from you.
-Set a different `mobile_connection_signing_key` in each environment's `terraform.tfvars` using
-`openssl rand -hex 32`. These values exist in this stack's state file, so back it up.
+Set `farm_did` and its matching `farm_signing_key` in each environment's
+`terraform.tfvars`. Generate them with `make gen-farm-key` in `vtafarm-api` and publish the
+generated assertion method and `TrustTaskHTTPS` service in that Farm DID before applying this
+stack. The Trust Task endpoint is always derived as `https://<api_host>/trust-task`.
+The signing seed exists in this stack's state file, so back it up securely.
 
 ```bash
 make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production
