@@ -199,6 +199,13 @@ path "${KV_MOUNT}/metadata/dids/*" {
   capabilities = ["list", "delete"]
 }
 
+path "${KV_MOUNT}/data/trust-registry/*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+path "${KV_MOUNT}/metadata/trust-registry/*" {
+  capabilities = ["list", "delete"]
+}
+
 path "${KV_MOUNT}/data/vtc/*" {
   capabilities = ["delete"]
 }
