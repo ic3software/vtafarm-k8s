@@ -34,3 +34,11 @@ ssh_key_name = "k3s-rancher-admin"
 ssh_allowed_cidrs = [
   "0.0.0.0/0"
 ]
+
+# Optional node reservations. Set all five values together or leave all five
+# commented out. The module preserves kubelet's filesystem eviction defaults.
+# kube_reserved_cpu              = "250m"
+# kube_reserved_memory           = "512Mi"
+# system_reserved_cpu            = "250m"
+# system_reserved_memory         = "512Mi"
+# eviction_hard_memory_available = "1Gi"

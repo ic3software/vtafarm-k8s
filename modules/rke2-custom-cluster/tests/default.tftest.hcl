@@ -94,6 +94,11 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition     = !contains(keys(yamldecode(local.machine_global_config)), "kubelet-arg")
+    error_message = "Kubelet reservations must remain opt-in for existing clusters."
+  }
+
+  assert {
     condition = (
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].delete_empty_dir_data == false &&
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == false
@@ -331,6 +336,11 @@ run "worker_scale_does_not_renumber_servers" {
       worker_type                         = "cx43"
       control_plane_delete_empty_dir_data = true
       worker_delete_empty_dir_data        = true
+      kube_reserved_cpu                   = "250m"
+      kube_reserved_memory                = "512Mi"
+      system_reserved_cpu                 = "250m"
+      system_reserved_memory              = "512Mi"
+      eviction_hard_memory_available      = "1Gi"
     }
     hcloud_token = "test-token"
   }
@@ -389,6 +399,15 @@ run "worker_scale_does_not_renumber_servers" {
     )
     error_message = "Clusters must be able to opt in to deleting emptyDir data for each node role."
   }
+
+  assert {
+    condition = yamldecode(rancher2_cluster_v2.this.rke_config[0].machine_global_config)["kubelet-arg"] == [
+      "kube-reserved=cpu=250m,memory=512Mi",
+      "system-reserved=cpu=250m,memory=512Mi",
+      "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<15%,nodefs.inodesFree<5%,imagefs.inodesFree<5%",
+    ]
+    error_message = "Rancher machineGlobalConfig must render typed kubelet reservations without dropping the default filesystem eviction thresholds."
+  }
 }
 
 run "rejects_strict_tls_without_cacerts" {
@@ -434,4 +453,39 @@ run "rejects_strict_tls_without_cacerts" {
   }
 
   expect_failures = [rancher2_cluster_v2.this]
+}
+
+run "rejects_invalid_kubelet_reservations" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name                   = "production"
+      ssh_key_name                   = "k3s-rancher-admin"
+      kube_reserved_cpu              = "250"
+      kube_reserved_memory           = "256Mi"
+      system_reserved_cpu            = "250m"
+      system_reserved_memory         = "256Mi"
+      eviction_hard_memory_available = "512Mi"
+    }
+    hcloud_token = "test-token"
+  }
+
+  expect_failures = [var.config]
+}
+
+run "rejects_partial_kubelet_reservations" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name         = "production"
+      ssh_key_name         = "k3s-rancher-admin"
+      kube_reserved_cpu    = "250m"
+      kube_reserved_memory = "256Mi"
+    }
+    hcloud_token = "test-token"
+  }
+
+  expect_failures = [var.config]
 }

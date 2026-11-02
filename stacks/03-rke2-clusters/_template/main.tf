@@ -23,6 +23,11 @@ module "rke2" {
     rke2_version                        = var.rke2_version
     cni                                 = var.cni
     ingress_controller                  = var.ingress_controller
+    kube_reserved_cpu                   = var.kube_reserved_cpu
+    kube_reserved_memory                = var.kube_reserved_memory
+    system_reserved_cpu                 = var.system_reserved_cpu
+    system_reserved_memory              = var.system_reserved_memory
+    eviction_hard_memory_available      = var.eviction_hard_memory_available
     control_plane_upgrade_concurrency   = var.control_plane_upgrade_concurrency
     worker_upgrade_concurrency          = var.worker_upgrade_concurrency
     control_plane_delete_empty_dir_data = var.control_plane_delete_empty_dir_data

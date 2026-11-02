@@ -57,7 +57,19 @@ locals {
     var.config.api_hostname,
   ])
 
-  machine_global_config = yamlencode({
+  kubelet_args = var.config.kube_reserved_cpu == null ? [] : [
+    "kube-reserved=cpu=${var.config.kube_reserved_cpu},memory=${var.config.kube_reserved_memory}",
+    "system-reserved=cpu=${var.config.system_reserved_cpu},memory=${var.config.system_reserved_memory}",
+    join(",", [
+      "eviction-hard=memory.available<${var.config.eviction_hard_memory_available}",
+      "nodefs.available<10%",
+      "imagefs.available<15%",
+      "nodefs.inodesFree<5%",
+      "imagefs.inodesFree<5%",
+    ]),
+  ]
+
+  machine_global_config = yamlencode(merge({
     cni                      = var.config.cni
     ingress-controller       = var.config.ingress_controller
     cluster-cidr             = var.config.pod_cidr
@@ -66,7 +78,9 @@ locals {
     cloud-provider-name      = "external"
     secrets-encryption       = true
     tls-san                  = local.tls_sans
-  })
+    },
+    length(local.kubelet_args) == 0 ? {} : { "kubelet-arg" = local.kubelet_args },
+  ))
 
   hcloud_secret_manifest = yamlencode({
     apiVersion = "v1"

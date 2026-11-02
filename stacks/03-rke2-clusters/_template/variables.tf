@@ -140,6 +140,61 @@ variable "ingress_controller" {
   default     = "traefik"
 }
 
+variable "kube_reserved_cpu" {
+  description = "CPU reserved for Kubernetes node daemons, for example 250m. Set all five kubelet reservation variables together."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.kube_reserved_cpu == null || can(regex("^[1-9][0-9]*m$", var.kube_reserved_cpu))
+    error_message = "kube_reserved_cpu must use positive millicores such as \"250m\"."
+  }
+}
+
+variable "kube_reserved_memory" {
+  description = "Memory reserved for Kubernetes node daemons, for example 256Mi."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.kube_reserved_memory == null || can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", var.kube_reserved_memory))
+    error_message = "kube_reserved_memory must use a positive binary quantity such as \"256Mi\" or \"2Gi\"."
+  }
+}
+
+variable "system_reserved_cpu" {
+  description = "CPU reserved for operating-system daemons, for example 250m."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.system_reserved_cpu == null || can(regex("^[1-9][0-9]*m$", var.system_reserved_cpu))
+    error_message = "system_reserved_cpu must use positive millicores such as \"250m\"."
+  }
+}
+
+variable "system_reserved_memory" {
+  description = "Memory reserved for operating-system daemons and the kernel, for example 256Mi."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.system_reserved_memory == null || can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", var.system_reserved_memory))
+    error_message = "system_reserved_memory must use a positive binary quantity such as \"256Mi\" or \"2Gi\"."
+  }
+}
+
+variable "eviction_hard_memory_available" {
+  description = "Minimum node memory kept available before kubelet starts hard eviction, for example 512Mi."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.eviction_hard_memory_available == null || can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", var.eviction_hard_memory_available))
+    error_message = "eviction_hard_memory_available must use a positive binary quantity such as \"512Mi\" or \"1Gi\"."
+  }
+}
+
 variable "control_plane_upgrade_concurrency" {
   description = "Rancher control-plane upgrade concurrency."
   type        = string
