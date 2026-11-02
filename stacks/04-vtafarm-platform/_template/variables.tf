@@ -34,6 +34,17 @@ variable "longhorn_node_drain_policy" {
   default     = "block-for-eviction-if-contains-last-replica"
 }
 
+variable "longhorn_replica_auto_balance" {
+  description = "Longhorn replica balancing mode: disabled, least-effort, or best-effort."
+  type        = string
+  default     = "disabled"
+
+  validation {
+    condition     = contains(["disabled", "least-effort", "best-effort"], var.longhorn_replica_auto_balance)
+    error_message = "longhorn_replica_auto_balance must be disabled, least-effort, or best-effort."
+  }
+}
+
 variable "longhorn_default_class" {
   description = <<-EOT
     Make longhorn the cluster's default StorageClass and demote hcloud-volumes.

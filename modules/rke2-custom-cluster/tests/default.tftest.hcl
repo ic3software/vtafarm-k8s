@@ -104,11 +104,18 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition     = length(rancher2_cluster_v2.this.cluster_agent_deployment_customization) == 0
+    error_message = "Default clusters must not override Rancher cluster-agent resources."
+  }
+
+  assert {
     condition = (
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].timeout == 1800 &&
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].timeout == 1800 &&
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].delete_empty_dir_data == false &&
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == false
     )
-    error_message = "Drain options must preserve emptyDir data unless a cluster explicitly opts in."
+    error_message = "Drain options must allow Longhorn 30 minutes and preserve emptyDir data unless a cluster explicitly opts in."
   }
 
   assert {
@@ -485,6 +492,58 @@ run "scopes_kubelet_reservations_to_canary_nodes" {
       rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values[0] == "staging-server-1"
     )
     error_message = "The canary selector must target exactly the requested Rancher node names."
+  }
+}
+
+run "configures_cluster_agent_memory_request" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name                 = "staging"
+      ssh_key_name                 = "k3s-rancher-admin"
+      cluster_agent_memory_request = "1Gi"
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/staging"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "staging-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      rancher2_cluster_v2.this.cluster_agent_deployment_customization[0].override_resource_requirements[0].memory_request == "1Gi" &&
+      rancher2_cluster_v2.this.cluster_agent_deployment_customization[0].override_resource_requirements[0].memory_limit == null
+    )
+    error_message = "The cluster-agent customization must set only the requested memory without imposing a limit."
   }
 }
 

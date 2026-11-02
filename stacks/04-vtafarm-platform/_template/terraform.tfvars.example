@@ -15,6 +15,7 @@ kubeconfig_path = ""
 longhorn_version           = "1.12.1"
 longhorn_replica_count     = 1
 longhorn_node_drain_policy = "block-for-eviction-if-contains-last-replica"
+longhorn_replica_auto_balance = "disabled"
 longhorn_default_class     = true
 
 # Reuse the private bucket and S3 credential pair used by the other backup

@@ -79,8 +79,11 @@ run "default_topology" {
   }
 
   assert {
-    condition     = yamldecode(helm_release.longhorn.values[0]).defaultSettings.nodeDrainPolicy == "block-for-eviction-if-contains-last-replica"
-    error_message = "Longhorn must evacuate last healthy replicas before allowing a node drain to continue."
+    condition = (
+      yamldecode(helm_release.longhorn.values[0]).defaultSettings.nodeDrainPolicy == "block-for-eviction-if-contains-last-replica" &&
+      yamldecode(helm_release.longhorn.values[0]).defaultSettings.replicaAutoBalance == "disabled"
+    )
+    error_message = "Longhorn must preserve its safe drain policy and keep replica auto-balance opt-in."
   }
 
   assert {
@@ -89,6 +92,22 @@ run "default_topology" {
       yamldecode(helm_release.vault_transit_pki.values[0]).networkPolicy.allowFromNamespace == "vault"
     )
     error_message = "Only the farm namespace may reach the transit Vault."
+  }
+}
+
+run "enables_longhorn_replica_auto_balance" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name                  = "rke2-vtafarm-staging"
+      longhorn_replica_auto_balance = "least-effort"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.longhorn.values[0]).defaultSettings.replicaAutoBalance == "least-effort"
+    error_message = "Longhorn replica auto-balance must be configurable through Helm values."
   }
 }
 

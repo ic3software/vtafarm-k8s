@@ -33,6 +33,7 @@ resource "helm_release" "longhorn" {
     defaultSettings = {
       allowRecurringJobWhileVolumeDetached = var.config.longhorn_backup_enabled
       nodeDrainPolicy                      = var.config.longhorn_node_drain_policy
+      replicaAutoBalance                   = var.config.longhorn_replica_auto_balance
     }
   })]
 

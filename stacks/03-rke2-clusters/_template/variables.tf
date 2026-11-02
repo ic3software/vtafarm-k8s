@@ -206,6 +206,20 @@ variable "kubelet_reservation_node_names" {
   }
 }
 
+variable "cluster_agent_memory_request" {
+  description = "Memory requested by each Rancher cattle-cluster-agent replica. No memory limit is imposed."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (
+      var.cluster_agent_memory_request == null ||
+      can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", var.cluster_agent_memory_request))
+    )
+    error_message = "cluster_agent_memory_request must use a positive binary quantity such as \"1Gi\"."
+  }
+}
+
 variable "control_plane_upgrade_concurrency" {
   description = "Rancher control-plane upgrade concurrency."
   type        = string
@@ -216,6 +230,17 @@ variable "worker_upgrade_concurrency" {
   description = "Rancher worker upgrade concurrency."
   type        = string
   default     = "1"
+}
+
+variable "drain_timeout_seconds" {
+  description = "Maximum time Rancher allows each node drain so Longhorn can relocate replicas safely."
+  type        = number
+  default     = 1800
+
+  validation {
+    condition     = var.drain_timeout_seconds >= 1800 && floor(var.drain_timeout_seconds) == var.drain_timeout_seconds
+    error_message = "drain_timeout_seconds must be a whole number of seconds and at least 1800."
+  }
 }
 
 variable "control_plane_delete_empty_dir_data" {

@@ -23,6 +23,7 @@ worker_count = 0
 worker_type  = "cx23"
 
 # Keep false unless workloads using emptyDir have been verified safe to recreate.
+drain_timeout_seconds               = 1800
 control_plane_delete_empty_dir_data = false
 worker_delete_empty_dir_data        = false
 
@@ -45,3 +46,7 @@ ssh_allowed_cidrs = [
 
 # Optional staged rollout. Omit this to apply reservations to every node.
 # kubelet_reservation_node_names = ["<cluster-name>-server-1"]
+
+# Optional request for each Rancher cattle-cluster-agent replica. This does not
+# impose a memory limit.
+# cluster_agent_memory_request = "1Gi"

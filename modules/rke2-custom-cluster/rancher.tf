@@ -11,6 +11,16 @@ resource "rancher2_cluster_v2" "this" {
   kubernetes_version    = var.config.rke2_version
   enable_network_policy = true
 
+  dynamic "cluster_agent_deployment_customization" {
+    for_each = var.config.cluster_agent_memory_request == null ? [] : [true]
+
+    content {
+      override_resource_requirements {
+        memory_request = var.config.cluster_agent_memory_request
+      }
+    }
+  }
+
   local_auth_endpoint {
     enabled = true
     fqdn    = var.config.api_hostname != "" ? var.config.api_hostname : null
@@ -47,7 +57,7 @@ resource "rancher2_cluster_v2" "this" {
         enabled                              = true
         delete_empty_dir_data                = var.config.control_plane_delete_empty_dir_data
         ignore_daemon_sets                   = true
-        timeout                              = 300
+        timeout                              = var.config.drain_timeout_seconds
         skip_wait_for_delete_timeout_seconds = 60
       }
 
@@ -55,7 +65,7 @@ resource "rancher2_cluster_v2" "this" {
         enabled                              = true
         delete_empty_dir_data                = var.config.worker_delete_empty_dir_data
         ignore_daemon_sets                   = true
-        timeout                              = 300
+        timeout                              = var.config.drain_timeout_seconds
         skip_wait_for_delete_timeout_seconds = 60
       }
     }

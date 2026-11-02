@@ -32,9 +32,11 @@ variable "config" {
     system_reserved_memory         = optional(string)
     eviction_hard_memory_available = optional(string)
     kubelet_reservation_node_names = optional(set(string))
+    cluster_agent_memory_request   = optional(string)
 
     control_plane_upgrade_concurrency   = optional(string, "1")
     worker_upgrade_concurrency          = optional(string, "1")
+    drain_timeout_seconds               = optional(number, 1800)
     control_plane_delete_empty_dir_data = optional(bool, false)
     worker_delete_empty_dir_data        = optional(bool, false)
 
@@ -143,6 +145,22 @@ variable "config" {
       length(var.config.kubelet_reservation_node_names) > 0
     )
     error_message = "kubelet_reservation_node_names must be omitted for a cluster-wide rollout, or contain at least one node when kubelet reservations are enabled."
+  }
+
+  validation {
+    condition = (
+      var.config.cluster_agent_memory_request == null ||
+      can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", var.config.cluster_agent_memory_request))
+    )
+    error_message = "cluster_agent_memory_request must use a positive binary quantity such as \"1Gi\"."
+  }
+
+  validation {
+    condition = (
+      var.config.drain_timeout_seconds >= 1800 &&
+      floor(var.config.drain_timeout_seconds) == var.config.drain_timeout_seconds
+    )
+    error_message = "drain_timeout_seconds must be a whole number of seconds and at least 1800."
   }
 }
 
