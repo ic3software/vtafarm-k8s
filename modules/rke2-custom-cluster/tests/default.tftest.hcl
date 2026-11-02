@@ -99,6 +99,11 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition     = length(rancher2_cluster_v2.this.rke_config[0].machine_selector_config) == 0
+    error_message = "Default clusters must not render a machine selector without scoped kubelet reservations."
+  }
+
+  assert {
     condition = (
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].delete_empty_dir_data == false &&
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == false
@@ -407,6 +412,79 @@ run "worker_scale_does_not_renumber_servers" {
       "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<15%,nodefs.inodesFree<5%,imagefs.inodesFree<5%",
     ]
     error_message = "Rancher machineGlobalConfig must render typed kubelet reservations without dropping the default filesystem eviction thresholds."
+  }
+}
+
+run "scopes_kubelet_reservations_to_canary_nodes" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name                   = "staging"
+      ssh_key_name                   = "k3s-rancher-admin"
+      kube_reserved_cpu              = "250m"
+      kube_reserved_memory           = "256Mi"
+      system_reserved_cpu            = "250m"
+      system_reserved_memory         = "256Mi"
+      eviction_hard_memory_available = "512Mi"
+      kubelet_reservation_node_names = ["staging-server-1"]
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/staging"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "staging-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(rancher2_cluster_v2.this.rke_config[0].machine_global_config)), "kubelet-arg")
+    error_message = "Canary kubelet reservations must not leak into Rancher's cluster-wide machine config."
+  }
+
+  assert {
+    condition = yamldecode(rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].config)["kubelet-arg"] == [
+      "kube-reserved=cpu=250m,memory=256Mi",
+      "system-reserved=cpu=250m,memory=256Mi",
+      "eviction-hard=memory.available<512Mi,nodefs.available<10%,imagefs.available<15%,nodefs.inodesFree<5%,imagefs.inodesFree<5%",
+    ]
+    error_message = "The canary selector must preserve every kubelet reservation and hard eviction threshold."
+  }
+
+  assert {
+    condition = (
+      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].key == "rke.cattle.io/node-name" &&
+      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].operator == "In" &&
+      length(rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values) == 1 &&
+      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values[0] == "staging-server-1"
+    )
+    error_message = "The canary selector must target exactly the requested Rancher node names."
   }
 }
 

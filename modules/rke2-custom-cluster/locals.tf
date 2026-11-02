@@ -69,6 +69,8 @@ locals {
     ]),
   ]
 
+  kubelet_reservations_scoped = var.config.kubelet_reservation_node_names != null
+
   machine_global_config = yamlencode(merge({
     cni                      = var.config.cni
     ingress-controller       = var.config.ingress_controller
@@ -79,7 +81,7 @@ locals {
     secrets-encryption       = true
     tls-san                  = local.tls_sans
     },
-    length(local.kubelet_args) == 0 ? {} : { "kubelet-arg" = local.kubelet_args },
+    length(local.kubelet_args) == 0 || local.kubelet_reservations_scoped ? {} : { "kubelet-arg" = local.kubelet_args },
   ))
 
   hcloud_secret_manifest = yamlencode({

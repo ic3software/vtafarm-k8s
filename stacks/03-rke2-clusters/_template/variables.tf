@@ -195,6 +195,17 @@ variable "eviction_hard_memory_available" {
   }
 }
 
+variable "kubelet_reservation_node_names" {
+  description = "Optional Rancher node names that receive kubelet reservations during a staged rollout. Omit for every node."
+  type        = set(string)
+  default     = null
+
+  validation {
+    condition     = var.kubelet_reservation_node_names == null || length(var.kubelet_reservation_node_names) > 0
+    error_message = "kubelet_reservation_node_names must be null or contain at least one node name."
+  }
+}
+
 variable "control_plane_upgrade_concurrency" {
   description = "Rancher control-plane upgrade concurrency."
   type        = string

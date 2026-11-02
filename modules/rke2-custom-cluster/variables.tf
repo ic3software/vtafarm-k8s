@@ -31,6 +31,7 @@ variable "config" {
     system_reserved_cpu            = optional(string)
     system_reserved_memory         = optional(string)
     eviction_hard_memory_available = optional(string)
+    kubelet_reservation_node_names = optional(set(string))
 
     control_plane_upgrade_concurrency   = optional(string, "1")
     worker_upgrade_concurrency          = optional(string, "1")
@@ -134,6 +135,14 @@ variable "config" {
       ] : can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", value))
     ])
     error_message = "Kubelet memory reservations must use positive binary quantities such as \"256Mi\" or \"2Gi\"."
+  }
+
+  validation {
+    condition = var.config.kubelet_reservation_node_names == null || (
+      var.config.kube_reserved_cpu != null &&
+      length(var.config.kubelet_reservation_node_names) > 0
+    )
+    error_message = "kubelet_reservation_node_names must be omitted for a cluster-wide rollout, or contain at least one node when kubelet reservations are enabled."
   }
 }
 
