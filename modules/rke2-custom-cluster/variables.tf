@@ -3,14 +3,15 @@ variable "config" {
   type = object({
     cluster_name = string
 
-    location            = optional(string, "nbg1")
-    dev                 = optional(bool, false)
-    server_count        = optional(number, 3)
-    server_type         = optional(string, "cx33")
-    servers_are_workers = optional(bool, true)
-    worker_count        = optional(number, 0)
-    worker_type         = optional(string, "cx23")
-    os_image            = optional(string, "ubuntu-24.04")
+    location             = optional(string, "nbg1")
+    dev                  = optional(bool, false)
+    server_count         = optional(number, 3)
+    server_type          = optional(string, "cx33")
+    servers_are_workers  = optional(bool, true)
+    worker_count         = optional(number, 0)
+    worker_type          = optional(string, "cx23")
+    worker_auto_location = optional(bool, false)
+    os_image             = optional(string, "ubuntu-24.04")
 
     ssh_key_name      = string
     ssh_allowed_cidrs = optional(list(string), ["0.0.0.0/0"])

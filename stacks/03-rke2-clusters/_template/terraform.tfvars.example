@@ -18,9 +18,13 @@ dev = false
 server_count = 3
 server_type  = "cx33"
 
-# Optional dedicated workers use their own count and server type.
-worker_count = 0
-worker_type  = "cx23"
+# Optional dedicated workers use their own count and server type. False pins
+# every worker to location. True lets Hetzner choose automatically and requires
+# the worker type to be confined to the cluster's network zone, because the
+# private network is attached only after server creation.
+worker_count         = 0
+worker_type          = "cx23"
+worker_auto_location = false
 
 # Keep false unless workloads using emptyDir have been verified safe to recreate.
 drain_timeout_seconds               = 1800

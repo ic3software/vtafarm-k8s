@@ -68,6 +68,12 @@ variable "worker_type" {
   default     = "cx23"
 }
 
+variable "worker_auto_location" {
+  description = "Let Hetzner choose worker locations; false pins every worker to location."
+  type        = bool
+  default     = false
+}
+
 variable "os_image" {
   description = "Hetzner operating-system image for every node."
   type        = string

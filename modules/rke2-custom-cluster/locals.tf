@@ -31,6 +31,7 @@ locals {
       name        = "${var.config.cluster_name}-server-${i + 1}"
       private_ip  = var.config.dev ? null : cidrhost(var.config.subnet_cidr, 101 + i)
       server_type = var.config.server_type
+      location    = var.config.location
       roles = concat(
         ["etcd", "controlplane"],
         var.config.dev || var.config.servers_are_workers ? ["worker"] : [],
@@ -43,6 +44,7 @@ locals {
       name        = "${var.config.cluster_name}-worker-${i + 1}"
       private_ip  = cidrhost(var.config.subnet_cidr, 151 + i)
       server_type = var.config.worker_type
+      location    = var.config.worker_auto_location ? null : var.config.location
       roles       = ["worker"]
     }
   }

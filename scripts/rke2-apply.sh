@@ -168,10 +168,28 @@ check_etcd
 
 read_downstream longhorn-crd get customresourcedefinitions nodes.longhorn.io --ignore-not-found -o name
 LONGHORN=false
+longhorn_volumes_safe() {
+  jq -e --slurpfile replicas "$WORK/replicas" '
+    all(.items[];
+      if .status.robustness == "healthy" then true
+      elif .status.state == "detached" and .status.robustness == "unknown" then
+        . as $volume |
+        ([$replicas[0].items[] |
+          select(.spec.volumeName == $volume.metadata.name) |
+          select(.metadata.deletionTimestamp == null) |
+          select(.spec.active != false) |
+          select((.spec.healthyAt // "") != "") |
+          select((.spec.failedAt // "") == "")
+        ] | length) >= ($volume.spec.numberOfReplicas // 1)
+      else false
+      end)
+  ' "$WORK/volumes" >/dev/null
+}
 if [ -s "$WORK/longhorn-crd" ]; then
   LONGHORN=true
   read_downstream volumes get volumes.longhorn.io -n longhorn-system -o json
-  jq -e 'all(.items[]; .status.robustness == "healthy")' "$WORK/volumes" >/dev/null || fail 'Longhorn volumes must be healthy before planned retirement'
+  read_downstream replicas get replicas.longhorn.io -n longhorn-system -o json
+  longhorn_volumes_safe || fail 'Longhorn volumes must be healthy, or detached with their full healthy replica count, before planned retirement'
 fi
 
 read_storage() {
@@ -237,7 +255,7 @@ while IFS=$'\t' read -r node vm_id; do
       sleep 5
       read_storage
     done
-    jq -e 'all(.items[]; .status.robustness == "healthy")' "$WORK/volumes" >/dev/null || fail 'Longhorn is not healthy after evacuation; VMs are preserved'
+    longhorn_volumes_safe || fail 'Longhorn is not safe after evacuation; VMs are preserved'
   fi
 
   read_downstream current-node get node "$node" --ignore-not-found -o json
@@ -306,7 +324,7 @@ if [ "$LONGHORN" = true ]; then
   while IFS=$'\t' read -r node vm_id; do
     read_storage
     storage_empty && storage_detached || fail "Storage reappeared on $node; VMs are preserved"
-    jq -e 'all(.items[]; .status.robustness == "healthy")' "$WORK/volumes" >/dev/null || fail 'Longhorn became unhealthy; VMs are preserved'
+    longhorn_volumes_safe || fail 'Longhorn became unsafe; VMs are preserved'
   done <"$WORK/retire"
 fi
 check_state

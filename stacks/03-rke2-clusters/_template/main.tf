@@ -11,6 +11,7 @@ module "rke2" {
     servers_are_workers                 = var.servers_are_workers
     worker_count                        = var.worker_count
     worker_type                         = var.worker_type
+    worker_auto_location                = var.worker_auto_location
     os_image                            = var.os_image
     ssh_key_name                        = var.ssh_key_name
     ssh_allowed_cidrs                   = var.ssh_allowed_cidrs

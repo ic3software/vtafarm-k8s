@@ -276,6 +276,41 @@ assert not (root / 'rke2-test/.rke2-apply-lock').exists()
 PY
 echo 'PASS: single-replica data is rebuilt before drain; Rancher retires servers sequentially before VM apply'
 
+reset_case ok
+jq '.items += [{metadata:{name:"detached-volume"},spec:{numberOfReplicas:1},status:{state:"detached",robustness:"unknown"}}]' \
+  "$TEST_DIR/volumes" >"$TEST_DIR/next"
+mv "$TEST_DIR/next" "$TEST_DIR/volumes"
+jq '.items += [{metadata:{name:"detached-replica"},spec:{volumeName:"detached-volume",nodeID:"rke2-test-server-1",active:true,healthyAt:"2026-01-01T00:00:00Z",failedAt:""}}]' \
+  "$TEST_DIR/replicas" >"$TEST_DIR/next"
+mv "$TEST_DIR/next" "$TEST_DIR/replicas"
+run || { cat "$TEST_DIR/log"; fail 'safe detached volume'; }
+[ -f "$TEST_DIR/applied" ] || fail 'blocked a detached volume with its full healthy replica count'
+echo 'PASS: detached volumes with their full healthy replica count do not block retirement'
+
+assert_unsafe_volume() {
+  reset_case ok
+  jq "$1" "$TEST_DIR/volumes" >"$TEST_DIR/next"
+  mv "$TEST_DIR/next" "$TEST_DIR/volumes"
+  if [ "$2" != none ]; then
+    jq "$2" "$TEST_DIR/replicas" >"$TEST_DIR/next"
+    mv "$TEST_DIR/next" "$TEST_DIR/replicas"
+  fi
+  expect_blocked
+  if rg -q '^PATCH|^DRAIN|^RETIRE' "$TEST_DIR/events"; then fail 'mutated with an unsafe Longhorn volume'; fi
+}
+detached_one='.items += [{metadata:{name:"unsafe-volume"},spec:{numberOfReplicas:1},status:{state:"detached",robustness:"unknown"}}]'
+detached_two='.items += [{metadata:{name:"unsafe-volume"},spec:{numberOfReplicas:2},status:{state:"detached",robustness:"unknown"}}]'
+attached_unknown='.items += [{metadata:{name:"unsafe-volume"},spec:{numberOfReplicas:1},status:{state:"attached",robustness:"unknown"}}]'
+healthy_replica='.items += [{metadata:{name:"unsafe-replica"},spec:{volumeName:"unsafe-volume",nodeID:"rke2-test-server-1",active:true,healthyAt:"2026-01-01T00:00:00Z",failedAt:""}}]'
+failed_replica='.items += [{metadata:{name:"unsafe-replica"},spec:{volumeName:"unsafe-volume",nodeID:"rke2-test-server-1",active:true,healthyAt:"2026-01-01T00:00:00Z",failedAt:"2026-01-02T00:00:00Z"}}]'
+inactive_replica='.items += [{metadata:{name:"unsafe-replica"},spec:{volumeName:"unsafe-volume",nodeID:"rke2-test-server-1",active:false,healthyAt:"2026-01-01T00:00:00Z",failedAt:""}}]'
+assert_unsafe_volume "$detached_one" none
+assert_unsafe_volume "$detached_two" "$healthy_replica"
+assert_unsafe_volume "$detached_one" "$failed_replica"
+assert_unsafe_volume "$detached_one" "$inactive_replica"
+assert_unsafe_volume "$attached_unknown" "$healthy_replica"
+echo 'PASS: missing, insufficient, failed, inactive and attached-unknown replicas block retirement before mutation'
+
 for mode in eviction-blocked drain-blocked detach-blocked etcd-unhealthy etcd-fails-after-retire member-stuck machine-conflict machine-pending wrong-cluster unavailable state-changed node-recreated storage-reappears; do
   reset_case "$mode"
   expect_blocked
