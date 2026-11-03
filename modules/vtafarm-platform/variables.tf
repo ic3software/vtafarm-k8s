@@ -12,6 +12,7 @@ variable "config" {
       string,
       "block-for-eviction-if-contains-last-replica",
     )
+    longhorn_replica_auto_balance = optional(string, "disabled")
     # Longhorn owns the default class, so Vault's PVCs land on it without every
     # chart naming it. hcloud-volumes stays available by name.
     longhorn_default_class = optional(bool, true)
@@ -66,6 +67,15 @@ variable "config" {
       "block-for-eviction-if-contains-last-replica",
     ], var.config.longhorn_node_drain_policy)
     error_message = "longhorn_node_drain_policy must be a supported Longhorn node drain policy."
+  }
+
+  validation {
+    condition = contains([
+      "disabled",
+      "least-effort",
+      "best-effort",
+    ], var.config.longhorn_replica_auto_balance)
+    error_message = "longhorn_replica_auto_balance must be disabled, least-effort, or best-effort."
   }
 
   validation {

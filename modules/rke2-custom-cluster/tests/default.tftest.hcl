@@ -2,6 +2,40 @@
 # that way. Left to itself the mock invents a random alphanumeric id for every
 # resource, which then fails to convert. Give it ids the API could return.
 mock_provider "hcloud" {
+  mock_data "hcloud_server_type" {
+    defaults = {
+      locations = [
+        {
+          available             = true
+          deprecation_announced = ""
+          id                    = 1
+          is_deprecated         = false
+          name                  = "fsn1"
+          recommended           = true
+          unavailable_after     = ""
+        },
+        {
+          available             = true
+          deprecation_announced = ""
+          id                    = 2
+          is_deprecated         = false
+          name                  = "nbg1"
+          recommended           = true
+          unavailable_after     = ""
+        },
+        {
+          available             = true
+          deprecation_announced = ""
+          id                    = 3
+          is_deprecated         = false
+          name                  = "hel1"
+          recommended           = true
+          unavailable_after     = ""
+        },
+      ]
+    }
+  }
+
   mock_resource "hcloud_firewall" {
     defaults = { id = "1" }
   }
@@ -94,11 +128,28 @@ run "default_ha_topology" {
   }
 
   assert {
+    condition     = !contains(keys(yamldecode(local.machine_global_config)), "kubelet-arg")
+    error_message = "Kubelet reservations must remain opt-in for existing clusters."
+  }
+
+  assert {
+    condition     = length(rancher2_cluster_v2.this.rke_config[0].machine_selector_config) == 0
+    error_message = "Default clusters must not render a machine selector without scoped kubelet reservations."
+  }
+
+  assert {
+    condition     = length(rancher2_cluster_v2.this.cluster_agent_deployment_customization) == 0
+    error_message = "Default clusters must not override Rancher cluster-agent resources."
+  }
+
+  assert {
     condition = (
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].timeout == 1800 &&
+      rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].timeout == 1800 &&
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].control_plane_drain_options[0].delete_empty_dir_data == false &&
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == false
     )
-    error_message = "Drain options must preserve emptyDir data unless a cluster explicitly opts in."
+    error_message = "Drain options must allow Longhorn 30 minutes and preserve emptyDir data unless a cluster explicitly opts in."
   }
 
   assert {
@@ -329,8 +380,14 @@ run "worker_scale_does_not_renumber_servers" {
       server_type                         = "cx33"
       worker_count                        = 2
       worker_type                         = "cx43"
+      worker_auto_location                = true
       control_plane_delete_empty_dir_data = true
       worker_delete_empty_dir_data        = true
+      kube_reserved_cpu                   = "250m"
+      kube_reserved_memory                = "512Mi"
+      system_reserved_cpu                 = "250m"
+      system_reserved_memory              = "512Mi"
+      eviction_hard_memory_available      = "1Gi"
     }
     hcloud_token = "test-token"
   }
@@ -377,9 +434,12 @@ run "worker_scale_does_not_renumber_servers" {
   assert {
     condition = (
       hcloud_server.node["server-1"].server_type == "cx33" &&
-      hcloud_server.node["worker-1"].server_type == "cx43"
+      hcloud_server.node["worker-1"].server_type == "cx43" &&
+      hcloud_server.node["server-1"].location == "nbg1" &&
+      local.nodes["worker-1"].location == null &&
+      local.nodes["worker-2"].location == null
     )
-    error_message = "Server and worker node types must honor their independent configuration values."
+    error_message = "Server and worker node types must remain independent, and worker locations must be left to Hetzner."
   }
 
   assert {
@@ -388,6 +448,194 @@ run "worker_scale_does_not_renumber_servers" {
       rancher2_cluster_v2.this.rke_config[0].upgrade_strategy[0].worker_drain_options[0].delete_empty_dir_data == true
     )
     error_message = "Clusters must be able to opt in to deleting emptyDir data for each node role."
+  }
+
+  assert {
+    condition = yamldecode(rancher2_cluster_v2.this.rke_config[0].machine_global_config)["kubelet-arg"] == [
+      "kube-reserved=cpu=250m,memory=512Mi",
+      "system-reserved=cpu=250m,memory=512Mi",
+      "eviction-hard=memory.available<1Gi,nodefs.available<10%,imagefs.available<15%,nodefs.inodesFree<5%,imagefs.inodesFree<5%",
+    ]
+    error_message = "Rancher machineGlobalConfig must render typed kubelet reservations without dropping the default filesystem eviction thresholds."
+  }
+}
+
+run "pins_workers_to_cluster_location" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name = "production"
+      ssh_key_name = "k3s-rancher-admin"
+      worker_count = 1
+      worker_type  = "cx33"
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/production"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "production-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      length(data.hcloud_server_type.worker) == 0 &&
+      local.nodes["worker-1"].location == "nbg1" &&
+      hcloud_server.node["worker-1"].location == "nbg1"
+    )
+    error_message = "Disabling automatic placement must pin every worker to the cluster location."
+  }
+}
+
+run "scopes_kubelet_reservations_to_canary_nodes" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name                   = "staging"
+      ssh_key_name                   = "k3s-rancher-admin"
+      kube_reserved_cpu              = "250m"
+      kube_reserved_memory           = "256Mi"
+      system_reserved_cpu            = "250m"
+      system_reserved_memory         = "256Mi"
+      eviction_hard_memory_available = "512Mi"
+      kubelet_reservation_node_names = ["staging-server-1"]
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/staging"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "staging-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(rancher2_cluster_v2.this.rke_config[0].machine_global_config)), "kubelet-arg")
+    error_message = "Canary kubelet reservations must not leak into Rancher's cluster-wide machine config."
+  }
+
+  assert {
+    condition = yamldecode(rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].config)["kubelet-arg"] == [
+      "kube-reserved=cpu=250m,memory=256Mi",
+      "system-reserved=cpu=250m,memory=256Mi",
+      "eviction-hard=memory.available<512Mi,nodefs.available<10%,imagefs.available<15%,nodefs.inodesFree<5%,imagefs.inodesFree<5%",
+    ]
+    error_message = "The canary selector must preserve every kubelet reservation and hard eviction threshold."
+  }
+
+  assert {
+    condition = (
+      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].key == "rke.cattle.io/node-name" &&
+      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].operator == "In" &&
+      length(rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values) == 1 &&
+      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values[0] == "staging-server-1"
+    )
+    error_message = "The canary selector must target exactly the requested Rancher node names."
+  }
+}
+
+run "configures_cluster_agent_memory_request" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name                 = "staging"
+      ssh_key_name                 = "k3s-rancher-admin"
+      cluster_agent_memory_request = "1Gi"
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/staging"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "staging-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      rancher2_cluster_v2.this.cluster_agent_deployment_customization[0].override_resource_requirements[0].memory_request == "1Gi" &&
+      rancher2_cluster_v2.this.cluster_agent_deployment_customization[0].override_resource_requirements[0].memory_limit == null
+    )
+    error_message = "The cluster-agent customization must set only the requested memory without imposing a limit."
   }
 }
 
@@ -434,4 +682,38 @@ run "rejects_strict_tls_without_cacerts" {
   }
 
   expect_failures = [rancher2_cluster_v2.this]
+}
+
+run "rejects_invalid_kubelet_reservations" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name                   = "production"
+      ssh_key_name                   = "k3s-rancher-admin"
+      kube_reserved_cpu              = "250"
+      kube_reserved_memory           = "256Mi"
+      system_reserved_cpu            = "250m"
+      system_reserved_memory         = "256Mi"
+      eviction_hard_memory_available = "512Mi"
+    }
+    hcloud_token = "test-token"
+  }
+
+  expect_failures = [var.config]
+}
+run "rejects_partial_kubelet_reservations" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name         = "production"
+      ssh_key_name         = "k3s-rancher-admin"
+      kube_reserved_cpu    = "250m"
+      kube_reserved_memory = "256Mi"
+    }
+    hcloud_token = "test-token"
+  }
+
+  expect_failures = [var.config]
 }

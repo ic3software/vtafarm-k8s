@@ -11,6 +11,7 @@ module "rke2" {
     servers_are_workers                 = var.servers_are_workers
     worker_count                        = var.worker_count
     worker_type                         = var.worker_type
+    worker_auto_location                = var.worker_auto_location
     os_image                            = var.os_image
     ssh_key_name                        = var.ssh_key_name
     ssh_allowed_cidrs                   = var.ssh_allowed_cidrs
@@ -23,8 +24,16 @@ module "rke2" {
     rke2_version                        = var.rke2_version
     cni                                 = var.cni
     ingress_controller                  = var.ingress_controller
+    kube_reserved_cpu                   = var.kube_reserved_cpu
+    kube_reserved_memory                = var.kube_reserved_memory
+    system_reserved_cpu                 = var.system_reserved_cpu
+    system_reserved_memory              = var.system_reserved_memory
+    eviction_hard_memory_available      = var.eviction_hard_memory_available
+    kubelet_reservation_node_names      = var.kubelet_reservation_node_names
+    cluster_agent_memory_request        = var.cluster_agent_memory_request
     control_plane_upgrade_concurrency   = var.control_plane_upgrade_concurrency
     worker_upgrade_concurrency          = var.worker_upgrade_concurrency
+    drain_timeout_seconds               = var.drain_timeout_seconds
     control_plane_delete_empty_dir_data = var.control_plane_delete_empty_dir_data
     worker_delete_empty_dir_data        = var.worker_delete_empty_dir_data
     hcloud_ccm_version                  = var.hcloud_ccm_version

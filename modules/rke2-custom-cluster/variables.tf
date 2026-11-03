@@ -3,14 +3,15 @@ variable "config" {
   type = object({
     cluster_name = string
 
-    location            = optional(string, "nbg1")
-    dev                 = optional(bool, false)
-    server_count        = optional(number, 3)
-    server_type         = optional(string, "cx33")
-    servers_are_workers = optional(bool, true)
-    worker_count        = optional(number, 0)
-    worker_type         = optional(string, "cx23")
-    os_image            = optional(string, "ubuntu-24.04")
+    location             = optional(string, "nbg1")
+    dev                  = optional(bool, false)
+    server_count         = optional(number, 3)
+    server_type          = optional(string, "cx33")
+    servers_are_workers  = optional(bool, true)
+    worker_count         = optional(number, 0)
+    worker_type          = optional(string, "cx23")
+    worker_auto_location = optional(bool, false)
+    os_image             = optional(string, "ubuntu-24.04")
 
     ssh_key_name      = string
     ssh_allowed_cidrs = optional(list(string), ["0.0.0.0/0"])
@@ -23,12 +24,20 @@ variable "config" {
     load_balancer_type = optional(string, "lb11")
     api_hostname       = optional(string, "")
 
-    rke2_version       = optional(string, "v1.35.7+rke2r1")
-    cni                = optional(string, "canal")
-    ingress_controller = optional(string, "traefik")
+    rke2_version                   = optional(string, "v1.35.7+rke2r1")
+    cni                            = optional(string, "canal")
+    ingress_controller             = optional(string, "traefik")
+    kube_reserved_cpu              = optional(string)
+    kube_reserved_memory           = optional(string)
+    system_reserved_cpu            = optional(string)
+    system_reserved_memory         = optional(string)
+    eviction_hard_memory_available = optional(string)
+    kubelet_reservation_node_names = optional(set(string))
+    cluster_agent_memory_request   = optional(string)
 
     control_plane_upgrade_concurrency   = optional(string, "1")
     worker_upgrade_concurrency          = optional(string, "1")
+    drain_timeout_seconds               = optional(number, 1800)
     control_plane_delete_empty_dir_data = optional(bool, false)
     worker_delete_empty_dir_data        = optional(bool, false)
 
@@ -89,6 +98,70 @@ variable "config" {
   validation {
     condition     = var.config.api_hostname == "" || can(regex("^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", var.config.api_hostname))
     error_message = "api_hostname must be empty or a lowercase DNS hostname."
+  }
+
+  validation {
+    condition = alltrue([
+      for value in [
+        var.config.kube_reserved_cpu,
+        var.config.kube_reserved_memory,
+        var.config.system_reserved_cpu,
+        var.config.system_reserved_memory,
+        var.config.eviction_hard_memory_available,
+      ] : value == null
+      ]) || alltrue([
+      for value in [
+        var.config.kube_reserved_cpu,
+        var.config.kube_reserved_memory,
+        var.config.system_reserved_cpu,
+        var.config.system_reserved_memory,
+        var.config.eviction_hard_memory_available,
+      ] : value != null
+    ])
+    error_message = "Set all five kubelet reservation values together, or leave all five unset."
+  }
+
+  validation {
+    condition = var.config.kube_reserved_cpu == null ? true : alltrue([
+      for value in [var.config.kube_reserved_cpu, var.config.system_reserved_cpu] :
+      can(regex("^[1-9][0-9]*m$", value))
+    ])
+    error_message = "Kubelet CPU reservations must use positive millicores such as \"250m\"."
+  }
+
+  validation {
+    condition = var.config.kube_reserved_memory == null ? true : alltrue([
+      for value in [
+        var.config.kube_reserved_memory,
+        var.config.system_reserved_memory,
+        var.config.eviction_hard_memory_available,
+      ] : can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", value))
+    ])
+    error_message = "Kubelet memory reservations must use positive binary quantities such as \"256Mi\" or \"2Gi\"."
+  }
+
+  validation {
+    condition = var.config.kubelet_reservation_node_names == null || (
+      var.config.kube_reserved_cpu != null &&
+      length(var.config.kubelet_reservation_node_names) > 0
+    )
+    error_message = "kubelet_reservation_node_names must be omitted for a cluster-wide rollout, or contain at least one node when kubelet reservations are enabled."
+  }
+
+  validation {
+    condition = (
+      var.config.cluster_agent_memory_request == null ||
+      can(regex("^[1-9][0-9]*(Ki|Mi|Gi|Ti)$", var.config.cluster_agent_memory_request))
+    )
+    error_message = "cluster_agent_memory_request must use a positive binary quantity such as \"1Gi\"."
+  }
+
+  validation {
+    condition = (
+      var.config.drain_timeout_seconds >= 1800 &&
+      floor(var.config.drain_timeout_seconds) == var.config.drain_timeout_seconds
+    )
+    error_message = "drain_timeout_seconds must be a whole number of seconds and at least 1800."
   }
 }
 

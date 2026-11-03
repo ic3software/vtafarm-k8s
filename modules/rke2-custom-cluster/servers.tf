@@ -1,10 +1,16 @@
+data "hcloud_server_type" "worker" {
+  count = var.config.dev || var.config.worker_count == 0 || !var.config.worker_auto_location ? 0 : 1
+
+  name = var.config.worker_type
+}
+
 resource "hcloud_server" "node" {
   for_each = local.nodes
 
   name               = each.value.name
   server_type        = each.value.server_type
   image              = data.hcloud_image.os.name
-  location           = var.config.location
+  location           = each.value.location
   ssh_keys           = [data.hcloud_ssh_key.admin.id]
   placement_group_id = var.config.dev ? null : (startswith(each.key, "server-") ? hcloud_placement_group.nodes[0].id : null)
   user_data          = sensitive(local.node_user_data[each.key])
@@ -31,6 +37,17 @@ resource "hcloud_server" "node" {
     # Registration commands and cloud-init run only on first boot. Token refreshes
     # must not replace every etcd member. Replace nodes deliberately, one at a time.
     ignore_changes = [user_data, ssh_keys, image]
+
+    precondition {
+      condition = !startswith(each.key, "worker-") || !var.config.worker_auto_location || (
+        length(data.hcloud_server_type.worker[0].locations) > 0 &&
+        alltrue([
+          for location in data.hcloud_server_type.worker[0].locations :
+          lookup(local.network_zones, location.name, null) == local.network_zones[var.config.location]
+        ])
+      )
+      error_message = "Automatic worker placement requires a server type whose every supported location is in the cluster network zone; choose a worker type confined to this zone."
+    }
   }
 
   depends_on = [

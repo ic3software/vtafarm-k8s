@@ -18,11 +18,16 @@ dev = false
 server_count = 3
 server_type  = "cx33"
 
-# Optional dedicated workers use their own count and server type.
-worker_count = 0
-worker_type  = "cx23"
+# Optional dedicated workers use their own count and server type. False pins
+# every worker to location. True lets Hetzner choose automatically and requires
+# the worker type to be confined to the cluster's network zone, because the
+# private network is attached only after server creation.
+worker_count         = 0
+worker_type          = "cx23"
+worker_auto_location = false
 
 # Keep false unless workloads using emptyDir have been verified safe to recreate.
+drain_timeout_seconds               = 1800
 control_plane_delete_empty_dir_data = false
 worker_delete_empty_dir_data        = false
 
@@ -34,3 +39,18 @@ ssh_key_name = "k3s-rancher-admin"
 ssh_allowed_cidrs = [
   "0.0.0.0/0"
 ]
+
+# Optional node reservations. Set all five values together or leave all five
+# commented out. The module preserves kubelet's filesystem eviction defaults.
+# kube_reserved_cpu              = "250m"
+# kube_reserved_memory           = "256Mi"
+# system_reserved_cpu            = "250m"
+# system_reserved_memory         = "256Mi"
+# eviction_hard_memory_available = "512Mi"
+
+# Optional staged rollout. Omit this to apply reservations to every node.
+# kubelet_reservation_node_names = ["<cluster-name>-server-1"]
+
+# Optional request for each Rancher cattle-cluster-agent replica. This does not
+# impose a memory limit.
+# cluster_agent_memory_request = "1Gi"

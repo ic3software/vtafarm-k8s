@@ -31,6 +31,7 @@ locals {
       name        = "${var.config.cluster_name}-server-${i + 1}"
       private_ip  = var.config.dev ? null : cidrhost(var.config.subnet_cidr, 101 + i)
       server_type = var.config.server_type
+      location    = var.config.location
       roles = concat(
         ["etcd", "controlplane"],
         var.config.dev || var.config.servers_are_workers ? ["worker"] : [],
@@ -43,6 +44,7 @@ locals {
       name        = "${var.config.cluster_name}-worker-${i + 1}"
       private_ip  = cidrhost(var.config.subnet_cidr, 151 + i)
       server_type = var.config.worker_type
+      location    = var.config.worker_auto_location ? null : var.config.location
       roles       = ["worker"]
     }
   }
@@ -57,7 +59,21 @@ locals {
     var.config.api_hostname,
   ])
 
-  machine_global_config = yamlencode({
+  kubelet_args = var.config.kube_reserved_cpu == null ? [] : [
+    "kube-reserved=cpu=${var.config.kube_reserved_cpu},memory=${var.config.kube_reserved_memory}",
+    "system-reserved=cpu=${var.config.system_reserved_cpu},memory=${var.config.system_reserved_memory}",
+    join(",", [
+      "eviction-hard=memory.available<${var.config.eviction_hard_memory_available}",
+      "nodefs.available<10%",
+      "imagefs.available<15%",
+      "nodefs.inodesFree<5%",
+      "imagefs.inodesFree<5%",
+    ]),
+  ]
+
+  kubelet_reservations_scoped = var.config.kubelet_reservation_node_names != null
+
+  machine_global_config = yamlencode(merge({
     cni                      = var.config.cni
     ingress-controller       = var.config.ingress_controller
     cluster-cidr             = var.config.pod_cidr
@@ -66,7 +82,9 @@ locals {
     cloud-provider-name      = "external"
     secrets-encryption       = true
     tls-san                  = local.tls_sans
-  })
+    },
+    length(local.kubelet_args) == 0 || local.kubelet_reservations_scoped ? {} : { "kubelet-arg" = local.kubelet_args },
+  ))
 
   hcloud_secret_manifest = yamlencode({
     apiVersion = "v1"
