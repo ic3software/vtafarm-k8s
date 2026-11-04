@@ -202,6 +202,15 @@ locals {
         # load balancer can reach it without klipper/servicelb.
         deployment = { kind = "DaemonSet" }
         service    = { enabled = false }
+        # A surge pod cannot bind :80/:443 while the existing pod still owns
+        # those host ports, so replace one DaemonSet pod at a time instead.
+        updateStrategy = {
+          type = "RollingUpdate"
+          rollingUpdate = {
+            maxUnavailable = 1
+            maxSurge       = 0
+          }
+        }
         ports = {
           web       = merge(local.traefik_port_values, { hostPort = 80 })
           websecure = merge(local.traefik_port_values, { hostPort = 443 })
