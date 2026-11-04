@@ -9,6 +9,9 @@ rancher_token_key = "token-REPLACE_ME:REPLACE_ME"
 # ash = Ashburn, hil = Hillsboro, sin = Singapore.
 location = "nbg1"
 
+# Pin the Rancher-managed Kubernetes release. Upgrade one minor at a time.
+rke2_version = "v1.35.9+rke2r1"
+
 # Set dev = true for one all-in-one RKE2 node with no private network or load
 # balancer. The node uses server_type; server_count and worker_count are ignored.
 dev = false
