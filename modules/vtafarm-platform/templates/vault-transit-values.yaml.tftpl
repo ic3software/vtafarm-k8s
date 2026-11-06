@@ -24,6 +24,8 @@ ui:
   enabled: true
 
 server:
+  priorityClassName: ${priority_class_name}
+
   # No Kubernetes auth here, so no TokenReview, so no delegation needed. This
   # Vault answers exactly one caller, over token auth.
   authDelegator:

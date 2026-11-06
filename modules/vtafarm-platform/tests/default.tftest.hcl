@@ -26,6 +26,26 @@ run "default_topology" {
   }
 
   assert {
+    condition = (
+      kubernetes_priority_class_v1.vault_transit.value == 2000 &&
+      kubernetes_priority_class_v1.vault_transit.global_default == false &&
+      kubernetes_priority_class_v1.vault_transit.preemption_policy == "Never" &&
+      kubernetes_priority_class_v1.vault.value == 1000 &&
+      kubernetes_priority_class_v1.vault.global_default == false &&
+      kubernetes_priority_class_v1.vault.preemption_policy == "Never"
+    )
+    error_message = "Transit and farm Vault must have non-preempting priorities 2000 and 1000, respectively."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.vault_transit.values[0]).server.priorityClassName == kubernetes_priority_class_v1.vault_transit.metadata[0].name &&
+      yamldecode(helm_release.vault.values[0]).server.priorityClassName == kubernetes_priority_class_v1.vault.metadata[0].name
+    )
+    error_message = "Each Vault release must use its managed PriorityClass."
+  }
+
+  assert {
     condition     = length(regexall("retry_join \\{", helm_release.vault.values[0])) == 3
     error_message = "One retry_join stanza per Raft peer, generated from vault_replicas."
   }
