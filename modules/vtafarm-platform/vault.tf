@@ -53,12 +53,13 @@ resource "helm_release" "vault" {
   namespace  = kubernetes_namespace.vault.metadata[0].name
 
   values = [templatefile("${path.module}/templates/vault-values.yaml.tftpl", {
-    namespace         = var.config.vault_namespace
-    transit_namespace = var.config.transit_namespace
-    chart_version     = var.config.vault_chart_version
-    replicas          = var.config.vault_replicas
-    data_size         = var.config.vault_data_size
-    storage_class     = var.config.storage_class
+    namespace           = var.config.vault_namespace
+    transit_namespace   = var.config.transit_namespace
+    chart_version       = var.config.vault_chart_version
+    replicas            = var.config.vault_replicas
+    data_size           = var.config.vault_data_size
+    storage_class       = var.config.storage_class
+    priority_class_name = kubernetes_priority_class_v1.vault.metadata[0].name
   })]
 
   wait = false

@@ -24,6 +24,8 @@ ui:
   enabled: true
 
 server:
+  priorityClassName: ${priority_class_name}
+
   # Binds Vault's ServiceAccount to system:auth-delegator so Vault can call
   # TokenReview to validate the tenant pods' ServiceAccount JWTs.
   authDelegator:

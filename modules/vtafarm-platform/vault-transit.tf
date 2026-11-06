@@ -52,9 +52,10 @@ resource "helm_release" "vault_transit" {
   namespace  = kubernetes_namespace.transit.metadata[0].name
 
   values = [templatefile("${path.module}/templates/vault-transit-values.yaml.tftpl", {
-    namespace     = var.config.transit_namespace
-    data_size     = var.config.transit_data_size
-    storage_class = var.config.storage_class
+    namespace           = var.config.transit_namespace
+    data_size           = var.config.transit_data_size
+    storage_class       = var.config.storage_class
+    priority_class_name = kubernetes_priority_class_v1.vault_transit.metadata[0].name
   })]
 
   wait = false
