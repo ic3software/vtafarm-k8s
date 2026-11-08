@@ -181,6 +181,24 @@ locals {
     }
   })
 
+  # Existing dev servers may have registered before their private NIC existed,
+  # leaving the kubelet certificate valid only for the public IP. Production
+  # keeps certificate verification enabled; dev accepts this for placement
+  # testing against the private InternalIP without changing the etcd peer IP.
+  metrics_server_manifest = yamlencode({
+    apiVersion = "helm.cattle.io/v1"
+    kind       = "HelmChartConfig"
+    metadata = {
+      name      = "rke2-metrics-server"
+      namespace = "kube-system"
+    }
+    spec = {
+      valuesContent = yamlencode({
+        args = ["--kubelet-insecure-tls"]
+      })
+    }
+  })
+
   additional_manifest = join("\n---\n", concat(
     [
       local.hcloud_secret_manifest,
@@ -188,6 +206,7 @@ locals {
       local.hcloud_csi_manifest,
     ],
     var.config.cni == "canal" ? [local.canal_manifest] : [],
+    var.config.dev ? [local.metrics_server_manifest] : [],
   ))
 
   # Rancher owns the bundled Traefik's configuration on a cluster it manages, so
@@ -239,7 +258,10 @@ locals {
       private_network_cidr    = var.config.network_cidr
       private_network_gateway = local.private_network_gateway
       private_interface_mtu   = local.private_interface_mtu
-      bootstrap_script        = file("${path.module}/templates/rancher-node-bootstrap.sh")
+      private_supervisor_url = var.config.dev && startswith(key, "worker-") ? (
+        "https://${local.server_nodes["server-1"].private_ip}:9345"
+      ) : ""
+      bootstrap_script = file("${path.module}/templates/rancher-node-bootstrap.sh")
       registration_script = join(" ", concat(
         [local.registration_command],
         [for role in node.roles : "--${role}"],

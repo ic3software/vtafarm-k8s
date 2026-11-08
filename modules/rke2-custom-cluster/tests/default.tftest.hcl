@@ -316,7 +316,8 @@ run "dev_workers_without_load_balancer" {
     condition = (
       alltrue([
         for key in keys(local.nodes) :
-        length(hcloud_server.node[key].network) == 1 &&
+        length(hcloud_server.node[key].network) == 0 &&
+        hcloud_server_network.dev[key].ip == local.nodes[key].private_ip &&
         hcloud_server.node[key].placement_group_id == null &&
         strcontains(
           base64decode(one([
@@ -331,6 +332,13 @@ run "dev_workers_without_load_balancer" {
             if config.path == "/etc/rancher/node-registration.sh"
           ])),
           "--internal-address",
+        ) &&
+        (
+          key == "server-1" ||
+          base64decode(one([
+            for config in yamldecode(local.node_user_data[key]).write_files : config.content
+            if config.path == "/etc/rancher/rke2/config.yaml.d/99-private-supervisor.yaml"
+          ])) == "server: \"https://10.10.1.101:9345\"\n"
         )
       ])
     )
@@ -357,6 +365,8 @@ run "dev_workers_without_load_balancer" {
   assert {
     condition = (
       strcontains(local.additional_manifest, local.canal_manifest) &&
+      strcontains(local.additional_manifest, local.metrics_server_manifest) &&
+      yamldecode(yamldecode(local.metrics_server_manifest).spec.valuesContent).args == ["--kubelet-insecure-tls"] &&
       yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK.value == "true" &&
       yamldecode(local.chart_values)["rke2-traefik"].deployment.kind == "DaemonSet" &&
       yamldecode(local.chart_values)["rke2-traefik"].service.spec.type == "ClusterIP" &&
@@ -421,7 +431,8 @@ run "dev_zero_workers_keeps_private_network" {
       length(hcloud_network.this) == 1 &&
       length(hcloud_network_subnet.nodes) == 1 &&
       length(hcloud_load_balancer.api) == 0 &&
-      length(hcloud_server.node["server-1"].network) == 1 &&
+      length(hcloud_server.node["server-1"].network) == 0 &&
+      hcloud_server_network.dev["server-1"].ip == "10.10.1.101" &&
       strcontains(
         base64decode(one([
           for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
