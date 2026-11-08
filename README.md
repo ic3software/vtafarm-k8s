@@ -456,6 +456,14 @@ generated assertion method and `TrustTaskHTTPS` service in that Farm DID before 
 stack. The Trust Task endpoint is always derived as `https://<api_host>/trust-task`.
 The signing seed exists in this stack's state file, so back it up securely.
 
+The API chart also installs the complete workload-placement worker and Admin
+Panel API. Keep `placement.mode = "disabled"` for the first deployment: this
+still publishes node state and reports, but cannot move a Pod. After completing
+the Longhorn backup/restore drill, change the same release to `canary` with the
+approved numeric setup-session IDs, relocate each canary twice, then change the
+mode to `enabled`. These are activation gates for one build, not separate code
+releases.
+
 ```bash
 make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production
 ```
