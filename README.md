@@ -465,7 +465,23 @@ still publishes node state and reports, but cannot move a Pod. After completing
 the Longhorn backup/restore drill, change the same release to `canary` with the
 approved numeric setup-session IDs, relocate each canary twice, then change the
 mode to `enabled`. These are activation gates for one build, not separate code
-releases.
+releases. `vtafarm_api_version` must name a published chart version whose image
+contains both `api` and `placement-worker`; stack 05 deploys that one image as
+two Deployments. `placement.worker_replicas` defaults to 1. Multiple replicas
+are safe because they compete for one Kubernetes Lease, while 0 intentionally
+stops reconciliation without removing its RBAC resources.
+
+After applying stack 05, verify the worker before enabling placement:
+
+```bash
+kubectl --context rke2-vtafarm-production -n default rollout status deploy/vtafarm-api-placement
+kubectl --context rke2-vtafarm-production -n default logs deploy/vtafarm-api-placement --tail=100
+kubectl --context rke2-vtafarm-production -n default get lease vtafarm-placement-worker
+```
+
+Replace the context and namespace with the values for that farm. The logs and
+Lease identify the active replica. In disabled mode node health is refreshed,
+but no placement plan may advance.
 
 ```bash
 make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production

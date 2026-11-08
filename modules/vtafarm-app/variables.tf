@@ -44,6 +44,7 @@ variable "config" {
       metrics_stale_seconds   = optional(number, 90)
       vta_p95_memory          = optional(string, "128Mi")
       poll_seconds            = optional(number, 15)
+      worker_replicas         = optional(number, 1)
     }), {})
 
     # The published versions this farm runs. Each chart's appVersion is its
@@ -84,5 +85,10 @@ variable "config" {
   validation {
     condition     = contains(["disabled", "canary", "enabled"], var.config.placement.mode)
     error_message = "placement.mode must be disabled, canary, or enabled."
+  }
+
+  validation {
+    condition     = var.config.placement.worker_replicas >= 0 && floor(var.config.placement.worker_replicas) == var.config.placement.worker_replicas
+    error_message = "placement.worker_replicas must be a non-negative integer."
   }
 }

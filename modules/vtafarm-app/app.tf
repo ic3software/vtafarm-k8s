@@ -33,6 +33,7 @@ resource "helm_release" "api" {
       metricsStaleSeconds    = tostring(var.config.placement.metrics_stale_seconds)
       vtaP95Memory           = var.config.placement.vta_p95_memory
       pollSeconds            = tostring(var.config.placement.poll_seconds)
+      workerReplicas         = var.config.placement.worker_replicas
     }
   })]
 

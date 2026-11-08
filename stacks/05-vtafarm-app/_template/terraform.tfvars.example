@@ -43,6 +43,9 @@ monitor_token = ""
 placement = {
   mode               = "disabled"
   canary_session_ids = []
+  # Keep one worker in disabled mode so it can publish node health without
+  # moving workloads. Set to 0 only when intentionally stopping reconciliation.
+  worker_replicas = 1
 }
 
 # --- Versions --------------------------------------------------------------

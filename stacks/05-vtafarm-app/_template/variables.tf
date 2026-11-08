@@ -100,12 +100,18 @@ variable "placement" {
     metrics_stale_seconds   = optional(number, 90)
     vta_p95_memory          = optional(string, "128Mi")
     poll_seconds            = optional(number, 15)
+    worker_replicas         = optional(number, 1)
   })
   default = {}
 
   validation {
     condition     = contains(["disabled", "canary", "enabled"], var.placement.mode)
     error_message = "placement.mode must be disabled, canary, or enabled."
+  }
+
+  validation {
+    condition     = var.placement.worker_replicas >= 0 && floor(var.placement.worker_replicas) == var.placement.worker_replicas
+    error_message = "placement.worker_replicas must be a non-negative integer."
   }
 }
 
