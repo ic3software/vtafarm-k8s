@@ -1,5 +1,5 @@
 resource "hcloud_network" "this" {
-  count = var.config.dev ? 0 : 1
+  count = 1
 
   name     = var.config.cluster_name
   ip_range = var.config.network_cidr
@@ -7,7 +7,7 @@ resource "hcloud_network" "this" {
 }
 
 resource "hcloud_network_subnet" "nodes" {
-  count = var.config.dev ? 0 : 1
+  count = 1
 
   network_id   = hcloud_network.this[0].id
   type         = "cloud"

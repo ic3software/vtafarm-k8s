@@ -288,14 +288,17 @@ code stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/terraform.tfvars
 Go through every value in the file and read the comments above them. The scaffold already
 wrote `terraform.tfvars` for you, so there is nothing to copy.
 
-For a disposable single-node development cluster, set the following values. Dev mode creates
-one all-in-one node using `server_type`, without a Hetzner private network or load balancer.
-It exposes ingress directly on the node. `ssh_allowed_cidrs` controls both SSH and Kubernetes
-API access and may be left open for a disposable cluster:
+For a disposable development cluster, set the following values. Dev mode creates one
+all-in-one server using `server_type`, without a load balancer, and exposes ingress directly
+on that server. Like every environment, it always has a private node network. Set `worker_count`
+above zero when placement or multi-node storage testing is needed. `ssh_allowed_cidrs` controls
+both SSH and Kubernetes API access and may be left open for a disposable cluster:
 
 ```hcl
-dev                 = true
-server_type         = "cx33"
+dev               = true
+server_type       = "cx33"
+worker_count      = 2
+worker_type       = "cx23"
 ssh_allowed_cidrs = ["0.0.0.0/0"]
 ```
 

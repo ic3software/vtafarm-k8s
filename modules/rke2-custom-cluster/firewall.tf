@@ -1,5 +1,5 @@
-# Hetzner Cloud Firewalls filter public interfaces only. Normal clusters keep
-# node traffic private; dev runs every RKE2 component locally on its sole node.
+# Hetzner Cloud Firewalls filter public interfaces only. All clusters keep node
+# traffic on their private network; dev exposes only its API and ingress ports.
 resource "hcloud_firewall" "nodes" {
   name   = "${var.config.cluster_name}-nodes"
   labels = local.common_labels

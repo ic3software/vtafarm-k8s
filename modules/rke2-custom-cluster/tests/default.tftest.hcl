@@ -233,7 +233,7 @@ run "default_ha_topology" {
   }
 }
 
-run "dev_single_node_topology" {
+run "dev_workers_without_load_balancer" {
   command = plan
 
   override_data {
@@ -283,17 +283,23 @@ run "dev_single_node_topology" {
 
   assert {
     condition = (
-      length(hcloud_server.node) == 1 &&
+      length(hcloud_server.node) == 4 &&
       hcloud_server.node["server-1"].server_type == "cx43" &&
-      local.server_nodes["server-1"].roles == ["etcd", "controlplane", "worker"]
+      local.server_nodes["server-1"].roles == ["etcd", "controlplane", "worker"] &&
+      alltrue([
+        for key in ["worker-1", "worker-2", "worker-3"] :
+        hcloud_server.node[key].server_type == "cx53" &&
+        local.worker_nodes[key].roles == ["worker"] &&
+        local.worker_nodes[key].location == "nbg1"
+      ])
     )
-    error_message = "Dev must create exactly one all-in-one node using server_type."
+    error_message = "Dev must keep one all-in-one server and honor dedicated worker_count on worker_type in the server location."
   }
 
   assert {
     condition = (
-      length(hcloud_network.this) == 0 &&
-      length(hcloud_network_subnet.nodes) == 0 &&
+      length(hcloud_network.this) == 1 &&
+      length(hcloud_network_subnet.nodes) == 1 &&
       length(hcloud_placement_group.nodes) == 0 &&
       length(hcloud_load_balancer.api) == 0 &&
       length(hcloud_load_balancer_network.api) == 0 &&
@@ -303,29 +309,32 @@ run "dev_single_node_topology" {
       length(hcloud_load_balancer_service.ingress_http) == 0 &&
       length(hcloud_load_balancer_service.ingress_https) == 0
     )
-    error_message = "Dev must not create a private network, placement group, or load balancer."
+    error_message = "Multi-node dev must create its private node network without a placement group or load balancer."
   }
 
   assert {
     condition = (
-      length(hcloud_server.node["server-1"].network) == 0 &&
-      hcloud_server.node["server-1"].placement_group_id == null &&
-      strcontains(
-        base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
-          if config.path == "/etc/rancher-node-bootstrap.env"
-        ])),
-        "USE_PRIVATE_NETWORK=\"false\"",
-      ) &&
-      !strcontains(
-        base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
-          if config.path == "/etc/rancher/node-registration.sh"
-        ])),
-        "--internal-address",
-      )
+      alltrue([
+        for key in keys(local.nodes) :
+        length(hcloud_server.node[key].network) == 1 &&
+        hcloud_server.node[key].placement_group_id == null &&
+        strcontains(
+          base64decode(one([
+            for config in yamldecode(local.node_user_data[key]).write_files : config.content
+            if config.path == "/etc/rancher-node-bootstrap.env"
+          ])),
+          "USE_PRIVATE_NETWORK=\"true\"",
+        ) &&
+        strcontains(
+          base64decode(one([
+            for config in yamldecode(local.node_user_data[key]).write_files : config.content
+            if config.path == "/etc/rancher/node-registration.sh"
+          ])),
+          "--internal-address",
+        )
+      ])
     )
-    error_message = "Dev bootstrap must use only the public NIC and let Rancher detect its address."
+    error_message = "Every multi-node dev machine must attach its private NIC and register that internal address without a placement group."
   }
 
   assert {
@@ -347,8 +356,8 @@ run "dev_single_node_topology" {
 
   assert {
     condition = (
-      !strcontains(local.additional_manifest, local.canal_manifest) &&
-      !can(yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env) &&
+      strcontains(local.additional_manifest, local.canal_manifest) &&
+      yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK.value == "true" &&
       yamldecode(local.chart_values)["rke2-traefik"].deployment.kind == "DaemonSet" &&
       yamldecode(local.chart_values)["rke2-traefik"].service.spec.type == "ClusterIP" &&
       yamldecode(local.chart_values)["rke2-traefik"].ports.web.hostPort == 80 &&
@@ -356,7 +365,73 @@ run "dev_single_node_topology" {
       output.load_balancer_ipv4 == null &&
       output.kubernetes_api_endpoint == "https://203.0.113.10:6443"
     )
-    error_message = "Dev manifests, ingress, and outputs must not depend on a private network or load balancer."
+    error_message = "Multi-node dev must use private-node manifests while keeping ingress and API outputs independent of a load balancer."
+  }
+}
+
+run "dev_zero_workers_keeps_private_network" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name      = "development"
+      dev               = true
+      ssh_key_name      = "k3s-rancher-admin"
+      ssh_allowed_cidrs = ["0.0.0.0/0"]
+      server_type       = "cx33"
+      worker_count      = 0
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/development"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "development-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      length(hcloud_server.node) == 1 &&
+      length(hcloud_network.this) == 1 &&
+      length(hcloud_network_subnet.nodes) == 1 &&
+      length(hcloud_load_balancer.api) == 0 &&
+      length(hcloud_server.node["server-1"].network) == 1 &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          if config.path == "/etc/rancher/node-registration.sh"
+        ])),
+        "--internal-address",
+      ) &&
+      output.kubernetes_api_endpoint == "https://203.0.113.10:6443"
+    )
+    error_message = "Dev must keep its private network when worker_count is zero without adding a load balancer."
   }
 }
 

@@ -33,7 +33,7 @@ variable "location" {
 }
 
 variable "dev" {
-  description = "Create a single-node development cluster without a private network or load balancer."
+  description = "Create one development server without a load balancer. All nodes still use the cluster private network."
   type        = bool
   default     = false
 }
@@ -57,7 +57,7 @@ variable "servers_are_workers" {
 }
 
 variable "worker_count" {
-  description = "Number of dedicated RKE2 worker nodes."
+  description = "Number of dedicated RKE2 worker nodes, including in dev mode."
   type        = number
   default     = 0
 }
@@ -69,7 +69,7 @@ variable "worker_type" {
 }
 
 variable "worker_auto_location" {
-  description = "Let Hetzner choose worker locations; false pins every worker to location."
+  description = "Let Hetzner choose worker locations in normal clusters; dev workers are always pinned to location."
   type        = bool
   default     = false
 }

@@ -12,8 +12,8 @@ location = "nbg1"
 # Pin the Rancher-managed Kubernetes release. Upgrade one minor at a time.
 rke2_version = "v1.35.9+rke2r1"
 
-# Set dev = true for one all-in-one RKE2 node with no private network or load
-# balancer. The node uses server_type; server_count and worker_count are ignored.
+# Set dev = true for one all-in-one RKE2 server with no load balancer.
+# server_count is ignored. Every environment always has a private node network.
 dev = false
 
 # RKE2 server-node shape. Outside dev, server_count must be odd: 3, 5, 7, or 9.
@@ -21,8 +21,9 @@ dev = false
 server_count = 3
 server_type  = "cx33"
 
-# Optional dedicated workers use their own count and server type. False pins
-# every worker to location. True lets Hetzner choose automatically and requires
+# Optional dedicated workers use their own count and server type. In dev they
+# are always pinned to location. Outside dev, false pins every worker and true
+# lets Hetzner choose automatically and requires
 # the worker type to be confined to the cluster's network zone, because the
 # private network is attached only after server creation.
 worker_count         = 0
