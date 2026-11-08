@@ -86,6 +86,12 @@ locals {
     secrets-encryption       = true
     tls-san                  = local.tls_sans
     },
+    # Existing dev servers keep their etcd peer on the public IP after a private
+    # NIC is attached. Prefer the matching kubelet certificate address without
+    # changing node-ip, which would also migrate the embedded etcd member.
+    var.config.dev ? {
+      "kube-apiserver-arg" = ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"]
+    } : {},
     length(local.kubelet_args) == 0 || local.kubelet_reservations_scoped ? {} : { "kubelet-arg" = local.kubelet_args },
   ))
 

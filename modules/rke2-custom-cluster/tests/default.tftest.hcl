@@ -367,6 +367,7 @@ run "dev_workers_without_load_balancer" {
       strcontains(local.additional_manifest, local.canal_manifest) &&
       strcontains(local.additional_manifest, local.metrics_server_manifest) &&
       yamldecode(yamldecode(local.metrics_server_manifest).spec.valuesContent).args == ["--kubelet-insecure-tls"] &&
+      yamldecode(local.machine_global_config)["kube-apiserver-arg"] == ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"] &&
       yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK.value == "true" &&
       yamldecode(local.chart_values)["rke2-traefik"].deployment.kind == "DaemonSet" &&
       yamldecode(local.chart_values)["rke2-traefik"].service.spec.type == "ClusterIP" &&
@@ -440,6 +441,7 @@ run "dev_zero_workers_keeps_private_network" {
         ])),
         "--internal-address",
       ) &&
+      yamldecode(local.machine_global_config)["kube-apiserver-arg"] == ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"] &&
       output.kubernetes_api_endpoint == "https://203.0.113.10:6443"
     )
     error_message = "Dev must keep its private network when worker_count is zero without adding a load balancer."
