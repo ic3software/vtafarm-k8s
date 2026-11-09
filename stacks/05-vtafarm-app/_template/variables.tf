@@ -101,6 +101,9 @@ variable "placement" {
     vta_p95_memory          = optional(string, "128Mi")
     poll_seconds            = optional(number, 15)
     worker_replicas         = optional(number, 1)
+    worker_cpu_request      = optional(string, "25m")
+    worker_memory_request   = optional(string, "128Mi")
+    worker_memory_limit     = optional(string, "256Mi")
   })
   default = {}
 

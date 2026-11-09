@@ -45,7 +45,10 @@ placement = {
   canary_session_ids = []
   # Keep one worker in disabled mode so it can publish node health without
   # moving workloads. Set to 0 only when intentionally stopping reconciliation.
-  worker_replicas = 1
+  worker_replicas       = 1
+  worker_cpu_request    = "25m"
+  worker_memory_request = "128Mi"
+  worker_memory_limit   = "256Mi"
 }
 
 # --- Versions --------------------------------------------------------------
