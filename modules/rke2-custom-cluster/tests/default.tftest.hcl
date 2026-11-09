@@ -316,8 +316,8 @@ run "dev_workers_without_load_balancer" {
     condition = (
       alltrue([
         for key in keys(local.nodes) :
-        length(hcloud_server.node[key].network) == 0 &&
-        hcloud_server_network.dev[key].ip == local.nodes[key].private_ip &&
+        length(hcloud_server.node[key].network) == 1 &&
+        one(hcloud_server.node[key].network).ip == local.nodes[key].private_ip &&
         hcloud_server.node[key].placement_group_id == null &&
         strcontains(
           base64decode(one([
@@ -342,7 +342,7 @@ run "dev_workers_without_load_balancer" {
         )
       ])
     )
-    error_message = "Every multi-node dev machine must attach its private NIC and register that internal address without a placement group."
+    error_message = "Every multi-node dev machine must be created on the private network and register that internal address without a placement group."
   }
 
   assert {
@@ -365,9 +365,8 @@ run "dev_workers_without_load_balancer" {
   assert {
     condition = (
       strcontains(local.additional_manifest, local.canal_manifest) &&
-      strcontains(local.additional_manifest, local.metrics_server_manifest) &&
-      yamldecode(yamldecode(local.metrics_server_manifest).spec.valuesContent).args == ["--kubelet-insecure-tls"] &&
-      yamldecode(local.machine_global_config)["kube-apiserver-arg"] == ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"] &&
+      !strcontains(local.additional_manifest, "--kubelet-insecure-tls") &&
+      !can(yamldecode(local.machine_global_config)["kube-apiserver-arg"]) &&
       yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK.value == "true" &&
       yamldecode(local.chart_values)["rke2-traefik"].deployment.kind == "DaemonSet" &&
       yamldecode(local.chart_values)["rke2-traefik"].service.spec.type == "ClusterIP" &&
@@ -432,8 +431,8 @@ run "dev_zero_workers_keeps_private_network" {
       length(hcloud_network.this) == 1 &&
       length(hcloud_network_subnet.nodes) == 1 &&
       length(hcloud_load_balancer.api) == 0 &&
-      length(hcloud_server.node["server-1"].network) == 0 &&
-      hcloud_server_network.dev["server-1"].ip == "10.10.1.101" &&
+      length(hcloud_server.node["server-1"].network) == 1 &&
+      one(hcloud_server.node["server-1"].network).ip == "10.10.1.101" &&
       strcontains(
         base64decode(one([
           for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
@@ -441,7 +440,7 @@ run "dev_zero_workers_keeps_private_network" {
         ])),
         "--internal-address",
       ) &&
-      yamldecode(local.machine_global_config)["kube-apiserver-arg"] == ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"] &&
+      !can(yamldecode(local.machine_global_config)["kube-apiserver-arg"]) &&
       output.kubernetes_api_endpoint == "https://203.0.113.10:6443"
     )
     error_message = "Dev must keep its private network when worker_count is zero without adding a load balancer."

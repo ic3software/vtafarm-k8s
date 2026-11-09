@@ -439,8 +439,11 @@ code stacks/05-vtafarm-app/clusters/rke2-vtafarm-production/terraform.tfvars
 Go through every value in the file and read the comments above them. `domain` drives every
 hostname the farm serves.
 
-Create the two A records next. Both point at the load balancer of the cluster. cert-manager
-cannot issue the certificate until these names resolve:
+Create the two A records next. In a normal HA cluster, both point at the cluster load
+balancer. In dev mode there is no load balancer: read `nodes.server-1.public_ip` from
+`make outputs-rke2 CLUSTER=<cluster-name>`, use that address for `cluster_ingress_ip` in
+stack 05, and point both records at it. cert-manager cannot issue the certificate until
+these names resolve:
 
 ```text
 vtafarm.yourdomain.com.       A   <cluster_ingress_ip>

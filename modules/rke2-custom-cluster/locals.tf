@@ -86,12 +86,6 @@ locals {
     secrets-encryption       = true
     tls-san                  = local.tls_sans
     },
-    # Existing dev servers keep their etcd peer on the public IP after a private
-    # NIC is attached. Prefer the matching kubelet certificate address without
-    # changing node-ip, which would also migrate the embedded etcd member.
-    var.config.dev ? {
-      "kube-apiserver-arg" = ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"]
-    } : {},
     length(local.kubelet_args) == 0 || local.kubelet_reservations_scoped ? {} : { "kubelet-arg" = local.kubelet_args },
   ))
 
@@ -187,24 +181,6 @@ locals {
     }
   })
 
-  # Existing dev servers may have registered before their private NIC existed,
-  # leaving the kubelet certificate valid only for the public IP. Production
-  # keeps certificate verification enabled; dev accepts this for placement
-  # testing against the private InternalIP without changing the etcd peer IP.
-  metrics_server_manifest = yamlencode({
-    apiVersion = "helm.cattle.io/v1"
-    kind       = "HelmChartConfig"
-    metadata = {
-      name      = "rke2-metrics-server"
-      namespace = "kube-system"
-    }
-    spec = {
-      valuesContent = yamlencode({
-        args = ["--kubelet-insecure-tls"]
-      })
-    }
-  })
-
   additional_manifest = join("\n---\n", concat(
     [
       local.hcloud_secret_manifest,
@@ -212,7 +188,6 @@ locals {
       local.hcloud_csi_manifest,
     ],
     var.config.cni == "canal" ? [local.canal_manifest] : [],
-    var.config.dev ? [local.metrics_server_manifest] : [],
   ))
 
   # Rancher owns the bundled Traefik's configuration on a cluster it manages, so
