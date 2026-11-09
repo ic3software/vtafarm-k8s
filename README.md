@@ -290,9 +290,11 @@ wrote `terraform.tfvars` for you, so there is nothing to copy.
 
 For a disposable development cluster, set the following values. Dev mode creates one
 all-in-one server using `server_type`, without a load balancer, and exposes ingress directly
-on that server. Like every environment, it always has a private node network. Set `worker_count`
-above zero when placement or multi-node storage testing is needed. `ssh_allowed_cidrs` controls
-both SSH and Kubernetes API access and may be left open for a disposable cluster:
+on that server. OpenTofu assigns server-1 a stable Primary IPv4 and includes it in the RKE2 API
+certificate, so the kubeconfig can connect to that address directly. Like every environment,
+it always has a private node network. Set `worker_count` above zero when placement or multi-node
+storage testing is needed. `ssh_allowed_cidrs` controls both SSH and Kubernetes API access and
+may be left open for a disposable cluster:
 
 ```hcl
 dev               = true

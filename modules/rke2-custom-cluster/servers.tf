@@ -1,3 +1,13 @@
+resource "hcloud_primary_ip" "dev_api" {
+  count = var.config.dev ? 1 : 0
+
+  name        = "${var.config.cluster_name}-api"
+  type        = "ipv4"
+  location    = var.config.location
+  auto_delete = false
+  labels      = local.common_labels
+}
+
 data "hcloud_server_type" "worker" {
   count = var.config.dev || var.config.worker_count == 0 || !var.config.worker_auto_location ? 0 : 1
 
@@ -21,6 +31,7 @@ resource "hcloud_server" "node" {
 
   public_net {
     ipv4_enabled = true
+    ipv4         = var.config.dev && each.key == "server-1" ? hcloud_primary_ip.dev_api[0].id : null
     ipv6_enabled = false
   }
 

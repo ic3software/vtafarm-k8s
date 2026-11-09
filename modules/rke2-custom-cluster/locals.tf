@@ -55,6 +55,7 @@ locals {
   nodes = merge(local.server_nodes, local.worker_nodes)
 
   tls_sans = var.config.dev ? compact([
+    hcloud_primary_ip.dev_api[0].ip_address,
     var.config.api_hostname,
     ]) : compact([
     hcloud_load_balancer.api[0].ipv4,

@@ -11,7 +11,7 @@ output "cluster_v1_id" {
 output "kubernetes_api_endpoint" {
   description = "Direct RKE2 API endpoint through the load balancer, or the node in dev."
   value = "https://${var.config.api_hostname != "" ? var.config.api_hostname : (
-    var.config.dev ? hcloud_server.node["server-1"].ipv4_address : hcloud_load_balancer.api[0].ipv4
+    var.config.dev ? hcloud_primary_ip.dev_api[0].ip_address : hcloud_load_balancer.api[0].ipv4
   )}:6443"
 }
 
