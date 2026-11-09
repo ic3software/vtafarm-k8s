@@ -14,7 +14,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 jq -n '{apiVersion:"v1",kind:"Config",
   clusters:[{name:"rke2-test",cluster:{server:"https://127.0.0.1:6443","certificate-authority-data":"dGVzdA=="}}],
-  users:[{name:"unrelated",user:{token:"wrong:fake-unrelated"}},{name:"rke2-test",user:{token:"token-new:fake-new"}}],
+  users:[{name:"unrelated",user:{token:"wrong:fake-unrelated"}},{name:"rke2-test",user:{token:"ext/token-new:fake-new"}}],
   contexts:[{name:"rke2-test",context:{cluster:"rke2-test",user:"rke2-test"}}],"current-context":"rke2-test"}' >"$TEST_DIR/new"
 jq '(.users[] | select(.name == "rke2-test").user.token) = "token-old:fake-old"' "$TEST_DIR/new" >"$TEST_DIR/old"
 jq -n --rawfile config "$TEST_DIR/old" '{cluster_v1_id:{value:"c-test"},kubernetes_api_endpoint:{value:"https://127.0.0.1:6443"},kube_config:{value:$config}}' >"$TEST_DIR/outputs"
@@ -53,7 +53,11 @@ case "$method $url" in
   DELETE*)
     echo '{}' >"$output"
     if [ "$TEST_MODE" = cleanup-fail ]; then printf 500; exit; fi;;
-  *'/v3/tokens/'*|*'/apis/ext.cattle.io/v1/tokens/'*)
+  *'/apis/ext.cattle.io/v1/tokens/'*)
+    jq -n --arg mode "$TEST_MODE" '{spec:{clusterName:(if $mode == "scope" then "c-other" else "c-test" end),
+      enabled:($mode != "disabled")},status:{expiresAt:(if $mode == "expired" then "2000-01-01T00:00:00.000Z" else "2099-01-01T00:00:00Z" end),expired:false}}' >"$output"
+    if [ "$TEST_MODE" = missing ]; then printf 404; exit; fi;;
+  *'/v3/tokens/'*)
     jq -n --arg mode "$TEST_MODE" '{clusterId:(if $mode == "scope" then "c-other" else "c-test" end),
       expiresAt:(if $mode == "expired" then "2000-01-01T00:00:00.000Z" else "2099-01-01T00:00:00Z" end),
       expired:false,enabled:($mode != "disabled")}' >"$output"
@@ -103,9 +107,10 @@ done
 export TEST_MODE=ok
 : >"$TEST_DIR/calls"
 run renew || { cat "$TEST_DIR/log"; fail renewal; }
+grep -q '/apis/ext.cattle.io/v1/tokens/token-new$' "$TEST_DIR/calls" || fail 'ext token used legacy metadata API'
 grep -qx 'apiVersion: v1' "$DEST" || fail 'renewal did not write YAML'
 kubectl --kubeconfig="$DEST" config view --raw -o json |
-  jq -e '.users | length == 1 and .[0].user.token == "token-new:fake-new"' >/dev/null || fail 'wrong referenced user'
+  jq -e '.users | length == 1 and .[0].user.token == "ext/token-new:fake-new"' >/dev/null || fail 'wrong referenced user'
 assert_private "$DEST"
 backup=("$DEST".backup.*)
 [ "${#backup[@]}" = 1 ] || fail 'backup missing'
@@ -128,11 +133,25 @@ if run test; then fail 'cleanup failure reported as success'; fi
 grep -q 'Cleanup failed; delete Rancher Kubeconfig resource kubeconfig-candidate' "$TEST_DIR/log" || fail 'missing cleanup instructions'
 export TEST_MODE=ok
 rm "$DEST"
+: >"$TEST_DIR/calls"
 run write
+grep -q '/v3/tokens/token-old$' "$TEST_DIR/calls" || fail 'legacy token used ext metadata API'
 grep -qx 'apiVersion: v1' "$DEST" || fail 'initial write did not write YAML'
 kubectl --kubeconfig="$DEST" config view --raw -o json |
   jq -e '.users[0].user.token == "token-old:fake-old"' >/dev/null || fail 'initial write from state failed'
 echo 'PASS: cleanup failures reported; missing local file initialized from state'
+
+# Rancher 2.15 tokens use ext/<name>:<value>; malformed variants must fail closed.
+cp "$TEST_DIR/new" "$TEST_DIR/new-valid"
+jq '(.users[] | select(.name == "rke2-test").user.token) = "ext/token-new"' \
+  "$TEST_DIR/new-valid" >"$TEST_DIR/new"
+: >"$TEST_DIR/calls"
+if run renew; then fail 'malformed ext token accepted'; fi
+grep -q 'Unsupported Rancher bearer token' "$TEST_DIR/log" || fail 'malformed token diagnosis missing'
+[ "$(grep -c '^DELETE .*kubeconfig-candidate$' "$TEST_DIR/calls")" = 1 ] || fail 'malformed token candidate not cleaned'
+assert_no_secrets
+mv "$TEST_DIR/new-valid" "$TEST_DIR/new"
+echo 'PASS: malformed ext token is rejected without leaking credentials'
 
 # Merging must keep other credentials and the current context, including an unset context.
 jq '{apiVersion,kind,clusters:[{name:"other",cluster:{server:"https://127.0.0.2:6443"}}],
@@ -146,7 +165,7 @@ for current in other rke2-test ''; do
   bash "$ROOT/scripts/merge-kubeconfig.sh" "$TEST_DIR/installed" "$TEST_DIR/merged" >"$TEST_DIR/log" 2>&1
   kubectl --kubeconfig="$TEST_DIR/merged" config view --raw -o json >"$TEST_DIR/merged.json"
   jq -e --arg current "$current" '(."current-context" // "") == $current and
-    any(.users[]; .name == "rke2-test" and .user.token == "token-new:fake-new") and
+    any(.users[]; .name == "rke2-test" and .user.token == "ext/token-new:fake-new") and
     any(.users[]; .name == "other" and .user.token == "token-other:fake-other")' "$TEST_DIR/merged.json" >/dev/null || fail 'merge dropped credentials or changed current context'
   assert_private "$TEST_DIR/merged"
   assert_no_secrets

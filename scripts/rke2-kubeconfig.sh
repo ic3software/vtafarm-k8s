@@ -83,11 +83,19 @@ normalize() {
     "$WORK/raw.json" >"$WORK/candidate" 2>"$WORK/error" || fail 'No direct API context with a CA and bearer token; check ACE configuration'
 }
 validate() {
-  local token_id token_path deadline
-  token_id="$(jq -er '.users[0].user.token | split(":") |
-    if length == 2 then .[0] elif length == 3 and .[0] == "ext" then .[1] else empty end |
-    select(test("^[a-zA-Z0-9-]+$"))' "$WORK/candidate")" || fail 'Unsupported Rancher bearer token'
-  if jq -e '.users[0].user.token | startswith("ext:")' "$WORK/candidate" >/dev/null; then
+  local token_info token_kind token_id token_path deadline
+  token_info="$(jq -er '.users[0].user.token | split(":") |
+    if length == 2 and .[1] != "" and (.[0] | startswith("ext/")) then
+      ["ext", (.[0] | ltrimstr("ext/"))]
+    elif length == 2 and .[1] != "" then
+      ["legacy", .[0]]
+    elif length == 3 and .[0] == "ext" and .[2] != "" then
+      ["ext", .[1]]
+    else empty end |
+    select(.[1] | test("^[a-zA-Z0-9-]+$")) | @tsv' "$WORK/candidate")" ||
+    fail 'Unsupported Rancher bearer token'
+  IFS=$'\t' read -r token_kind token_id <<<"$token_info"
+  if [ "$token_kind" = ext ]; then
     token_path="/apis/ext.cattle.io/v1/tokens/$token_id"
   else
     token_path="/v3/tokens/$token_id"
