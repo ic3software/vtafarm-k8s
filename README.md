@@ -290,9 +290,11 @@ wrote `terraform.tfvars` for you, so there is nothing to copy.
 
 For a disposable development cluster, set the following values. Dev mode creates one
 all-in-one server using `server_type`, without a load balancer, and exposes ingress directly
-on that server. Like every environment, it always has a private node network. Set `worker_count`
-above zero when placement or multi-node storage testing is needed. `ssh_allowed_cidrs` controls
-both SSH and Kubernetes API access and may be left open for a disposable cluster:
+on that server. OpenTofu assigns server-1 a stable Primary IPv4 and includes it in the RKE2 API
+certificate, so the kubeconfig can connect to that address directly. Like every environment,
+it always has a private node network. Set `worker_count` above zero when placement or multi-node
+storage testing is needed. `ssh_allowed_cidrs` controls both SSH and Kubernetes API access and
+may be left open for a disposable cluster:
 
 ```hcl
 dev               = true
@@ -439,8 +441,11 @@ code stacks/05-vtafarm-app/clusters/rke2-vtafarm-production/terraform.tfvars
 Go through every value in the file and read the comments above them. `domain` drives every
 hostname the farm serves.
 
-Create the two A records next. Both point at the load balancer of the cluster. cert-manager
-cannot issue the certificate until these names resolve:
+Create the two A records next. In a normal HA cluster, both point at the cluster load
+balancer. In dev mode there is no load balancer: read `nodes.server-1.public_ip` from
+`make outputs-rke2 CLUSTER=<cluster-name>`, use that address for `cluster_ingress_ip` in
+stack 05, and point both records at it. cert-manager cannot issue the certificate until
+these names resolve:
 
 ```text
 vtafarm.yourdomain.com.       A   <cluster_ingress_ip>

@@ -48,6 +48,12 @@ mock_provider "hcloud" {
   mock_resource "hcloud_placement_group" {
     defaults = { id = "4" }
   }
+  mock_resource "hcloud_primary_ip" {
+    defaults = {
+      id         = "6"
+      ip_address = "203.0.113.10"
+    }
+  }
   mock_resource "hcloud_server" {
     defaults = {
       id           = "5"
@@ -101,7 +107,7 @@ run "default_ha_topology" {
   }
 
   assert {
-    condition     = length(hcloud_server.node) == 3
+    condition     = length(hcloud_server.node) == 3 && length(hcloud_primary_ip.dev_api) == 0
     error_message = "The default topology must create exactly three server nodes."
   }
 
@@ -300,6 +306,7 @@ run "dev_workers_without_load_balancer" {
     condition = (
       length(hcloud_network.this) == 1 &&
       length(hcloud_network_subnet.nodes) == 1 &&
+      length(hcloud_primary_ip.dev_api) == 1 &&
       length(hcloud_placement_group.nodes) == 0 &&
       length(hcloud_load_balancer.api) == 0 &&
       length(hcloud_load_balancer_network.api) == 0 &&
@@ -316,8 +323,8 @@ run "dev_workers_without_load_balancer" {
     condition = (
       alltrue([
         for key in keys(local.nodes) :
-        length(hcloud_server.node[key].network) == 0 &&
-        hcloud_server_network.dev[key].ip == local.nodes[key].private_ip &&
+        length(hcloud_server.node[key].network) == 1 &&
+        one(hcloud_server.node[key].network).ip == local.nodes[key].private_ip &&
         hcloud_server.node[key].placement_group_id == null &&
         strcontains(
           base64decode(one([
@@ -342,7 +349,7 @@ run "dev_workers_without_load_balancer" {
         )
       ])
     )
-    error_message = "Every multi-node dev machine must attach its private NIC and register that internal address without a placement group."
+    error_message = "Every multi-node dev machine must be created on the private network and register that internal address without a placement group."
   }
 
   assert {
@@ -365,18 +372,19 @@ run "dev_workers_without_load_balancer" {
   assert {
     condition = (
       strcontains(local.additional_manifest, local.canal_manifest) &&
-      strcontains(local.additional_manifest, local.metrics_server_manifest) &&
-      yamldecode(yamldecode(local.metrics_server_manifest).spec.valuesContent).args == ["--kubelet-insecure-tls"] &&
-      yamldecode(local.machine_global_config)["kube-apiserver-arg"] == ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"] &&
+      !strcontains(local.additional_manifest, "--kubelet-insecure-tls") &&
+      !can(yamldecode(local.machine_global_config)["kube-apiserver-arg"]) &&
       yamldecode(yamldecode(local.hcloud_ccm_manifest).spec.valuesContent).env.HCLOUD_NETWORK_DISABLE_ATTACHED_CHECK.value == "true" &&
       yamldecode(local.chart_values)["rke2-traefik"].deployment.kind == "DaemonSet" &&
       yamldecode(local.chart_values)["rke2-traefik"].service.spec.type == "ClusterIP" &&
       yamldecode(local.chart_values)["rke2-traefik"].ports.web.hostPort == 80 &&
       yamldecode(local.chart_values)["rke2-traefik"].ports.websecure.hostPort == 443 &&
       output.load_balancer_ipv4 == null &&
-      output.kubernetes_api_endpoint == "https://203.0.113.10:6443"
+      output.kubernetes_api_endpoint == "https://203.0.113.10:6443" &&
+      contains(local.tls_sans, hcloud_primary_ip.dev_api[0].ip_address) &&
+      one(hcloud_server.node["server-1"].public_net).ipv4 == hcloud_primary_ip.dev_api[0].id
     )
-    error_message = "Multi-node dev must use private-node manifests while keeping ingress and API outputs independent of a load balancer."
+    error_message = "Multi-node dev must use a stable server-1 API address in both its TLS certificate and kubeconfig without a load balancer."
   }
 }
 
@@ -431,9 +439,10 @@ run "dev_zero_workers_keeps_private_network" {
       length(hcloud_server.node) == 1 &&
       length(hcloud_network.this) == 1 &&
       length(hcloud_network_subnet.nodes) == 1 &&
+      length(hcloud_primary_ip.dev_api) == 1 &&
       length(hcloud_load_balancer.api) == 0 &&
-      length(hcloud_server.node["server-1"].network) == 0 &&
-      hcloud_server_network.dev["server-1"].ip == "10.10.1.101" &&
+      length(hcloud_server.node["server-1"].network) == 1 &&
+      one(hcloud_server.node["server-1"].network).ip == "10.10.1.101" &&
       strcontains(
         base64decode(one([
           for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
@@ -441,10 +450,12 @@ run "dev_zero_workers_keeps_private_network" {
         ])),
         "--internal-address",
       ) &&
-      yamldecode(local.machine_global_config)["kube-apiserver-arg"] == ["kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname"] &&
-      output.kubernetes_api_endpoint == "https://203.0.113.10:6443"
+      !can(yamldecode(local.machine_global_config)["kube-apiserver-arg"]) &&
+      output.kubernetes_api_endpoint == "https://203.0.113.10:6443" &&
+      contains(local.tls_sans, hcloud_primary_ip.dev_api[0].ip_address) &&
+      one(hcloud_server.node["server-1"].public_net).ipv4 == hcloud_primary_ip.dev_api[0].id
     )
-    error_message = "Dev must keep its private network when worker_count is zero without adding a load balancer."
+    error_message = "Dev must keep its private network and use server-1's stable public IP for a TLS-valid API endpoint without a load balancer."
   }
 }
 

@@ -1,3 +1,13 @@
+resource "hcloud_primary_ip" "dev_api" {
+  count = var.config.dev ? 1 : 0
+
+  name        = "${var.config.cluster_name}-api"
+  type        = "ipv4"
+  location    = var.config.location
+  auto_delete = false
+  labels      = local.common_labels
+}
+
 data "hcloud_server_type" "worker" {
   count = var.config.dev || var.config.worker_count == 0 || !var.config.worker_auto_location ? 0 : 1
 
@@ -21,11 +31,12 @@ resource "hcloud_server" "node" {
 
   public_net {
     ipv4_enabled = true
+    ipv4         = var.config.dev && each.key == "server-1" ? hcloud_primary_ip.dev_api[0].id : null
     ipv6_enabled = false
   }
 
   dynamic "network" {
-    for_each = var.config.dev ? [] : [each.value.private_ip]
+    for_each = [each.value.private_ip]
 
     content {
       network_id = hcloud_network.this[0].id
@@ -56,16 +67,4 @@ resource "hcloud_server" "node" {
     hcloud_load_balancer_service.kubernetes_api,
     hcloud_load_balancer_service.rke2_supervisor,
   ]
-}
-
-# Keep the attachment independently importable for an existing dev server.
-# New dev nodes wait for this hot-plugged NIC in their bootstrap script.
-resource "hcloud_server_network" "dev" {
-  for_each = var.config.dev ? local.nodes : {}
-
-  server_id  = hcloud_server.node[each.key].id
-  network_id = hcloud_network.this[0].id
-  ip         = each.value.private_ip
-
-  depends_on = [hcloud_network_subnet.nodes]
 }
