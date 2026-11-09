@@ -34,6 +34,15 @@ resource "helm_release" "api" {
       vtaP95Memory           = var.config.placement.vta_p95_memory
       pollSeconds            = tostring(var.config.placement.poll_seconds)
       workerReplicas         = var.config.placement.worker_replicas
+      resources = {
+        requests = {
+          cpu    = var.config.placement.worker_cpu_request
+          memory = var.config.placement.worker_memory_request
+        }
+        limits = {
+          memory = var.config.placement.worker_memory_limit
+        }
+      }
     }
   })]
 
