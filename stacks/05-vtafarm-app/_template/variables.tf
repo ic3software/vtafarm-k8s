@@ -87,6 +87,34 @@ variable "monitor_token" {
   sensitive   = true
 }
 
+variable "placement" {
+  description = "Workload placement activation and safety thresholds. Ship disabled, validate canaries, then switch to enabled."
+  type = object({
+    mode                    = optional(string, "disabled")
+    canary_session_ids      = optional(list(number), [])
+    green_below_percent     = optional(number, 70)
+    yellow_below_percent    = optional(number, 85)
+    hot_at_percent          = optional(number, 90)
+    hot_observation_minutes = optional(number, 5)
+    recovery_minutes        = optional(number, 10)
+    metrics_stale_seconds   = optional(number, 90)
+    vta_p95_memory          = optional(string, "128Mi")
+    poll_seconds            = optional(number, 15)
+    worker_replicas         = optional(number, 1)
+  })
+  default = {}
+
+  validation {
+    condition     = contains(["disabled", "canary", "enabled"], var.placement.mode)
+    error_message = "placement.mode must be disabled, canary, or enabled."
+  }
+
+  validation {
+    condition     = var.placement.worker_replicas >= 0 && floor(var.placement.worker_replicas) == var.placement.worker_replicas
+    error_message = "placement.worker_replicas must be a non-negative integer."
+  }
+}
+
 variable "vtafarm_version" {
   description = "Published chart version of the frontend. Its appVersion is the image tag."
   type        = string

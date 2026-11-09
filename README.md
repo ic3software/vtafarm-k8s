@@ -288,14 +288,17 @@ code stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/terraform.tfvars
 Go through every value in the file and read the comments above them. The scaffold already
 wrote `terraform.tfvars` for you, so there is nothing to copy.
 
-For a disposable single-node development cluster, set the following values. Dev mode creates
-one all-in-one node using `server_type`, without a Hetzner private network or load balancer.
-It exposes ingress directly on the node. `ssh_allowed_cidrs` controls both SSH and Kubernetes
-API access and may be left open for a disposable cluster:
+For a disposable development cluster, set the following values. Dev mode creates one
+all-in-one server using `server_type`, without a load balancer, and exposes ingress directly
+on that server. Like every environment, it always has a private node network. Set `worker_count`
+above zero when placement or multi-node storage testing is needed. `ssh_allowed_cidrs` controls
+both SSH and Kubernetes API access and may be left open for a disposable cluster:
 
 ```hcl
-dev                 = true
-server_type         = "cx33"
+dev               = true
+server_type       = "cx33"
+worker_count      = 2
+worker_type       = "cx23"
 ssh_allowed_cidrs = ["0.0.0.0/0"]
 ```
 
@@ -455,6 +458,30 @@ Set `farm_did` and its matching `farm_signing_key` in each environment's
 generated assertion method and `TrustTaskHTTPS` service in that Farm DID before applying this
 stack. The Trust Task endpoint is always derived as `https://<api_host>/trust-task`.
 The signing seed exists in this stack's state file, so back it up securely.
+
+The API chart also installs the complete workload-placement worker and Admin
+Panel API. Keep `placement.mode = "disabled"` for the first deployment: this
+still publishes node state and reports, but cannot move a Pod. After completing
+the Longhorn backup/restore drill, change the same release to `canary` with the
+approved numeric setup-session IDs, relocate each canary twice, then change the
+mode to `enabled`. These are activation gates for one build, not separate code
+releases. `vtafarm_api_version` must name a published chart version whose image
+contains both `api` and `placement-worker`; stack 05 deploys that one image as
+two Deployments. `placement.worker_replicas` defaults to 1. Multiple replicas
+are safe because they compete for one Kubernetes Lease, while 0 intentionally
+stops reconciliation without removing its RBAC resources.
+
+After applying stack 05, verify the worker before enabling placement:
+
+```bash
+kubectl --context rke2-vtafarm-production -n default rollout status deploy/vtafarm-api-placement
+kubectl --context rke2-vtafarm-production -n default logs deploy/vtafarm-api-placement --tail=100
+kubectl --context rke2-vtafarm-production -n default get lease vtafarm-placement-worker
+```
+
+Replace the context and namespace with the values for that farm. The logs and
+Lease identify the active replica. In disabled mode node health is refreshed,
+but no placement plan may advance.
 
 ```bash
 make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production

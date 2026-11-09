@@ -25,7 +25,7 @@ resource "hcloud_server" "node" {
   }
 
   dynamic "network" {
-    for_each = local.use_private_network ? [each.value.private_ip] : []
+    for_each = var.config.dev ? [] : [each.value.private_ip]
 
     content {
       network_id = hcloud_network.this[0].id
@@ -39,7 +39,7 @@ resource "hcloud_server" "node" {
     ignore_changes = [user_data, ssh_keys, image]
 
     precondition {
-      condition = !startswith(each.key, "worker-") || !var.config.worker_auto_location || (
+      condition = var.config.dev || !startswith(each.key, "worker-") || !var.config.worker_auto_location || (
         length(data.hcloud_server_type.worker[0].locations) > 0 &&
         alltrue([
           for location in data.hcloud_server_type.worker[0].locations :
@@ -56,4 +56,16 @@ resource "hcloud_server" "node" {
     hcloud_load_balancer_service.kubernetes_api,
     hcloud_load_balancer_service.rke2_supervisor,
   ]
+}
+
+# Keep the attachment independently importable for an existing dev server.
+# New dev nodes wait for this hot-plugged NIC in their bootstrap script.
+resource "hcloud_server_network" "dev" {
+  for_each = var.config.dev ? local.nodes : {}
+
+  server_id  = hcloud_server.node[each.key].id
+  network_id = hcloud_network.this[0].id
+  ip         = each.value.private_ip
+
+  depends_on = [hcloud_network_subnet.nodes]
 }

@@ -36,6 +36,18 @@ farm_signing_key = ""
 # openssl rand -hex 32. Empty disables /api/v1/monitor/*.
 monitor_token = ""
 
+# --- Workload placement ---------------------------------------------------
+# Deploy the complete feature with mode=disabled first. After backup/restore
+# validation, list the two canary VTA setup-session numeric IDs. Change only
+# mode to enabled after both canaries have completed and retained their data.
+placement = {
+  mode               = "disabled"
+  canary_session_ids = []
+  # Keep one worker in disabled mode so it can publish node health without
+  # moving workloads. Set to 0 only when intentionally stopping reconciliation.
+  worker_replicas = 1
+}
+
 # --- Versions --------------------------------------------------------------
 # The release this farm runs. Each chart's appVersion is its image tag, so
 # these two numbers pin the images too.

@@ -28,6 +28,7 @@ module "app" {
     farm_did                = var.farm_did
     farm_signing_key        = var.farm_signing_key
     monitor_token           = var.monitor_token
+    placement               = var.placement
 
     vtafarm_version     = var.vtafarm_version
     vtafarm_api_version = var.vtafarm_api_version

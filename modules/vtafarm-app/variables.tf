@@ -31,6 +31,22 @@ variable "config" {
     # Shared secret gating /api/v1/monitor/*. Empty disables the endpoints.
     monitor_token = optional(string, "")
 
+    # The complete placement implementation is always deployed. This switch
+    # controls production activation without changing the release artifact.
+    placement = optional(object({
+      mode                    = optional(string, "disabled")
+      canary_session_ids      = optional(list(number), [])
+      green_below_percent     = optional(number, 70)
+      yellow_below_percent    = optional(number, 85)
+      hot_at_percent          = optional(number, 90)
+      hot_observation_minutes = optional(number, 5)
+      recovery_minutes        = optional(number, 10)
+      metrics_stale_seconds   = optional(number, 90)
+      vta_p95_memory          = optional(string, "128Mi")
+      poll_seconds            = optional(number, 15)
+      worker_replicas         = optional(number, 1)
+    }), {})
+
     # The published versions this farm runs. Each chart's appVersion is its
     # image tag, so these two numbers pin everything.
     vtafarm_version     = string
@@ -64,5 +80,15 @@ variable "config" {
   validation {
     condition     = can(regex("^[A-Za-z0-9+/]{43}=$", var.config.farm_signing_key))
     error_message = "farm_signing_key must be a base64-encoded 32-byte Ed25519 seed."
+  }
+
+  validation {
+    condition     = contains(["disabled", "canary", "enabled"], var.config.placement.mode)
+    error_message = "placement.mode must be disabled, canary, or enabled."
+  }
+
+  validation {
+    condition     = var.config.placement.worker_replicas >= 0 && floor(var.config.placement.worker_replicas) == var.config.placement.worker_replicas
+    error_message = "placement.worker_replicas must be a non-negative integer."
   }
 }

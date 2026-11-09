@@ -22,6 +22,19 @@ resource "helm_release" "api" {
       farmDID       = var.config.farm_did
       trustTaskBase = "https://${local.api_host}/trust-task"
     }
+    placement = {
+      mode                   = var.config.placement.mode
+      canarySessionIDs       = join(",", var.config.placement.canary_session_ids)
+      greenBelowPct          = tostring(var.config.placement.green_below_percent)
+      yellowBelowPct         = tostring(var.config.placement.yellow_below_percent)
+      hotAtPct               = tostring(var.config.placement.hot_at_percent)
+      hotObservationMin      = tostring(var.config.placement.hot_observation_minutes)
+      recoveryObservationMin = tostring(var.config.placement.recovery_minutes)
+      metricsStaleSeconds    = tostring(var.config.placement.metrics_stale_seconds)
+      vtaP95Memory           = var.config.placement.vta_p95_memory
+      pollSeconds            = tostring(var.config.placement.poll_seconds)
+      workerReplicas         = var.config.placement.worker_replicas
+    }
   })]
 
   depends_on = [
