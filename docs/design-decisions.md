@@ -33,6 +33,9 @@ of server nodes, where the first one starts with `--cluster-init` and the others
 | --- | --- |
 | **A transit Vault for auto-unseal, not manual keys** | Without it, every restart of a Vault pod waits for a person to paste the unseal keys. The transit Vault is the start of the chain, so it is the only Vault that a person still unseals by hand. It holds no tenant data: if you lose it, you create new keys, but you do not lose the seeds. It gives you restarts without an operator. It does not protect a running cluster from an attacker, because the token that unwraps the root key of the farm lives in the same cluster. To use a cloud KMS instead, change the `seal` block. |
 | **Longhorn owns the default StorageClass** | The RKE2 module installs hcloud-csi, so the cluster already has block storage: one replica, billed separately, and one volume attached to one node. Longhorn stores PVCs on the NVMe disks of the nodes, so Longhorn is the default class and `hcloud-volumes` is explicitly set to non-default. The default replica count is one, because the Raft protocol of Vault already keeps one copy per peer. Raise `longhorn_replica_count` for data that does not replicate itself. Two default classes are undefined behaviour: the API server picks one of them, and PVCs quietly land on the wrong storage. |
+| **Observability is optional stack 06** | Prometheus and future Loki releases have their own lifecycle and persistent data, so they do not belong in the mandatory platform or application state. Keeping them in stack 06 lets a farm omit monitoring entirely, while an operator who wants it still installs the whole observability layer with one apply. `observability_enabled = false` creates no resources. |
+| **Prometheus uses a retained Hetzner Cloud Volume** | Metrics do not need Longhorn replication, and their write load should not consume the nodes' local Longhorn capacity. The stack creates a non-default `hcloud-volumes-retain` class and a bounded Prometheus TSDB on it. Destroying the stack keeps the cloud Volume for deliberate recovery or deletion. |
+| **Tenant metrics go through the API** | Prometheus and Grafana are private cluster services. The API must first verify that the signed-in user owns the database session, then query the pre-aggregated series keyed by `session-id`; users must never receive arbitrary PromQL access. |
 
 ---
 
@@ -65,16 +68,20 @@ The full arrangement, including how a second operator joins, is in
 │   ├── 04-vtafarm-platform/
 │   │   ├── _template/          # tracked template for a cluster's platform layer
 │   │   └── clusters/           # generated platform roots (also gitignored)
-│   └── 05-vtafarm-app/
-│       ├── _template/          # tracked template for the applications
-│       └── clusters/           # generated app roots (also gitignored)
+│   ├── 05-vtafarm-app/
+│   │   ├── _template/          # tracked template for the applications
+│   │   └── clusters/           # generated app roots (also gitignored)
+│   └── 06-vtafarm-observability/
+│       ├── _template/          # tracked template for optional monitoring
+│       └── clusters/           # generated observability roots (also gitignored)
 ├── modules/
 │   ├── rke2-custom-cluster/    # shared Rancher + Hetzner implementation
 │   ├── vtafarm-platform/       # cert-manager + Longhorn + both Vaults
 │   │   ├── charts/vault-pki/   # cert-manager Issuer + Certificate chain
 │   │   └── templates/          # Vault chart values
-│   └── vtafarm-app/            # the frontend and the API, from GHCR
-│       └── charts/vtafarm-tls/ # ACME issuers, wildcard certificate, TLS store
+│   ├── vtafarm-app/            # the frontend and the API, from GHCR
+│   │   └── charts/vtafarm-tls/ # ACME issuers, wildcard certificate, TLS store
+│   └── vtafarm-observability/  # Prometheus stack and VTA Farm recording rules
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config
@@ -89,7 +96,7 @@ The full arrangement, including how a second operator joins, is in
 
 ---
 
-## Why five stacks
+## Why six stacks
 
 OpenTofu configures every provider *before* it starts to run. The `helm` and `kubernetes`
 providers need a kubeconfig, and that file exists only after stack 01 has finished. If both
@@ -101,13 +108,18 @@ provider can create a custom cluster and return the node registration command. T
 stack 03. The cluster must then be Active and return a kubeconfig before anything can be
 installed into it. That is stack 04.
 
-Stacks 03, 04 and 05 keep one directory per cluster, under `clusters/<name>`, and each
+Stacks 03 through 06 keep one directory per cluster, under `clusters/<name>`, and each
 directory has its own state file. Creating or destroying one cluster therefore cannot affect
 another. The shared logic lives in `modules/`, which is tracked in Git. Git ignores the
 generated `clusters/` directories, because they are site-specific: a second operator recreates
 them from `_template` with `make new-…` and then pulls their `terraform.tfvars` from the
 bucket. The directory name of a cluster is the single source of truth in every stack. It is
-also how stack 04 finds the kubeconfig that stack 03 wrote for the same name.
+also how stacks 04 through 06 find the kubeconfig that stack 03 wrote for the same name.
+
+Stack 06 does not need stack 05's state: kubelet/cAdvisor and kube-state-metrics discover Pods
+directly from Kubernetes. Its ordering is a repository convention that keeps observability
+after the workloads it describes and leaves room for Loki without coupling either service to
+application upgrades.
 
 ---
 

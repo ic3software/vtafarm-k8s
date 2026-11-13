@@ -1,0 +1,33 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+
+# Leave empty to use stack 03's kubeconfig for this cluster.
+kubeconfig_path = ""
+
+# Opt-in. When false, this stack owns no Kubernetes or Hetzner resources, so
+# environments that do not want monitoring can still apply it as a safe no-op.
+observability_enabled = false
+
+observability_namespace       = "monitoring"
+kube_prometheus_stack_version = "93.2.2"
+
+# Prometheus uses a dedicated Hetzner Cloud Volume rather than Longhorn. The
+# module creates this Retain StorageClass through the already-installed hcloud
+# CSI driver. Keep retention_size below storage_size for WAL and compaction.
+prometheus_storage_class  = "hcloud-volumes-retain"
+prometheus_storage_size   = "50Gi"
+prometheus_retention      = "15d"
+prometheus_retention_size = "40GB"
+
+prometheus_scrape_interval     = "30s"
+prometheus_evaluation_interval = "30s"
+
+# Prometheus has no CPU limit so an idle node can absorb query/compaction
+# bursts. Memory is incompressible and therefore keeps a hard limit.
+prometheus_cpu_request    = "250m"
+prometheus_memory_request = "1Gi"
+prometheus_memory_limit   = "3Gi"
+
+# Both interfaces remain private ClusterIP services. Use kubectl port-forward
+# for operator access; tenant metrics will go through vtafarm-api instead.
+grafana_enabled      = true
+alertmanager_enabled = true

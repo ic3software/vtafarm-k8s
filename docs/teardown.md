@@ -1,7 +1,18 @@
 # Teardown
 
-You can destroy each layer on its own. Work from the top down: first the applications, then
-the platform, then the downstream cluster, and last the management cluster.
+You can destroy each layer on its own. Work from the top down: first observability, then the
+applications, the platform, the downstream cluster, and last the management cluster.
+
+## Observability only
+
+```bash
+make destroy-vtafarm-observability CLUSTER=rke2-vtafarm-production
+```
+
+Prometheus uses the `hcloud-volumes-retain` StorageClass. Destroy removes the Helm release,
+namespace and claim, but deliberately leaves its PV and Hetzner Cloud Volume behind. Record the
+PV and Volume identity before destroy if you intend to recover it; otherwise delete the retained
+PV and cloud Volume explicitly in Kubernetes and the Hetzner Console.
 
 ## The applications only
 
@@ -79,7 +90,7 @@ first, while Rancher is still running and can accept the deletions. It destroys 
 after every RKE2 destroy has succeeded. If a step fails, the command stops. It does not delete
 the layers that the failed step depends on.
 
-The command skips stacks 02, 04 and 05 on purpose. Everything they own runs inside a cluster
+The command skips stacks 02 and 04 through 06 on purpose. Everything they own runs inside a cluster
 that is about to be destroyed, so a separate `helm uninstall` run would only cost time. Those
 resources disappear without OpenTofu knowing about it, so the command deletes their state files
 after the cluster is gone. An old state file would make the next apply refresh against a
@@ -96,7 +107,7 @@ disappear by themselves, but volumes with `Retain` stay and you keep paying for 
 ## Resetting the checkout
 
 `make clean` removes what a fresh clone would not have: every `.terraform` directory, the
-`terraform.tfvars` of stacks 01 and 02, and the `clusters/` directory of stacks 03 to 05. It
+`terraform.tfvars` of stacks 01 and 02, and the `clusters/` directory of stacks 03 to 06. It
 asks first, and it touches nothing remote — the state bucket keeps both the state files and
 the tfvars, and any running cluster keeps running.
 
@@ -112,6 +123,7 @@ make tfvars-pull
 make new-rke2-cluster CLUSTER=rke2-vtafarm-production
 make new-vtafarm-platform CLUSTER=rke2-vtafarm-production
 make new-vtafarm-app CLUSTER=rke2-vtafarm-production
+make new-vtafarm-observability CLUSTER=rke2-vtafarm-production
 make tfvars-pull    # the cluster roots now exist, so their tfvars land too
 make init-rke2 CLUSTER=rke2-vtafarm-production
 ```

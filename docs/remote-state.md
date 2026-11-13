@@ -247,7 +247,7 @@ make state-versions STACK=01-infra
 make state-versions STACK=03-rke2-clusters CLUSTER=rke2-vtafarm-production
 ```
 
-`STACK` is the path below `$TF_PREFIX/tfstate`, and stacks 03 to 05 take `CLUSTER` as well. The
+`STACK` is the path below `$TF_PREFIX/tfstate`, and stacks 03 to 06 take `CLUSTER` as well. The
 row marked `LATEST` is the state in use now. Push an older one back with its version id:
 
 ```bash

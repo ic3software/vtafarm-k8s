@@ -39,6 +39,9 @@ make vault-bootstrap          CLUSTER=rke2-vtafarm-production TARGET=farm
 
 make apply-vtafarm-app   CLUSTER=rke2-vtafarm-production   # the frontend and the API
 make outputs-vtafarm-app CLUSTER=rke2-vtafarm-production   # the URLs and the DNS records
+
+make apply-vtafarm-observability CLUSTER=rke2-vtafarm-production # Prometheus, Grafana, alerts
+make observability-status        CLUSTER=rke2-vtafarm-production # Pods, PVCs, scrape resources
 ```
 
 The destroy targets are in [teardown.md](teardown.md).

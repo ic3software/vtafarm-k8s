@@ -40,7 +40,7 @@ S3API=(aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3api)
 stack_dir() {
   case "$1" in
   01-infra | 02-rancher) printf 'stacks/%s\n' "$1" ;;
-  03-rke2-clusters/?* | 04-vtafarm-platform/?* | 05-vtafarm-app/?*)
+  03-rke2-clusters/?* | 04-vtafarm-platform/?* | 05-vtafarm-app/?* | 06-vtafarm-observability/?*)
     printf 'stacks/%s/clusters/%s\n' "${1%%/*}" "${1#*/}"
     ;;
   *) return 1 ;;
@@ -55,6 +55,7 @@ no stack owns "${STACK}". Use one of:
   STACK=03-rke2-clusters    CLUSTER=<name>
   STACK=04-vtafarm-platform CLUSTER=<name>
   STACK=05-vtafarm-app      CLUSTER=<name>
+  STACK=06-vtafarm-observability CLUSTER=<name>
 USAGE
   exit 2
 }

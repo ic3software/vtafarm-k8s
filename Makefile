@@ -12,6 +12,10 @@ VTAFARM_PLATFORM_CLUSTER_DIR := $(VTAFARM_PLATFORM_ROOT)/$(CLUSTER)
 VTAFARM_APP_ROOT := $(ROOT)/stacks/05-vtafarm-app/clusters
 VTAFARM_APP_CLUSTER_DIR := $(VTAFARM_APP_ROOT)/$(CLUSTER)
 VTAFARM_PLATFORM_MODULE := $(ROOT)/modules/vtafarm-platform
+VTAFARM_OBSERVABILITY_ROOT := $(ROOT)/stacks/06-vtafarm-observability/clusters
+VTAFARM_OBSERVABILITY_TEMPLATE := $(ROOT)/stacks/06-vtafarm-observability/_template
+VTAFARM_OBSERVABILITY_CLUSTER_DIR := $(VTAFARM_OBSERVABILITY_ROOT)/$(CLUSTER)
+VTAFARM_OBSERVABILITY_MODULE := $(ROOT)/modules/vtafarm-observability
 KUBECONFIG_FILE := $(INFRA)/kubeconfig.yaml
 
 export KUBECONFIG := $(KUBECONFIG_FILE)
@@ -65,7 +69,7 @@ tfvars-push: check-state-env ## Upload every terraform.tfvars to the state bucke
 tfvars-diff: check-state-env ## Name the tfvars variables that differ from the bucket
 	@bash $(ROOT)/scripts/tfvars-sync.sh diff
 
-# The stack path is the key below $(TF_PREFIX)/tfstate; stacks 03 to 05 keep one
+# The stack path is the key below $(TF_PREFIX)/tfstate; stacks 03 to 06 keep one
 # per cluster, so CLUSTER completes it.
 state_path = $(if $(CLUSTER),$(STACK)/$(CLUSTER),$(STACK))
 
@@ -85,14 +89,18 @@ lint: ## Check OpenTofu formatting and Markdown style
 	tofu -chdir=$(RANCHER) fmt -recursive -check
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive -check
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) fmt -recursive -check
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) fmt -recursive -check
 	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive -check
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) fmt -recursive -check
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) fmt -recursive -check
 	tofu -chdir=$(INFRA) validate
 	tofu -chdir=$(RANCHER) validate
 	tofu -chdir=$(RKE2_TEMPLATE) validate
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) validate
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) validate
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) test
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) test
 	$(MAKE) test-kubeconfig
 	$(MAKE) test-retired-nodes
 	markdownlint-cli2
@@ -112,8 +120,10 @@ fmt: ## Auto-format OpenTofu and Markdown in place
 	tofu -chdir=$(RANCHER) fmt -recursive
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) fmt -recursive
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) fmt -recursive
 	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) fmt -recursive
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) fmt -recursive
 	markdownlint-cli2 --fix
 
 .PHONY: init
@@ -122,8 +132,10 @@ init: check-state-env ## Download providers for all stacks and module tests
 	tofu -chdir=$(RANCHER) init $(call backend_config,02-rancher)
 	tofu -chdir=$(RKE2_TEMPLATE) init -backend=false
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) init -backend=false
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) init -backend=false
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster init -backend=false
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) init -backend=false
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) init -backend=false
 
 .PHONY: plan
 plan: ## Show what stack 01 would change
@@ -241,14 +253,24 @@ kubeconfig-merge-rke2: kubeconfig-rke2 ## Merge one RKE2 kubeconfig into ~/.kube
 destroy-rke2: check-rke2-cluster ## Destroy one RKE2 cluster only (CLUSTER=name)
 	tofu -chdir=$(RKE2_CLUSTER_DIR) destroy
 	@$(MAKE) --no-print-directory drop-vtafarm-platform-state CLUSTER=$(CLUSTER)
+	@$(MAKE) --no-print-directory drop-vtafarm-app-state CLUSTER=$(CLUSTER)
+	@$(MAKE) --no-print-directory drop-vtafarm-observability-state CLUSTER=$(CLUSTER)
 
-# Everything stack 04 owns lives inside the RKE2 cluster, so destroying that
-# cluster removes it. The state file must still go, or the next apply-vtafarm-platform
-# would refresh against a cluster that no longer exists - the same reasoning as
-# stack 02 at the bottom of this file.
+# Everything stacks 04 through 06 own lives inside the RKE2 cluster, so
+# destroying that cluster removes it. Their state files must still go, or the
+# next apply would refresh against a cluster that no longer exists - the same
+# reasoning as stack 02 at the bottom of this file.
 .PHONY: drop-vtafarm-platform-state
 drop-vtafarm-platform-state: check-state-env
 	@bash $(ROOT)/scripts/drop-state.sh "04-vtafarm-platform/$(CLUSTER)"
+
+.PHONY: drop-vtafarm-app-state
+drop-vtafarm-app-state: check-state-env
+	@bash $(ROOT)/scripts/drop-state.sh "05-vtafarm-app/$(CLUSTER)"
+
+.PHONY: drop-vtafarm-observability-state
+drop-vtafarm-observability-state: check-state-env
+	@bash $(ROOT)/scripts/drop-state.sh "06-vtafarm-observability/$(CLUSTER)"
 
 .PHONY: destroy-all-rke2
 destroy-all-rke2: ## Destroy every generated RKE2 cluster before Rancher
@@ -261,6 +283,8 @@ destroy-all-rke2: ## Destroy every generated RKE2 cluster before Rancher
 		echo "==> destroying RKE2 cluster $${cluster_dir##*/}"; \
 		tofu -chdir="$$cluster_dir" destroy; \
 		$(MAKE) --no-print-directory drop-vtafarm-platform-state CLUSTER="$${cluster_dir##*/}"; \
+		$(MAKE) --no-print-directory drop-vtafarm-app-state CLUSTER="$${cluster_dir##*/}"; \
+		$(MAKE) --no-print-directory drop-vtafarm-observability-state CLUSTER="$${cluster_dir##*/}"; \
 	done; \
 	if [[ "$$found_cluster" == false ]]; then \
 		echo "==> no generated RKE2 cluster roots found under $(RKE2_ROOT)"; \
@@ -356,6 +380,58 @@ outputs-vtafarm-app: check-vtafarm-app ## Print the URLs and the DNS records to 
 destroy-vtafarm-app: check-vtafarm-app ## Remove both releases; the database volume and its password survive (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_APP_CLUSTER_DIR) destroy -exclude=module.app.kubernetes_secret_v1.postgres
 
+# --- stack 06: optional observability on a downstream RKE2 cluster ---------
+
+.PHONY: new-vtafarm-observability
+new-vtafarm-observability: ## Scaffold an optional observability root (CLUSTER=name)
+	@bash $(ROOT)/scripts/new-vtafarm-observability.sh "$(CLUSTER)"
+
+.PHONY: check-vtafarm-observability
+check-vtafarm-observability:
+	@if [[ ! "$(CLUSTER)" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$$ ]]; then \
+	  echo "set a DNS-safe cluster name, for example: make apply-vtafarm-observability CLUSTER=production" >&2; \
+	  exit 2; \
+	fi
+	@test -d "$(VTAFARM_OBSERVABILITY_CLUSTER_DIR)" || { \
+	  echo "observability root does not exist: $(VTAFARM_OBSERVABILITY_CLUSTER_DIR)" >&2; \
+	  echo "create it with: make new-vtafarm-observability CLUSTER=$(CLUSTER)" >&2; \
+	  exit 2; \
+	}
+	@test -s "$(RKE2_KUBECONFIG_FILE)" || { \
+	  echo "no kubeconfig for $(CLUSTER) at $(RKE2_KUBECONFIG_FILE)" >&2; \
+	  echo "write it with: make kubeconfig-rke2 CLUSTER=$(CLUSTER)" >&2; \
+	  exit 2; \
+	}
+
+.PHONY: init-vtafarm-observability
+init-vtafarm-observability: check-vtafarm-observability check-state-env ## Initialize one observability root (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) init $(call backend_config,06-vtafarm-observability/$(CLUSTER))
+
+.PHONY: plan-vtafarm-observability
+plan-vtafarm-observability: check-vtafarm-observability ## Plan optional Prometheus observability (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) plan
+
+.PHONY: apply-vtafarm-observability
+apply-vtafarm-observability: check-vtafarm-observability ## Install or upgrade optional Prometheus observability (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) apply
+
+.PHONY: outputs-vtafarm-observability
+outputs-vtafarm-observability: check-vtafarm-observability ## Print private Prometheus and Grafana service URLs (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output
+
+.PHONY: destroy-vtafarm-observability
+destroy-vtafarm-observability: check-vtafarm-observability ## Remove observability; retained Hetzner Volumes survive (CLUSTER=name)
+	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) destroy
+
+.PHONY: observability-status
+observability-status: check-vtafarm-observability ## Show Prometheus stack health and persistent storage (CLUSTER=name)
+	@export KUBECONFIG=$(RKE2_KUBECONFIG_FILE); \
+	namespace="$$(tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output -raw namespace)"; \
+	echo "== monitoring pods =="; kubectl -n "$$namespace" get pods; \
+	echo; echo "== monitoring PVCs =="; kubectl -n "$$namespace" get pvc; \
+	echo; echo "== Prometheus resources =="; \
+	kubectl -n "$$namespace" get prometheus,alertmanager,servicemonitor,podmonitor
+
 # Both Vaults come up sealed, and unsealing needs keys that must never reach
 # OpenTofu state - so init and unseal stay manual. See docs/vault.md.
 .PHONY: vault-bootstrap
@@ -441,7 +517,7 @@ clean: ## Delete every .terraform dir, the stack 01/02 tfvars and all cluster ro
 	echo "this deletes, leaving the state bucket and every running cluster alone:"; \
 	echo "  every .terraform directory under stacks/ and modules/"; \
 	echo "  the terraform.tfvars of stacks 01-infra and 02-rancher"; \
-	echo "  clusters/ of stacks 03-rke2-clusters, 04-vtafarm-platform and 05-vtafarm-app"; \
+	echo "  clusters/ of stacks 03-rke2-clusters through 06-vtafarm-observability"; \
 	echo "destroy a live RKE2 cluster first - make destroy reads those roots to find it"; \
 	if [[ -t 0 ]]; then \
 	  read -r -p "continue? [y/N] " answer; \
@@ -449,5 +525,5 @@ clean: ## Delete every .terraform dir, the stack 01/02 tfvars and all cluster ro
 	fi; \
 	find "$(ROOT)/stacks" "$(ROOT)/modules" -type d -name .terraform -prune -exec rm -rf {} +; \
 	rm -f "$(INFRA)/terraform.tfvars" "$(RANCHER)/terraform.tfvars"; \
-	rm -rf "$(RKE2_ROOT)" "$(VTAFARM_PLATFORM_ROOT)" "$(VTAFARM_APP_ROOT)"; \
+	rm -rf "$(RKE2_ROOT)" "$(VTAFARM_PLATFORM_ROOT)" "$(VTAFARM_APP_ROOT)" "$(VTAFARM_OBSERVABILITY_ROOT)"; \
 	echo "==> cleaned - restore with: make init, make tfvars-pull, make new-rke2-cluster CLUSTER=..."

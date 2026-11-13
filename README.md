@@ -1,18 +1,19 @@
 # vtafarm on RKE2 — deployment guide
 
 This guide deploys vtafarm on Hetzner Cloud. You start with an empty Hetzner project and finish
-with a running application. It builds five layers, in this order:
+with a running application. It builds six layers, in this order:
 
 1. a 3-node high-availability **k3s** cluster
 2. **Rancher**, running on that k3s cluster
 3. an **RKE2** cluster that Rancher creates for a farm
 4. the platform inside that cluster: **cert-manager**, **Longhorn** and **HashiCorp Vault**
 5. the vtafarm frontend and API
+6. optional observability: **Prometheus**, **Grafana** and **Alertmanager**
 
-Each layer is one OpenTofu stack. You build layers 1 and 2 once. Layers 3 to 5 are one farm, so
-repeat steps 6 to 8 for every farm you need. Vault keeps the master seed of every VTA encrypted
-and separated per user, which is what makes a farm safe enough to run vtafarm on. See
-[docs/vault.md](docs/vault.md).
+Each layer is one OpenTofu stack. You build layers 1 and 2 once. Layers 3 to 6 are one farm, so
+repeat steps 6 to 9 for every farm you need. Stack 06 is opt-in and is a no-op when monitoring is
+disabled. Vault keeps the master seed of every VTA encrypted and separated per user, which is
+what makes a farm safe enough to run vtafarm on. See [docs/vault.md](docs/vault.md).
 
 ## Contents
 
@@ -27,6 +28,7 @@ and separated per user, which is what makes a farm safe enough to run vtafarm on
   - [Step 6 — Create an RKE2 cluster](#step-6--create-an-rke2-cluster)
   - [Step 7 — Install the platform layer](#step-7--install-the-platform-layer)
   - [Step 8 — Install the applications](#step-8--install-the-applications)
+  - [Step 9 — Install observability (optional)](#step-9--install-observability-optional)
 - [Force renew an RKE2 kubeconfig](#force-renew-an-rke2-kubeconfig)
 - [Runbooks](#runbooks)
 - [License](#license)
@@ -102,7 +104,7 @@ a second Vault does that for it. This transit Vault runs on one node and holds o
   └─────────────────────────────────────────────────────────┘
 ```
 
-### Five stacks
+### Six stacks
 
 A stack cannot run until the stack before it exists. You therefore apply them in order:
 
@@ -113,8 +115,9 @@ A stack cannot run until the stack before it exists. You therefore apply them in
 | `03-rke2-clusters` | Rancher to be reachable |
 | `04-vtafarm-platform` | stack 03's cluster to be Active |
 | `05-vtafarm-app` | stack 04's Vault to be bootstrapped |
+| `06-vtafarm-observability` | stack 03's RKE2 cluster and hcloud CSI driver |
 
-Stacks 03, 04 and 05 keep one directory per cluster, under `clusters/<name>`. Each directory
+Stacks 03 through 06 keep one directory per cluster, under `clusters/<name>`. Each directory
 has its own state file, and each state file is locked separately, so creating or destroying one
 cluster does not affect the others. All of them live in the bucket, not on your laptop; see
 [docs/remote-state.md](docs/remote-state.md).
@@ -507,6 +510,30 @@ kubectl exec -it deployment/vtafarm-api -- ./enroll
 ```
 
 The farm is now running. Everything after this point is a runbook.
+
+### Step 9 — Install observability (optional)
+
+Stack 06 is separate from the application lifecycle and safe to omit. Scaffold it for the same
+cluster name, then opt in explicitly:
+
+```bash
+make new-vtafarm-observability CLUSTER=rke2-vtafarm-production
+code stacks/06-vtafarm-observability/clusters/rke2-vtafarm-production/terraform.tfvars
+```
+
+Set `observability_enabled = true`, review the Prometheus retention and Volume size, then apply:
+
+```bash
+make init-vtafarm-observability  CLUSTER=rke2-vtafarm-production
+make apply-vtafarm-observability CLUSTER=rke2-vtafarm-production
+make observability-status        CLUSTER=rke2-vtafarm-production
+```
+
+Prometheus is stored on a dedicated retained Hetzner Cloud Volume. Prometheus and Grafana are
+private `ClusterIP` services: operators can port-forward Grafana, while tenant-facing metrics
+must be authorized and returned by `vtafarm-api`. The installed recording rules aggregate each
+VTA Farm Pod's CPU, memory, requests, limits, network I/O and mounted PVC usage by its existing
+`session-id` and `app` labels.
 
 ---
 

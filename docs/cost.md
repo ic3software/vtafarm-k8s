@@ -27,3 +27,10 @@ attach Cloud Volumes, so the Vault PVCs use disk space on machines that you alre
 The cost is that each volume is stored `longhorn_replica_count` times. This is why that count
 defaults to one. Hetzner Cloud Volumes are still available as the `hcloud-volumes` storage
 class, for data that should be billed and attached separately.
+
+Enabling stack 06 adds one Hetzner Cloud Volume at the configured
+`prometheus_storage_size` (50 GiB by default), plus the CPU and memory consumed by Prometheus,
+Grafana, Alertmanager, node-exporter and kube-state-metrics on the existing nodes. Volume pricing
+is separate from the estimate above; check the current Hetzner price for the cluster's location
+before enabling it. Retained observability Volumes keep billing after stack destroy until they
+are explicitly deleted.
