@@ -64,19 +64,37 @@ variable "prometheus_evaluation_interval" {
 }
 
 variable "prometheus_cpu_request" {
-  description = "CPU reserved for Prometheus; no CPU limit is imposed."
+  description = "CPU reserved for each Prometheus replica."
   type        = string
   default     = "250m"
 }
 
+variable "prometheus_cpu_limit" {
+  description = "Optional CPU limit for each Prometheus replica. Null avoids query and compaction throttling."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "prometheus_replicas" {
+  description = "Prometheus replicas. Each replica gets its own retained Hetzner Volume."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.prometheus_replicas >= 1 && var.prometheus_replicas <= 5 && floor(var.prometheus_replicas) == var.prometheus_replicas
+    error_message = "prometheus_replicas must be a whole number from 1 to 5."
+  }
+}
+
 variable "prometheus_memory_request" {
-  description = "Memory reserved for Prometheus."
+  description = "Memory reserved for each Prometheus replica."
   type        = string
   default     = "1Gi"
 }
 
 variable "prometheus_memory_limit" {
-  description = "Hard Prometheus memory limit. Raise it if cardinality grows before the process is OOM-killed."
+  description = "Hard memory limit for each Prometheus replica. Raise it if cardinality grows before the process is OOM-killed."
   type        = string
   default     = "3Gi"
 }
@@ -90,5 +108,5 @@ variable "grafana_enabled" {
 variable "alertmanager_enabled" {
   description = "Install Alertmanager for the bundled Kubernetes alerts. Notification receivers are configured separately."
   type        = bool
-  default     = true
+  default     = false
 }

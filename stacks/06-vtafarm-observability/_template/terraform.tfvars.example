@@ -21,13 +21,14 @@ prometheus_retention_size = "40GB"
 prometheus_scrape_interval     = "30s"
 prometheus_evaluation_interval = "30s"
 
-# Prometheus has no CPU limit so an idle node can absorb query/compaction
-# bursts. Memory is incompressible and therefore keeps a hard limit.
+prometheus_replicas = 1
+
 prometheus_cpu_request    = "250m"
+prometheus_cpu_limit      = null
 prometheus_memory_request = "1Gi"
 prometheus_memory_limit   = "3Gi"
 
 # Both interfaces remain private ClusterIP services. Use kubectl port-forward
 # for operator access; tenant metrics will go through vtafarm-api instead.
 grafana_enabled      = true
-alertmanager_enabled = true
+alertmanager_enabled = false

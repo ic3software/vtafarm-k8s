@@ -14,12 +14,14 @@ variable "config" {
     scrape_interval           = optional(string, "30s")
     evaluation_interval       = optional(string, "30s")
 
+    prometheus_replicas       = optional(number, 1)
     prometheus_cpu_request    = optional(string, "250m")
+    prometheus_cpu_limit      = optional(string)
     prometheus_memory_request = optional(string, "1Gi")
     prometheus_memory_limit   = optional(string, "3Gi")
 
     grafana_enabled      = optional(bool, true)
-    alertmanager_enabled = optional(bool, true)
+    alertmanager_enabled = optional(bool, false)
   })
 
   validation {
@@ -47,8 +49,20 @@ variable "config" {
   }
 
   validation {
-    condition     = can(regex("^[1-9][0-9]*m$", var.config.prometheus_cpu_request))
-    error_message = "prometheus_cpu_request must use positive millicores such as 250m."
+    condition = (
+      var.config.prometheus_replicas >= 1 &&
+      var.config.prometheus_replicas <= 5 &&
+      floor(var.config.prometheus_replicas) == var.config.prometheus_replicas
+    )
+    error_message = "prometheus_replicas must be a whole number from 1 to 5."
+  }
+
+  validation {
+    condition = (
+      can(regex("^([1-9][0-9]*m|[1-9][0-9]*)$", var.config.prometheus_cpu_request)) &&
+      (var.config.prometheus_cpu_limit == null || can(regex("^([1-9][0-9]*m|[1-9][0-9]*)$", var.config.prometheus_cpu_limit)))
+    )
+    error_message = "Prometheus CPU request and optional limit must be positive Kubernetes quantities such as 250m or 1."
   }
 
   validation {

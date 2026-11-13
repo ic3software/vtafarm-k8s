@@ -24,7 +24,9 @@ module "observability" {
     scrape_interval           = var.prometheus_scrape_interval
     evaluation_interval       = var.prometheus_evaluation_interval
 
+    prometheus_replicas       = var.prometheus_replicas
     prometheus_cpu_request    = var.prometheus_cpu_request
+    prometheus_cpu_limit      = var.prometheus_cpu_limit
     prometheus_memory_request = var.prometheus_memory_request
     prometheus_memory_limit   = var.prometheus_memory_limit
 

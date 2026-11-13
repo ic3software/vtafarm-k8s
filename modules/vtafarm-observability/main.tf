@@ -74,13 +74,18 @@ locals {
         type    = "ClusterIP"
       }
       prometheusSpec = {
-        replicas           = 1
+        replicas           = var.config.prometheus_replicas
         scrapeInterval     = var.config.scrape_interval
         evaluationInterval = var.config.evaluation_interval
         retention          = var.config.prometheus_retention
         retentionSize      = var.config.prometheus_retention_size
         walCompression     = true
         enableAdminAPI     = false
+
+        # Prefer separate nodes when replicas are requested, but keep a
+        # single-node development cluster schedulable.
+        podAntiAffinity            = "soft"
+        podAntiAffinityTopologyKey = "kubernetes.io/hostname"
 
         persistentVolumeClaimRetentionPolicy = {
           whenDeleted = "Retain"
@@ -102,9 +107,10 @@ locals {
             cpu    = var.config.prometheus_cpu_request
             memory = var.config.prometheus_memory_request
           }
-          limits = {
-            memory = var.config.prometheus_memory_limit
-          }
+          limits = merge(
+            { memory = var.config.prometheus_memory_limit },
+            var.config.prometheus_cpu_limit == null ? {} : { cpu = var.config.prometheus_cpu_limit },
+          )
         }
 
         # The API and tenant charts may add their own ServiceMonitor or
