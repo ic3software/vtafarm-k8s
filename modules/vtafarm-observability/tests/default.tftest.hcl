@@ -60,7 +60,7 @@ run "prometheus_on_retained_hcloud_volume" {
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.thanos.objectStorageConfig.existingSecret.name == "thanos-objstore" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues == false &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.thanosService.enabled == true &&
-      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.sidecar.datasources.url == "http://thanos-query.monitoring.svc:9090" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.sidecar.datasources.url == "http://thanos-query-frontend.monitoring.svc:9090" &&
       !contains(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.resources.limits), "cpu") &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName == "hcloud-volumes-retain" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage == "50Gi"
@@ -79,6 +79,9 @@ run "prometheus_on_retained_hcloud_volume" {
       yamldecode(helm_release.thanos[0].values[0]).global.storageClass == "hcloud-volumes-retain" &&
       yamldecode(helm_release.thanos[0].values[0]).receive.enabled == false &&
       yamldecode(helm_release.thanos[0].values[0]).query.replicaCount == 2 &&
+      yamldecode(helm_release.thanos[0].values[0]).queryFrontend.enabled == true &&
+      yamldecode(helm_release.thanos[0].values[0]).queryFrontend.replicaCount == 2 &&
+      yamldecode(helm_release.thanos[0].values[0]).queryFrontend.downstreamUrl == "http://thanos-query.monitoring.svc:9090" &&
       yamldecode(helm_release.thanos[0].values[0]).storegateway.replicaCount == 2 &&
       yamldecode(helm_release.thanos[0].values[0]).storegateway.persistence.size == "10Gi" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.replicaCount == 1 &&
@@ -94,6 +97,22 @@ run "prometheus_on_retained_hcloud_volume" {
     condition = (
       contains(yamldecode(helm_release.kube_prometheus_stack[0].values[0])["kube-state-metrics"].metricLabelsAllowlist, "pods=[app,session-id]") &&
       contains(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap), "vtafarm-pod-resources") &&
+      contains(
+        yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules[*].record,
+        "vtafarm:pod_cpu_usage_cores:rate1m",
+      ) &&
+      contains(
+        yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules[*].record,
+        "vtafarm:pod_cpu_limit_cores",
+      ) &&
+      contains(
+        yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules[*].record,
+        "vtafarm:pod_ready",
+      ) &&
+      contains(
+        yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules[*].record,
+        "vtafarm:pod_container_restarts_total",
+      ) &&
       contains(
         yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules[*].record,
         "vtafarm:pod_network_receive_bytes_per_second:rate5m",
@@ -112,6 +131,24 @@ run "prometheus_on_retained_hcloud_volume" {
       )
     )
     error_message = "Pod ownership labels and VTA Farm per-pod CPU, memory, network, and storage recording rules must be present."
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules :
+      strcontains(rule.expr, "max by (namespace, persistentvolumeclaim)")
+      if rule.record == "vtafarm:pod_persistent_volume_used_bytes"
+    ])
+    error_message = "The PVC usage recording rule must deduplicate kubelet scrape replicas before joining volume metrics to pods."
+  }
+
+  assert {
+    condition = one([
+      for rule in yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules :
+      strcontains(rule.expr, "kube_persistentvolumeclaim_resource_requests_storage_bytes")
+      if rule.record == "vtafarm:pod_persistent_volume_capacity_bytes"
+    ])
+    error_message = "The PVC capacity recording rule must use the declared PVC capacity so limits remain available when kubelet volume stats are missing."
   }
 
   assert {
