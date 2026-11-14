@@ -27,3 +27,11 @@ attach Cloud Volumes, so the Vault PVCs use disk space on machines that you alre
 The cost is that each volume is stored `longhorn_replica_count` times. This is why that count
 defaults to one. Hetzner Cloud Volumes are still available as the `hcloud-volumes` storage
 class, for data that should be billed and attached separately.
+
+Enabling stack 06 adds one 50 GiB Prometheus Volume, one 50 GiB Thanos Compactor workspace, and
+two 10 GiB Store Gateway caches by default. It also consumes Hetzner Object Storage for the
+30-day Thanos block history, plus CPU and memory for Prometheus, Thanos, Grafana, Alertmanager,
+node-exporter and kube-state-metrics on the existing nodes. Volume and object-storage usage are
+separate from the estimate above; check current Hetzner prices before enabling it. All of these
+observability Volumes use the retained StorageClass and keep billing after stack destroy until
+they are explicitly deleted.

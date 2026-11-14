@@ -73,3 +73,42 @@ kubectl get nodes          # back to Ready within a minute or two
 > servers.
 
 Restoring from a backup is a separate drill. See [backup-restore.md](backup-restore.md).
+
+---
+
+## Observability verification
+
+After enabling stack 06:
+
+```bash
+make observability-status CLUSTER=rke2-vtafarm-production
+
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/kubeconfig.yaml
+kubectl -n monitoring port-forward svc/thanos-query 9090:9090
+```
+
+Open `http://localhost:9090/stores`; the Prometheus sidecar and Store Gateway endpoints should
+be `UP`. In the expression browser, these VTA Farm recording rules should return one series per
+labelled Pod after two scrape intervals:
+
+```promql
+vtafarm:pod_cpu_usage_cores:rate5m
+vtafarm:pod_memory_working_set_bytes
+vtafarm:pod_network_receive_bytes_per_second:rate5m
+vtafarm:pod_network_transmit_bytes_per_second:rate5m
+vtafarm:pod_persistent_volume_used_bytes
+vtafarm:pod_persistent_volume_capacity_bytes
+```
+
+Each series must include `namespace`, `pod`, `label_session_id` and `label_app`. An empty result
+is expected when no VTA Farm workload Pod with `session-id` exists yet.
+
+To inspect scrape targets directly, stop the first port-forward and run:
+
+```bash
+kubectl -n monitoring port-forward svc/monitoring-prometheus 9090:9090
+```
+
+Open `http://localhost:9090/targets`; kubelet, cAdvisor, node-exporter and kube-state-metrics
+should be `UP`. After the first two-hour Prometheus block closes, confirm the sidecar has uploaded
+objects to the configured Thanos bucket and that the Store Gateway remains `UP` in Thanos Query.

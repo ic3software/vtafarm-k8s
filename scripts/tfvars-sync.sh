@@ -22,7 +22,7 @@ PREFIX="s3://${TF_STATE_BUCKET}/${TFVARS_PREFIX}"
 S3=(aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3)
 
 FIXED_STACKS=(01-infra 02-rancher)
-CLUSTER_STACKS=(03-rke2-clusters 04-vtafarm-platform 05-vtafarm-app)
+CLUSTER_STACKS=(03-rke2-clusters 04-vtafarm-platform 05-vtafarm-app 06-vtafarm-observability)
 
 # "<path relative to the repo root><tab><key below the tfvars prefix>" for every
 # tfvars that exists locally.
@@ -62,7 +62,7 @@ local_path_for_key() {
   local stack="${1%%/*}" rest="${1#*/}"
   case "$stack" in
   01-infra | 02-rancher) printf 'stacks/%s/%s\n' "$stack" "$rest" ;;
-  03-rke2-clusters | 04-vtafarm-platform | 05-vtafarm-app)
+  03-rke2-clusters | 04-vtafarm-platform | 05-vtafarm-app | 06-vtafarm-observability)
     printf 'stacks/%s/clusters/%s\n' "$stack" "$rest"
     ;;
   *) return 1 ;;
