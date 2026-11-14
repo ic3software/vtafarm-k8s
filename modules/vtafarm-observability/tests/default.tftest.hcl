@@ -44,7 +44,7 @@ run "prometheus_on_retained_hcloud_volume" {
       helm_release.kube_prometheus_stack[0].version == "93.2.2" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.enabled == false &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.enabled == true &&
-      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.retention == "15d" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.retention == "30d" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.retentionSize == "40GB" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.replicas == 1 &&
       !contains(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.resources.limits), "cpu") &&

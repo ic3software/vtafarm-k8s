@@ -15,7 +15,7 @@ kube_prometheus_stack_version = "93.2.2"
 # CSI driver. Keep retention_size below storage_size for WAL and compaction.
 prometheus_storage_class  = "hcloud-volumes-retain"
 prometheus_storage_size   = "50Gi"
-prometheus_retention      = "15d"
+prometheus_retention      = "30d"
 prometheus_retention_size = "40GB"
 
 prometheus_scrape_interval     = "30s"

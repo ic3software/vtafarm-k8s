@@ -9,7 +9,7 @@ variable "config" {
 
     storage_class_name        = optional(string, "hcloud-volumes-retain")
     prometheus_storage_size   = optional(string, "50Gi")
-    prometheus_retention      = optional(string, "15d")
+    prometheus_retention      = optional(string, "30d")
     prometheus_retention_size = optional(string, "40GB")
     scrape_interval           = optional(string, "30s")
     evaluation_interval       = optional(string, "30s")
@@ -67,7 +67,7 @@ variable "config" {
 
   validation {
     condition     = can(regex("^[1-9][0-9]*(s|m|h|d|w|y)$", var.config.prometheus_retention))
-    error_message = "prometheus_retention must be a positive Prometheus duration such as 15d."
+    error_message = "prometheus_retention must be a positive Prometheus duration such as 30d."
   }
 
   validation {

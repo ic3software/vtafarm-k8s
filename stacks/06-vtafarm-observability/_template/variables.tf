@@ -42,7 +42,7 @@ variable "prometheus_storage_size" {
 variable "prometheus_retention" {
   description = "Maximum time Prometheus keeps samples."
   type        = string
-  default     = "15d"
+  default     = "30d"
 }
 
 variable "prometheus_retention_size" {
