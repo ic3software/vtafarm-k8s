@@ -236,7 +236,7 @@ snapshotted, and it is not part of either layer above.
 | Target | Does |
 | --- | --- |
 | `make tfvars-diff` | Names the variables that differ from the bucket, never their values |
-| `make tfvars-pull` | Overwrites every local `terraform.tfvars` with the bucket's copy |
-| `make tfvars-push` | Uploads yours, after showing the same report and asking |
+| `make tfvars-pull` | Downloads changed tfvars after showing a report and asking |
+| `make tfvars-push` | Uploads changed tfvars after showing the same report and asking |
 
 [remote-state.md](remote-state.md) covers locking, recovery and how a second operator joins.

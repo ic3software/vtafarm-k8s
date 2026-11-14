@@ -204,13 +204,14 @@ make tfvars-push
 ```
 
 `tfvars-diff` names the variables that differ and never prints their values, so it is safe to
-run anywhere. `tfvars-push` shows that same report and asks before it uploads.
+run anywhere. `tfvars-push` shows that same report, asks for confirmation, and uploads only the
+files that differ.
 
 Push last-write-wins, so tell the other operators when you change something. Versioning is the
 net underneath that: the previous copy stays recoverable for 30 days.
 
-`tfvars-pull` overwrites local tfvars without asking. Run `make tfvars-diff` first if you are not
-sure whether you have unpushed edits.
+`tfvars-pull` compares the bucket with local tfvars, asks for confirmation, and downloads only
+the files that differ. Review the report carefully: pull still overwrites unpushed local edits.
 
 ---
 

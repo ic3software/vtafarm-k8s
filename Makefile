@@ -58,11 +58,11 @@ state-bucket-setup: check-state-env ## One-time: versioning + retention on the s
 	@bash $(ROOT)/scripts/state-bucket-setup.sh
 
 .PHONY: tfvars-pull
-tfvars-pull: check-state-env ## Download every terraform.tfvars from the state bucket
+tfvars-pull: check-state-env ## Download changed terraform.tfvars after confirmation
 	@bash $(ROOT)/scripts/tfvars-sync.sh pull
 
 .PHONY: tfvars-push
-tfvars-push: check-state-env ## Upload every terraform.tfvars to the state bucket
+tfvars-push: check-state-env ## Upload changed terraform.tfvars after confirmation
 	@bash $(ROOT)/scripts/tfvars-sync.sh push
 
 .PHONY: tfvars-diff
@@ -101,9 +101,14 @@ lint: ## Check OpenTofu formatting and Markdown style
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) test
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) test
+	$(MAKE) test-tfvars-sync
 	$(MAKE) test-kubeconfig
 	$(MAKE) test-retired-nodes
 	markdownlint-cli2
+
+.PHONY: test-tfvars-sync
+test-tfvars-sync: ## Test selective tfvars push and pull without bucket access
+	bash scripts/tests/tfvars-sync.sh
 
 .PHONY: test-kubeconfig
 test-kubeconfig: ## Test kubeconfig renewal and safe merging without cluster access
