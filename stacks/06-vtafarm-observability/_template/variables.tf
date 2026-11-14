@@ -99,6 +99,102 @@ variable "prometheus_memory_limit" {
   default     = "3Gi"
 }
 
+variable "thanos_enabled" {
+  description = "Upload Prometheus blocks to S3-compatible object storage and query them through Thanos."
+  type        = bool
+  default     = true
+}
+
+variable "thanos_chart_version" {
+  description = "Pinned thanos-community/thanos chart version."
+  type        = string
+  default     = "0.49.0"
+}
+
+variable "thanos_image_version" {
+  description = "Pinned official Thanos image tag used by the sidecar and standalone components."
+  type        = string
+  default     = "v0.42.5"
+}
+
+variable "thanos_s3_bucket" {
+  description = "Private S3-compatible bucket containing the configured Thanos object prefix."
+  type        = string
+  default     = ""
+}
+
+variable "thanos_s3_prefix" {
+  description = "Object prefix inside the shared bucket. Empty uses thanos/<cluster-name>."
+  type        = string
+  default     = ""
+}
+
+variable "thanos_s3_endpoint" {
+  description = "S3-compatible endpoint without an URL scheme or path, for example nbg1.your-objectstorage.com."
+  type        = string
+  default     = ""
+}
+
+variable "thanos_s3_region" {
+  description = "S3-compatible bucket region, for example nbg1."
+  type        = string
+  default     = ""
+}
+
+variable "thanos_s3_access_key" {
+  description = "S3-compatible access key for the dedicated Thanos bucket."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "thanos_s3_secret_key" {
+  description = "S3-compatible secret key for the dedicated Thanos bucket."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "thanos_retention" {
+  description = "Maximum age of raw and downsampled metric blocks in object storage."
+  type        = string
+  default     = "30d"
+}
+
+variable "thanos_query_replicas" {
+  description = "Thanos Query replicas."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.thanos_query_replicas >= 1 && var.thanos_query_replicas <= 5 && floor(var.thanos_query_replicas) == var.thanos_query_replicas
+    error_message = "thanos_query_replicas must be a whole number from 1 to 5."
+  }
+}
+
+variable "thanos_storegateway_replicas" {
+  description = "Thanos Store Gateway replicas."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.thanos_storegateway_replicas >= 1 && var.thanos_storegateway_replicas <= 5 && floor(var.thanos_storegateway_replicas) == var.thanos_storegateway_replicas
+    error_message = "thanos_storegateway_replicas must be a whole number from 1 to 5."
+  }
+}
+
+variable "thanos_storegateway_storage_size" {
+  description = "Retained Hetzner Volume capacity for each Store Gateway index cache."
+  type        = string
+  default     = "10Gi"
+}
+
+variable "thanos_compactor_storage_size" {
+  description = "Retained Hetzner Volume capacity for the Compactor workspace."
+  type        = string
+  default     = "50Gi"
+}
+
 variable "grafana_enabled" {
   description = "Install private Grafana dashboards. No Ingress is created."
   type        = bool

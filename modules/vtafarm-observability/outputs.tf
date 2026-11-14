@@ -7,8 +7,23 @@ output "namespace" {
 }
 
 output "prometheus_url" {
-  description = "Private in-cluster Prometheus URL for vtafarm-api."
-  value       = var.config.enabled ? "http://${local.release_name}-prometheus.${var.config.namespace}.svc:9090" : null
+  description = "Private in-cluster URL for the local Prometheus instance."
+  value       = var.config.enabled ? local.prometheus_url : null
+}
+
+output "thanos_query_url" {
+  description = "Private in-cluster Thanos Query URL for live and object-storage metrics."
+  value       = var.config.enabled && var.config.thanos_enabled ? local.thanos_query_url : null
+}
+
+output "thanos_s3_prefix" {
+  description = "Object prefix used for this cluster's Thanos blocks."
+  value       = var.config.enabled && var.config.thanos_enabled ? local.thanos_s3_prefix : null
+}
+
+output "metrics_query_url" {
+  description = "Private Prometheus-compatible query URL for vtafarm-api."
+  value       = var.config.enabled ? (var.config.thanos_enabled ? local.thanos_query_url : local.prometheus_url) : null
 }
 
 output "grafana_url" {

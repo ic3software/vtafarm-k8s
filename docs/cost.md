@@ -28,9 +28,10 @@ The cost is that each volume is stored `longhorn_replica_count` times. This is w
 defaults to one. Hetzner Cloud Volumes are still available as the `hcloud-volumes` storage
 class, for data that should be billed and attached separately.
 
-Enabling stack 06 adds one Hetzner Cloud Volume at the configured
-`prometheus_storage_size` (50 GiB by default), plus the CPU and memory consumed by Prometheus,
-Grafana, Alertmanager, node-exporter and kube-state-metrics on the existing nodes. Volume pricing
-is separate from the estimate above; check the current Hetzner price for the cluster's location
-before enabling it. Retained observability Volumes keep billing after stack destroy until they
-are explicitly deleted.
+Enabling stack 06 adds one 50 GiB Prometheus Volume, one 50 GiB Thanos Compactor workspace, and
+two 10 GiB Store Gateway caches by default. It also consumes Hetzner Object Storage for the
+30-day Thanos block history, plus CPU and memory for Prometheus, Thanos, Grafana, Alertmanager,
+node-exporter and kube-state-metrics on the existing nodes. Volume and object-storage usage are
+separate from the estimate above; check current Hetzner prices before enabling it. All of these
+observability Volumes use the retained StorageClass and keep billing after stack destroy until
+they are explicitly deleted.

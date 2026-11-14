@@ -408,15 +408,15 @@ init-vtafarm-observability: check-vtafarm-observability check-state-env ## Initi
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) init $(call backend_config,06-vtafarm-observability/$(CLUSTER))
 
 .PHONY: plan-vtafarm-observability
-plan-vtafarm-observability: check-vtafarm-observability ## Plan optional Prometheus observability (CLUSTER=name)
+plan-vtafarm-observability: check-vtafarm-observability ## Plan optional Prometheus and Thanos observability (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) plan
 
 .PHONY: apply-vtafarm-observability
-apply-vtafarm-observability: check-vtafarm-observability ## Install or upgrade optional Prometheus observability (CLUSTER=name)
+apply-vtafarm-observability: check-vtafarm-observability ## Install or upgrade optional Prometheus and Thanos observability (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) apply
 
 .PHONY: outputs-vtafarm-observability
-outputs-vtafarm-observability: check-vtafarm-observability ## Print private Prometheus and Grafana service URLs (CLUSTER=name)
+outputs-vtafarm-observability: check-vtafarm-observability ## Print private metrics and Grafana service URLs (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output
 
 .PHONY: destroy-vtafarm-observability
@@ -424,13 +424,13 @@ destroy-vtafarm-observability: check-vtafarm-observability ## Remove observabili
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) destroy
 
 .PHONY: observability-status
-observability-status: check-vtafarm-observability ## Show Prometheus stack health and persistent storage (CLUSTER=name)
+observability-status: check-vtafarm-observability ## Show Prometheus and Thanos health and storage (CLUSTER=name)
 	@export KUBECONFIG=$(RKE2_KUBECONFIG_FILE); \
 	namespace="$$(tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output -raw namespace)"; \
 	echo "== monitoring pods =="; kubectl -n "$$namespace" get pods; \
 	echo; echo "== monitoring PVCs =="; kubectl -n "$$namespace" get pvc; \
-	echo; echo "== Prometheus resources =="; \
-	kubectl -n "$$namespace" get prometheus,alertmanager,servicemonitor,podmonitor
+	echo; echo "== metrics resources =="; \
+	kubectl -n "$$namespace" get prometheus,alertmanager,prometheusrule,servicemonitor,podmonitor
 
 # Both Vaults come up sealed, and unsealing needs keys that must never reach
 # OpenTofu state - so init and unseal stay manual. See docs/vault.md.

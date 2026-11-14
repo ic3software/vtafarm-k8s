@@ -1,16 +1,16 @@
 # Backup and Restore
 
-> **A backup you have never restored is not a backup.** Section 6 is how you find out.
+> **A backup you have never restored is not a backup.** Section 7 is how you find out.
 
-Three layers back themselves up independently, all into the same Hetzner bucket. Each covers
-something the other two do not, and each gets a section below: how to back it up by hand, and
-how to put it back.
+Four layers preserve state independently. The first three use the backup bucket; Thanos uses an
+isolated object prefix and separate lifecycle, either in that bucket or a dedicated metrics bucket.
 
 | Layer | Holds | Restores |
 | --- | --- | --- |
 | **etcd** | the management cluster's whole datastore, Rancher included | the whole cluster, to a point in time |
 | **Rancher** | Rancher's own state: users, roles, cluster registrations | Rancher, onto any cluster |
 | **Longhorn** | the farm's data, one backup per volume | one volume at a time |
+| **Thanos** | immutable Prometheus metric blocks | queryable metric history after a Prometheus Volume or cluster loss |
 
 Schedules and retention are set in `terraform.tfvars` and summarised in
 [operations.md](operations.md).
@@ -348,7 +348,40 @@ restored one. After step 7, the S3 backup is the way back.
 
 ---
 
-## 5. If everything is gone
+## 5. Thanos — queryable metric history
+
+Prometheus retains 30 days on its retained Volume. Independently, its Thanos sidecar closes and
+uploads a block about every two hours. Thanos Store Gateway reads those blocks directly from its
+configured bucket prefix; it never copies them back into Prometheus.
+
+After losing a Prometheus Volume or rebuilding the Kubernetes cluster, recreate stack 06 with the
+same bucket, endpoint, region and S3 credentials. The new Prometheus starts collecting fresh data,
+while Thanos Query immediately exposes the surviving bucket history through Store Gateway. Expect
+up to the current open Prometheus block—normally less than two hours—not to be in object storage.
+
+Verify the recovery path periodically:
+
+```bash
+make observability-status CLUSTER=rke2-vtafarm-production
+
+export KUBECONFIG=$PWD/stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/kubeconfig.yaml
+kubectl -n monitoring port-forward svc/thanos-query 9090:9090
+```
+
+Open `http://localhost:9090/stores` and confirm both Store Gateway replicas are `UP`. Query a
+range older than the newest local Prometheus block, then verify that the configured bucket contains
+block directories with `meta.json`, `index` and chunk objects.
+
+The Thanos prefix is durable primary storage for historical metrics, not an off-provider backup.
+Deleting or losing that prefix loses its history; Prometheus's local copy only covers its own
+retention window and does not automatically repopulate a deleted bucket. Enable Hetzner's bucket
+deletion protection and copy the bucket to another failure domain if metrics require disaster
+recovery beyond Hetzner Object Storage. Do not apply an object lock that prevents the singleton
+Compactor from deleting blocks after `thanos_retention`.
+
+---
+
+## 6. If everything is gone
 
 The Hetzner project is deleted. All you have is the bucket, the keys from section 1, and this
 repository.
@@ -396,7 +429,7 @@ make apply-vtafarm-app CLUSTER=<cluster>
 
 ---
 
-## 6. Drills
+## 7. Drills
 
 Back up → change something → restore → prove. Run each one once before you rely on the cluster.
 

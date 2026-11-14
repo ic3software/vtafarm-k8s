@@ -521,7 +521,10 @@ make new-vtafarm-observability CLUSTER=rke2-vtafarm-production
 code stacks/06-vtafarm-observability/clusters/rke2-vtafarm-production/terraform.tfvars
 ```
 
-Set `observability_enabled = true`, review the Prometheus retention and Volume size, then apply:
+Choose a private Hetzner Object Storage bucket and an isolated prefix for Thanos, fill in its
+endpoint and S3 credentials, then set `observability_enabled = true`. The bucket may be shared
+with other data because the Compactor only sees its configured prefix. Review both 30-day
+retention settings and the Volume sizes before applying:
 
 ```bash
 make init-vtafarm-observability  CLUSTER=rke2-vtafarm-production
@@ -529,11 +532,14 @@ make apply-vtafarm-observability CLUSTER=rke2-vtafarm-production
 make observability-status        CLUSTER=rke2-vtafarm-production
 ```
 
-Prometheus is stored on a dedicated retained Hetzner Cloud Volume. Prometheus and Grafana are
-private `ClusterIP` services: operators can port-forward Grafana, while tenant-facing metrics
-must be authorized and returned by `vtafarm-api`. The installed recording rules aggregate each
-VTA Farm Pod's CPU, memory, requests, limits, network I/O and mounted PVC usage by its existing
-`session-id` and `app` labels.
+Prometheus keeps 30 days locally on a dedicated retained Hetzner Cloud Volume. Its Thanos
+sidecar also uploads blocks to the private bucket, where Thanos keeps an independent 30-day
+history. Grafana queries the private `thanos-query` service, which combines recent Prometheus
+data with object-storage history; queries never copy old blocks back into Prometheus. All
+interfaces remain private `ClusterIP` services. Tenant-facing metrics must be authorized and
+returned by `vtafarm-api`. The installed recording rules aggregate each VTA Farm Pod's CPU,
+memory, requests, limits, network I/O and mounted PVC usage by its existing `session-id` and
+`app` labels.
 
 ---
 

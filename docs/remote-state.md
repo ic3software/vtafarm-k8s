@@ -278,10 +278,11 @@ treat a root password.
 OpenTofu can encrypt state client-side with an `encryption` block. Adding it is its own
 migration and it is not done here.
 
-**Hetzner S3 credentials cannot be scoped.** They are project-wide: there is no way to issue a
-key that reaches only this bucket, or only the `tofu/` prefix. A second credential pair would
-buy no isolation, which is why everyone uses the same one and why revoking access means
-rotating it for everybody.
+**S3 keys are project-wide until a bucket policy restricts them.** Apply a bucket policy that
+allows each access key only the actions, bucket and prefix it needs. Thanos should use its own key
+pair and isolated prefix; a dedicated bucket is safer but not mandatory. Hetzner Console cannot
+list a bucket after its policy restricts access to specific keys, so verify it through an
+S3-compatible client instead.
 
 **Locking is per state file, not per farm.** Two people can apply stack 03 and stack 04 of the
 same cluster at the same moment without either lock noticing. The stack order in the

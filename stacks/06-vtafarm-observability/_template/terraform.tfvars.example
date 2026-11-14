@@ -8,7 +8,7 @@ kubeconfig_path = ""
 observability_enabled = false
 
 observability_namespace       = "monitoring"
-kube_prometheus_stack_version = "93.2.2"
+kube_prometheus_stack_version = "93.3.0"
 
 # Prometheus uses a dedicated Hetzner Cloud Volume rather than Longhorn. The
 # module creates this Retain StorageClass through the already-installed hcloud
@@ -28,7 +28,27 @@ prometheus_cpu_limit      = null
 prometheus_memory_request = "1Gi"
 prometheus_memory_limit   = "3Gi"
 
-# Both interfaces remain private ClusterIP services. Use kubectl port-forward
-# for operator access; tenant metrics will go through vtafarm-api instead.
+# Thanos keeps the same 30-day history in object storage independently of the
+# Prometheus PVC. A shared private bucket is safe when Thanos has an isolated
+# prefix and scoped S3 credentials. The endpoint has no https:// or path.
+thanos_enabled       = true
+thanos_chart_version = "0.49.0"
+thanos_image_version = "v0.42.5"
+
+thanos_s3_bucket     = "replace-with-thanos-bucket"
+thanos_s3_prefix     = "thanos/replace-with-cluster-name"
+thanos_s3_endpoint   = "nbg1.your-objectstorage.com"
+thanos_s3_region     = "nbg1"
+thanos_s3_access_key = "replace-with-access-key"
+thanos_s3_secret_key = "replace-with-secret-key"
+
+thanos_retention                 = "30d"
+thanos_query_replicas            = 2
+thanos_storegateway_replicas     = 2
+thanos_storegateway_storage_size = "10Gi"
+thanos_compactor_storage_size    = "50Gi"
+
+# Prometheus, Thanos Query and Grafana remain private ClusterIP services. Use
+# kubectl port-forward for operator access; tenant metrics go through the API.
 grafana_enabled      = true
 alertmanager_enabled = false

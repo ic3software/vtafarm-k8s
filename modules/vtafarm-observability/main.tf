@@ -1,5 +1,10 @@
 locals {
-  release_name = "vtafarm-monitoring"
+  release_name                = "monitoring"
+  thanos_release_name         = "thanos"
+  thanos_objstore_secret_name = "thanos-objstore"
+  prometheus_url              = "http://${local.release_name}-prometheus.${var.config.namespace}.svc:9090"
+  thanos_query_url            = "http://${local.thanos_release_name}-query.${var.config.namespace}.svc:9090"
+  thanos_s3_prefix            = var.config.thanos_s3_prefix != "" ? var.config.thanos_s3_prefix : "thanos/${var.config.cluster_name}"
 
   # The RKE2 control-plane processes are static pods whose metrics listeners
   # are not exposed through the Services this chart assumes. Keep their
@@ -69,6 +74,14 @@ locals {
     prometheus = {
       enabled = true
       ingress = { enabled = false }
+      thanosService = {
+        enabled = var.config.thanos_enabled
+        type    = "ClusterIP"
+      }
+      thanosServiceMonitor = {
+        enabled  = var.config.thanos_enabled
+        interval = var.config.scrape_interval
+      }
       service = {
         enabled = true
         type    = "ClusterIP"
@@ -81,6 +94,18 @@ locals {
         retentionSize      = var.config.prometheus_retention_size
         walCompression     = true
         enableAdminAPI     = false
+        externalLabels = var.config.thanos_enabled ? {
+          cluster = var.config.cluster_name
+        } : {}
+        thanos = var.config.thanos_enabled ? {
+          image = "quay.io/thanos/thanos:${var.config.thanos_image_version}"
+          objectStorageConfig = {
+            existingSecret = {
+              name = local.thanos_objstore_secret_name
+              key  = "objstore.yml"
+            }
+          }
+        } : null
 
         # Prefer separate nodes when replicas are requested, but keep a
         # single-node development cluster schedulable.
@@ -122,6 +147,9 @@ locals {
         podMonitorSelectorNilUsesHelmValues     = false
         podMonitorSelector                      = {}
         podMonitorNamespaceSelector             = {}
+        ruleSelectorNilUsesHelmValues           = false
+        ruleSelector                            = {}
+        ruleNamespaceSelector                   = {}
       }
     }
 
@@ -147,6 +175,11 @@ locals {
       resources = {
         requests = { cpu = "50m", memory = "128Mi" }
         limits   = { memory = "512Mi" }
+      }
+      sidecar = {
+        datasources = {
+          url = var.config.thanos_enabled ? local.thanos_query_url : local.prometheus_url
+        }
       }
     }
 
@@ -266,6 +299,125 @@ locals {
       }
     }
   }
+
+  thanos_values = {
+    fullnameOverride = local.thanos_release_name
+
+    global = {
+      image = {
+        registry   = "quay.io"
+        repository = "thanos/thanos"
+        tag        = var.config.thanos_image_version
+      }
+      commonLabels = {
+        "app.kubernetes.io/managed-by" = "opentofu"
+        "vtafarm.ic3.dev/cluster"      = var.config.cluster_name
+      }
+      storageClass    = var.config.storage_class_name
+      networkPolicies = false
+      objstore = {
+        createSecret = false
+        secretName   = local.thanos_objstore_secret_name
+        secretKey    = "objstore.yml"
+      }
+      serviceMonitor = {
+        enabled  = true
+        interval = var.config.scrape_interval
+      }
+    }
+
+    bucket = {
+      enabled = true
+      bucketweb = {
+        enabled = false
+      }
+    }
+
+    compactor = {
+      enabled      = true
+      replicaCount = 1
+      persistence = {
+        enabled = true
+        size    = var.config.thanos_compactor_storage_size
+      }
+      vpa = {
+        enabled = false
+      }
+      retention = {
+        resolutionRaw = var.config.thanos_retention
+        resolution5m  = var.config.thanos_retention
+        resolution1h  = var.config.thanos_retention
+      }
+      resources = {
+        requests = { cpu = "500m", memory = "1Gi" }
+        limits   = { memory = "4Gi" }
+      }
+    }
+
+    query = {
+      enabled      = true
+      replicaCount = var.config.thanos_query_replicas
+      service = {
+        type = "ClusterIP"
+      }
+      ingress = {
+        enabled = false
+        http    = { enabled = false }
+        grpc    = { enabled = false }
+      }
+      endpoints = {
+        autogen = { enabled = true }
+        static = [
+          "dnssrv+_grpc._tcp.${local.release_name}-thanos-discovery.${var.config.namespace}.svc.cluster.local",
+        ]
+      }
+      resources = {
+        requests = { cpu = "100m", memory = "256Mi" }
+        limits   = { memory = "1Gi" }
+      }
+      pdb = {
+        enabled      = var.config.thanos_query_replicas > 1
+        minAvailable = var.config.thanos_query_replicas > 1 ? 1 : ""
+      }
+    }
+
+    queryFrontend = {
+      enabled = false
+    }
+
+    storegateway = {
+      enabled      = true
+      replicaCount = var.config.thanos_storegateway_replicas
+      service = {
+        type = "ClusterIP"
+      }
+      ingress = {
+        enabled = false
+        http    = { enabled = false }
+        grpc    = { enabled = false }
+      }
+      persistence = {
+        enabled = true
+        size    = var.config.thanos_storegateway_storage_size
+      }
+      resources = {
+        requests = { cpu = "100m", memory = "512Mi" }
+        limits   = { memory = "2Gi" }
+      }
+      pdb = {
+        enabled      = var.config.thanos_storegateway_replicas > 1
+        minAvailable = var.config.thanos_storegateway_replicas > 1 ? 1 : ""
+      }
+    }
+
+    receive = { enabled = false }
+    ruler   = { enabled = false }
+    rustfs  = { enabled = false }
+
+    "kube-prometheus-stack" = {
+      enabled = false
+    }
+  }
 }
 
 resource "kubernetes_namespace_v1" "monitoring" {
@@ -296,6 +448,36 @@ resource "kubernetes_storage_class_v1" "hcloud_volumes_retain" {
   volume_binding_mode    = "WaitForFirstConsumer"
 }
 
+resource "kubernetes_secret_v1" "thanos_objstore" {
+  count = var.config.enabled && var.config.thanos_enabled ? 1 : 0
+
+  metadata {
+    name      = local.thanos_objstore_secret_name
+    namespace = kubernetes_namespace_v1.monitoring[0].metadata[0].name
+    labels = {
+      "app.kubernetes.io/managed-by" = "opentofu"
+      "vtafarm.ic3.dev/cluster"      = var.config.cluster_name
+    }
+  }
+
+  type = "Opaque"
+  data = {
+    "objstore.yml" = yamlencode({
+      type   = "S3"
+      prefix = local.thanos_s3_prefix
+      config = {
+        bucket             = var.config.thanos_s3_bucket
+        endpoint           = var.config.thanos_s3_endpoint
+        region             = var.config.thanos_s3_region
+        access_key         = var.config.thanos_s3_access_key
+        secret_key         = var.config.thanos_s3_secret_key
+        insecure           = false
+        signature_version2 = false
+      }
+    })
+  }
+}
+
 resource "helm_release" "kube_prometheus_stack" {
   count = var.config.enabled ? 1 : 0
 
@@ -309,5 +491,27 @@ resource "helm_release" "kube_prometheus_stack" {
   wait    = true
   timeout = 900
 
-  depends_on = [kubernetes_storage_class_v1.hcloud_volumes_retain]
+  depends_on = [
+    kubernetes_secret_v1.thanos_objstore,
+    kubernetes_storage_class_v1.hcloud_volumes_retain,
+  ]
+}
+
+resource "helm_release" "thanos" {
+  count = var.config.enabled && var.config.thanos_enabled ? 1 : 0
+
+  name      = local.thanos_release_name
+  chart     = "oci://ghcr.io/thanos-community/helm-charts/thanos"
+  version   = var.config.thanos_chart_version
+  namespace = kubernetes_namespace_v1.monitoring[0].metadata[0].name
+
+  values = [yamlencode(local.thanos_values)]
+
+  wait    = true
+  timeout = 900
+
+  depends_on = [
+    helm_release.kube_prometheus_stack,
+    kubernetes_secret_v1.thanos_objstore,
+  ]
 }
