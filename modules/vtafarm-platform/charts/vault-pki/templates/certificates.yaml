@@ -20,6 +20,9 @@ spec:
   privateKey:
     algorithm: RSA
     size: 2048
+    # Root key rollover requires an OLD+NEW trust-bundle transition. Never let
+    # a routine certificate renewal replace it implicitly.
+    rotationPolicy: Never
   issuerRef:
     name: {{ .Values.name }}-selfsigned
     kind: Issuer
