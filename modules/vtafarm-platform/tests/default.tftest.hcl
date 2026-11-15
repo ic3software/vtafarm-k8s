@@ -6,7 +6,8 @@ run "default_topology" {
 
   variables {
     config = {
-      cluster_name = "rke2-vtafarm-production"
+      cluster_name    = "rke2-vtafarm-production"
+      vault_ca_bundle = "-----BEGIN CERTIFICATE-----\nTEST-ONLY\n-----END CERTIFICATE-----\n"
     }
   }
 
@@ -23,6 +24,33 @@ run "default_topology" {
   assert {
     condition     = helm_release.cert_manager.wait == true
     error_message = "cert-manager must be ready before the PKI releases create Certificates."
+  }
+
+  assert {
+    condition = (
+      helm_release.trust_manager.wait == true &&
+      helm_release.trust_manager.version == "v0.25.0" &&
+      yamldecode(helm_release.trust_manager.values[0]).defaultPackage.enabled == false &&
+      yamldecode(helm_release.trust_manager.values[0]).app.trust.namespace == "cert-manager"
+    )
+    error_message = "trust-manager must read public trust sources only from cert-manager without loading an unused public CA package."
+  }
+
+  assert {
+    condition = (
+      kubernetes_config_map_v1.vault_trust_source[0].metadata[0].namespace == "cert-manager" &&
+      strcontains(kubernetes_config_map_v1.vault_trust_source[0].data["ca.crt"], "BEGIN CERTIFICATE")
+    )
+    error_message = "The source trust bundle must be a public-only ConfigMap in the trust-manager namespace."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.vault_pki.values[0]).trustBundle.enabled == true &&
+      yamldecode(helm_release.vault_pki.values[0]).trustBundle.name == "vtafarm-vault-ca" &&
+      yamldecode(helm_release.vault_pki.values[0]).trustBundle.namespaceSelector.matchLabels.managed-by == "vtafarm"
+    )
+    error_message = "The farm Vault CA bundle must target only namespaces managed by vtafarm."
   }
 
   assert {

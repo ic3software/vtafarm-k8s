@@ -3,7 +3,8 @@ variable "config" {
   type = object({
     cluster_name = string
 
-    cert_manager_version = optional(string, "v1.21.1")
+    cert_manager_version  = optional(string, "v1.21.1")
+    trust_manager_version = optional(string, "v0.25.0")
 
     longhorn_version = optional(string, "1.12.1")
     # Vault's Raft already replicates, and node NVMe is the whole budget.
@@ -31,6 +32,9 @@ variable "config" {
     vault_namespace     = optional(string, "vault")
     vault_replicas      = optional(number, 3)
     vault_data_size     = optional(string, "10Gi")
+    # Public CA bundle. Root stacks normally leave this unset and provide the
+    # git-ignored stacks/04.../clusters/<cluster>/vault-ca.crt file instead.
+    vault_ca_bundle = optional(string)
 
     transit_namespace = optional(string, "vault-transit")
     transit_data_size = optional(string, "1Gi")
