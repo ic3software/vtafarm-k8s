@@ -65,6 +65,17 @@ locals {
       }
     }
 
+    # Scrape the same kubelet node-resource metrics used by metrics-server so
+    # the admin dashboard can compare Prometheus and Kubernetes without
+    # mixing whole-node usage with a container-only sum.
+    kubelet = {
+      serviceMonitor = {
+        resource         = true
+        resourcePath     = "/metrics/resource"
+        resourceInterval = var.config.scrape_interval
+      }
+    }
+
     prometheusOperator = {
       resources = {
         requests = { cpu = "50m", memory = "128Mi" }

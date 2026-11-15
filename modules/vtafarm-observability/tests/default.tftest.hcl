@@ -70,6 +70,15 @@ run "prometheus_on_retained_hcloud_volume" {
 
   assert {
     condition = (
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).kubelet.serviceMonitor.resource == true &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).kubelet.serviceMonitor.resourcePath == "/metrics/resource" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).kubelet.serviceMonitor.resourceInterval == "30s"
+    )
+    error_message = "Prometheus must scrape kubelet node-resource metrics at the configured interval."
+  }
+
+  assert {
+    condition = (
       length(kubernetes_secret_v1.thanos_objstore) == 1 &&
       kubernetes_secret_v1.thanos_objstore[0].metadata[0].name == "thanos-objstore" &&
       yamldecode(kubernetes_secret_v1.thanos_objstore[0].data["objstore.yml"]).prefix == "observability/production/metrics" &&
