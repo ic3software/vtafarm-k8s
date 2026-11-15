@@ -4,6 +4,7 @@ locals {
   thanos_objstore_secret_name = "thanos-objstore"
   prometheus_url              = "http://${local.release_name}-prometheus.${var.config.namespace}.svc:9090"
   thanos_query_url            = "http://${local.thanos_release_name}-query.${var.config.namespace}.svc:9090"
+  thanos_query_frontend_url   = "http://${local.thanos_release_name}-query-frontend.${var.config.namespace}.svc:9090"
   thanos_s3_prefix            = var.config.thanos_s3_prefix != "" ? var.config.thanos_s3_prefix : "thanos/${var.config.cluster_name}"
 
   # The RKE2 control-plane processes are static pods whose metrics listeners
@@ -178,14 +179,16 @@ locals {
       }
       sidecar = {
         datasources = {
-          url = var.config.thanos_enabled ? local.thanos_query_url : local.prometheus_url
+          url = var.config.thanos_enabled ? local.thanos_query_frontend_url : local.prometheus_url
         }
       }
     }
 
     # Stable, tenant-safe aggregates. The application API will still verify
     # database ownership before querying by label_session_id; Prometheus and
-    # Grafana stay private ClusterIP services.
+    # Grafana stay private ClusterIP services. The inner max aggregations on
+    # cAdvisor metrics deduplicate identical samples exposed through multiple
+    # kubelet Services during a Helm fullname migration.
     additionalPrometheusRulesMap = {
       "vtafarm-pod-resources" = {
         groups = [{
@@ -193,10 +196,24 @@ locals {
           interval = var.config.evaluation_interval
           rules = [
             {
+              record = "vtafarm:pod_cpu_usage_cores:rate1m"
+              expr   = <<-PROMQL
+                sum by (namespace, pod, label_session_id, label_app) (
+                  max by (namespace, pod, container) (
+                    rate(container_cpu_usage_seconds_total{container!="",container!="POD",image!=""}[1m])
+                  )
+                  * on (namespace, pod) group_left(label_session_id, label_app)
+                  kube_pod_labels{label_session_id!=""}
+                )
+              PROMQL
+            },
+            {
               record = "vtafarm:pod_cpu_usage_cores:rate5m"
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
-                  rate(container_cpu_usage_seconds_total{container!="",container!="POD",image!=""}[5m])
+                  max by (namespace, pod, container) (
+                    rate(container_cpu_usage_seconds_total{container!="",container!="POD",image!=""}[5m])
+                  )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
                 )
@@ -206,7 +223,9 @@ locals {
               record = "vtafarm:pod_memory_working_set_bytes"
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
-                  container_memory_working_set_bytes{container!="",container!="POD",image!=""}
+                  max by (namespace, pod, container) (
+                    container_memory_working_set_bytes{container!="",container!="POD",image!=""}
+                  )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
                 )
@@ -217,6 +236,16 @@ locals {
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
                   kube_pod_container_resource_requests{resource="cpu",unit="core"}
+                  * on (namespace, pod) group_left(label_session_id, label_app)
+                  kube_pod_labels{label_session_id!=""}
+                )
+              PROMQL
+            },
+            {
+              record = "vtafarm:pod_cpu_limit_cores"
+              expr   = <<-PROMQL
+                sum by (namespace, pod, label_session_id, label_app) (
+                  kube_pod_container_resource_limits{resource="cpu",unit="core"}
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
                 )
@@ -243,11 +272,33 @@ locals {
               PROMQL
             },
             {
+              record = "vtafarm:pod_ready"
+              expr   = <<-PROMQL
+                max by (namespace, pod, label_session_id, label_app) (
+                  kube_pod_status_ready{condition="true"}
+                  * on (namespace, pod) group_left(label_session_id, label_app)
+                  kube_pod_labels{label_session_id!=""}
+                )
+              PROMQL
+            },
+            {
+              record = "vtafarm:pod_container_restarts_total"
+              expr   = <<-PROMQL
+                sum by (namespace, pod, label_session_id, label_app) (
+                  kube_pod_container_status_restarts_total
+                  * on (namespace, pod) group_left(label_session_id, label_app)
+                  kube_pod_labels{label_session_id!=""}
+                )
+              PROMQL
+            },
+            {
               record = "vtafarm:pod_network_receive_bytes_per_second:rate5m"
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
                   sum by (namespace, pod) (
-                    rate(container_network_receive_bytes_total{pod!="",interface!="lo"}[5m])
+                    max by (namespace, pod, interface) (
+                      rate(container_network_receive_bytes_total{pod!="",interface!="lo"}[5m])
+                    )
                   )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
@@ -259,7 +310,9 @@ locals {
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
                   sum by (namespace, pod) (
-                    rate(container_network_transmit_bytes_total{pod!="",interface!="lo"}[5m])
+                    max by (namespace, pod, interface) (
+                      rate(container_network_transmit_bytes_total{pod!="",interface!="lo"}[5m])
+                    )
                   )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
@@ -270,7 +323,9 @@ locals {
               record = "vtafarm:pod_persistent_volume_used_bytes"
               expr   = <<-PROMQL
                 max by (namespace, pod, persistentvolumeclaim, label_session_id, label_app) (
-                  kubelet_volume_stats_used_bytes
+                  max by (namespace, persistentvolumeclaim) (
+                    kubelet_volume_stats_used_bytes
+                  )
                   * on (namespace, persistentvolumeclaim) group_right
                   max by (namespace, pod, persistentvolumeclaim) (
                     kube_pod_spec_volumes_persistentvolumeclaims_info
@@ -284,7 +339,9 @@ locals {
               record = "vtafarm:pod_persistent_volume_capacity_bytes"
               expr   = <<-PROMQL
                 max by (namespace, pod, persistentvolumeclaim, label_session_id, label_app) (
-                  kubelet_volume_stats_capacity_bytes
+                  max by (namespace, persistentvolumeclaim) (
+                    kube_persistentvolumeclaim_resource_requests_storage_bytes
+                  )
                   * on (namespace, persistentvolumeclaim) group_right
                   max by (namespace, pod, persistentvolumeclaim) (
                     kube_pod_spec_volumes_persistentvolumeclaims_info
@@ -382,7 +439,31 @@ locals {
     }
 
     queryFrontend = {
-      enabled = false
+      enabled       = true
+      replicaCount  = 2
+      downstreamUrl = local.thanos_query_url
+      service = {
+        type = "ClusterIP"
+      }
+      ingress = {
+        enabled = false
+      }
+      cacheConfig = yamlencode({
+        type = "IN-MEMORY"
+        config = {
+          max_size       = "256MB"
+          max_size_items = 1000
+          validity       = "5m"
+        }
+      })
+      resources = {
+        requests = { cpu = "100m", memory = "256Mi" }
+        limits   = { memory = "1Gi" }
+      }
+      pdb = {
+        enabled      = true
+        minAvailable = 1
+      }
     }
 
     storegateway = {

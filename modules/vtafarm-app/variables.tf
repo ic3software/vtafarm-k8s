@@ -31,6 +31,11 @@ variable "config" {
     # Shared secret gating /api/v1/monitor/*. Empty disables the endpoints.
     monitor_token = optional(string, "")
 
+    # Private Prometheus-compatible endpoint created by stack 06. Keeping the
+    # stable service DNS here lets the API deploy before observability; metrics
+    # endpoints return 503 until the service exists.
+    metrics_query_url = optional(string, "http://thanos-query-frontend.monitoring.svc:9090")
+
     # The complete placement implementation is always deployed. This switch
     # controls production activation without changing the release artifact.
     placement = optional(object({

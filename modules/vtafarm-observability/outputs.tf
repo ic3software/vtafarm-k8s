@@ -23,7 +23,7 @@ output "thanos_s3_prefix" {
 
 output "metrics_query_url" {
   description = "Private Prometheus-compatible query URL for vtafarm-api."
-  value       = var.config.enabled ? (var.config.thanos_enabled ? local.thanos_query_url : local.prometheus_url) : null
+  value       = var.config.enabled ? (var.config.thanos_enabled ? local.thanos_query_frontend_url : local.prometheus_url) : null
 }
 
 output "grafana_url" {

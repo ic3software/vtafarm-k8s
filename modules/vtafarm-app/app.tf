@@ -18,6 +18,7 @@ resource "helm_release" "api" {
     frontendHost = local.frontend_host
     cluster      = { domain = var.config.domain }
     postgresql   = { storageClass = var.config.storage_class }
+    metrics      = { queryURL = var.config.metrics_query_url }
     vtaClaim = {
       farmDID       = var.config.farm_did
       trustTaskBase = "https://${local.api_host}/trust-task"
