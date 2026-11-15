@@ -186,7 +186,9 @@ locals {
 
     # Stable, tenant-safe aggregates. The application API will still verify
     # database ownership before querying by label_session_id; Prometheus and
-    # Grafana stay private ClusterIP services.
+    # Grafana stay private ClusterIP services. The inner max aggregations on
+    # cAdvisor metrics deduplicate identical samples exposed through multiple
+    # kubelet Services during a Helm fullname migration.
     additionalPrometheusRulesMap = {
       "vtafarm-pod-resources" = {
         groups = [{
@@ -197,7 +199,9 @@ locals {
               record = "vtafarm:pod_cpu_usage_cores:rate1m"
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
-                  rate(container_cpu_usage_seconds_total{container!="",container!="POD",image!=""}[1m])
+                  max by (namespace, pod, container) (
+                    rate(container_cpu_usage_seconds_total{container!="",container!="POD",image!=""}[1m])
+                  )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
                 )
@@ -207,7 +211,9 @@ locals {
               record = "vtafarm:pod_cpu_usage_cores:rate5m"
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
-                  rate(container_cpu_usage_seconds_total{container!="",container!="POD",image!=""}[5m])
+                  max by (namespace, pod, container) (
+                    rate(container_cpu_usage_seconds_total{container!="",container!="POD",image!=""}[5m])
+                  )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
                 )
@@ -217,7 +223,9 @@ locals {
               record = "vtafarm:pod_memory_working_set_bytes"
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
-                  container_memory_working_set_bytes{container!="",container!="POD",image!=""}
+                  max by (namespace, pod, container) (
+                    container_memory_working_set_bytes{container!="",container!="POD",image!=""}
+                  )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
                 )
@@ -288,7 +296,9 @@ locals {
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
                   sum by (namespace, pod) (
-                    rate(container_network_receive_bytes_total{pod!="",interface!="lo"}[5m])
+                    max by (namespace, pod, interface) (
+                      rate(container_network_receive_bytes_total{pod!="",interface!="lo"}[5m])
+                    )
                   )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}
@@ -300,7 +310,9 @@ locals {
               expr   = <<-PROMQL
                 sum by (namespace, pod, label_session_id, label_app) (
                   sum by (namespace, pod) (
-                    rate(container_network_transmit_bytes_total{pod!="",interface!="lo"}[5m])
+                    max by (namespace, pod, interface) (
+                      rate(container_network_transmit_bytes_total{pod!="",interface!="lo"}[5m])
+                    )
                   )
                   * on (namespace, pod) group_left(label_session_id, label_app)
                   kube_pod_labels{label_session_id!=""}

@@ -143,6 +143,21 @@ run "prometheus_on_retained_hcloud_volume" {
   }
 
   assert {
+    condition = alltrue([
+      for rule in yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules :
+      strcontains(rule.expr, "max by (namespace, pod")
+      if contains([
+        "vtafarm:pod_cpu_usage_cores:rate1m",
+        "vtafarm:pod_cpu_usage_cores:rate5m",
+        "vtafarm:pod_memory_working_set_bytes",
+        "vtafarm:pod_network_receive_bytes_per_second:rate5m",
+        "vtafarm:pod_network_transmit_bytes_per_second:rate5m",
+      ], rule.record)
+    ])
+    error_message = "cAdvisor recording rules must deduplicate samples exposed through multiple kubelet Services."
+  }
+
+  assert {
     condition = one([
       for rule in yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap.vtafarm-pod-resources.groups[0].rules :
       strcontains(rule.expr, "kube_persistentvolumeclaim_resource_requests_storage_bytes")
