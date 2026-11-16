@@ -8,6 +8,9 @@ locals {
     var.kubeconfig_path,
     "../../../03-rke2-clusters/clusters/${local.cluster_name}/kubeconfig.yaml",
   )
+
+  vault_ca_bundle_path = "${path.root}/vault-ca.crt"
+  vault_ca_bundle      = fileexists(local.vault_ca_bundle_path) ? file(local.vault_ca_bundle_path) : null
 }
 
 module "platform" {
@@ -16,7 +19,8 @@ module "platform" {
   config = {
     cluster_name = local.cluster_name
 
-    cert_manager_version = var.cert_manager_version
+    cert_manager_version  = var.cert_manager_version
+    trust_manager_version = var.trust_manager_version
 
     longhorn_version              = var.longhorn_version
     longhorn_replica_count        = var.longhorn_replica_count
@@ -38,6 +42,7 @@ module "platform" {
     vault_namespace     = var.vault_namespace
     vault_replicas      = var.vault_replicas
     vault_data_size     = var.vault_data_size
+    vault_ca_bundle     = local.vault_ca_bundle
 
     transit_namespace = var.transit_namespace
     transit_data_size = var.transit_data_size

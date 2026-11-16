@@ -18,6 +18,16 @@ resource "helm_release" "vault_pki" {
     name         = "vault"
     caCommonName = "vtafarm-vault-ca"
     commonName   = "vault.${var.config.vault_namespace}.svc.cluster.local"
+    trustBundle = {
+      enabled             = local.has_vault_ca_bundle
+      name                = "vtafarm-vault-ca"
+      sourceConfigMapName = "vtafarm-vault-trust-source"
+      namespaceSelector = {
+        matchLabels = {
+          managed-by = "vtafarm"
+        }
+      }
+    }
     # Covers the client service, the active/standby services, the per-pod Raft
     # peers, and localhost for the CLI running inside the pod.
     dnsNames = [
@@ -38,7 +48,11 @@ resource "helm_release" "vault_pki" {
   wait    = true
   timeout = 300
 
-  depends_on = [helm_release.cert_manager]
+  depends_on = [
+    helm_release.cert_manager,
+    helm_release.trust_manager,
+    kubernetes_config_map_v1.vault_trust_source,
+  ]
 }
 
 # Depends on the transit release, not on its bootstrap: the `vault-transit-token`

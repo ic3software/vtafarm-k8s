@@ -30,8 +30,8 @@ Those two steps therefore stay manual, and everything downstream of them is a sc
 
 That splits the work cleanly:
 
-- **OpenTofu owns the declarative layer** — namespaces, cert-manager, Longhorn, the TLS
-  certificate chain, both Helm releases, the NetworkPolicy.
+- **OpenTofu owns the declarative layer** — namespaces, cert-manager, trust-manager, Longhorn,
+  the TLS certificate chain, both Vault releases, and the NetworkPolicy.
 - **You own the keys** — `vault operator init` and `vault operator unseal`.
 - **`scripts/vault-bootstrap.sh` owns the configuration** — mounts, auth methods, policies, and
   the credentials it writes straight into Kubernetes Secrets rather than printing.
@@ -194,6 +194,61 @@ kubectl get secret -n vault vault-tls -o jsonpath='{.data.ca\.crt}' | base64 -d 
 
 Log in with a token. Do not use the root token for routine work, and never publish a secrets
 store's UI through an ingress or LoadBalancer.
+
+### Vault CA distribution
+
+Every cluster creates its own self-signed farm Vault CA. Dev, staging and production therefore
+have different fingerprints. Each public certificate is kept as the git-ignored
+`stacks/04-vtafarm-platform/clusters/<cluster>/vault-ca.crt`; private keys remain only in each
+cluster's `Secret/vault-ca`. The local file is an input to stack 04, not a credential or a Git
+artifact.
+
+Stack 04 copies the pinned certificate to public `ConfigMap/vtafarm-vault-trust-source` in the
+`cert-manager` namespace. The `vtafarm-vault-ca` Bundle writes it as
+`ConfigMap/vtafarm-vault-ca`, key `ca.crt`, into every namespace labelled
+`managed-by=vtafarm`. New tenant namespaces already carry that label, so distribution is
+automatic. trust-manager has no permission to read the Vault CA Secret or its private key.
+Mediator setup Jobs and Deployments mount this ConfigMap and set `VAULT_CACERT` to the mounted
+`ca.crt`. Their persisted Vault URL contains neither `insecure=1` nor a version-specific
+`ca_cert` query parameter, so the same configuration works with both the pre-hardening 0.52
+image and 0.54 or later.
+
+Inspect the public CA for one environment without reading its private key:
+
+```bash
+kubectl --context <cluster> -n vault get secret vault-ca \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d | \
+  openssl x509 -noout -subject -issuer -dates -fingerprint -sha256
+```
+
+There is no routine download step after this local input exists. Export it once after the
+cluster's CA is created, or again before a planned root-key rollover to verify that it still
+matches:
+
+```bash
+kubectl --context <cluster> -n vault get secret vault-ca \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d > \
+  stacks/04-vtafarm-platform/clusters/<cluster>/vault-ca.crt
+```
+
+For a new cluster, run stack 04 once to create the CA, export this file, then run stack 04 a
+second time to create the source ConfigMap and Bundle.
+
+Before changing the CA issuer, append the new public root to that cluster's local PEM file:
+
+```text
+-----BEGIN CERTIFICATE-----
+OLD ROOT
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+NEW ROOT
+-----END CERTIFICATE-----
+```
+
+Apply stack 04 and verify every target contains both roots before issuing the Vault server
+certificate from the new CA. After Vault and all clients use the new root, remove OLD from the
+local PEM, apply again, and verify the Bundle. Repeat this independently for each cluster;
+never reuse one environment's CA bundle in another.
 
 ### Rotating the API credentials
 

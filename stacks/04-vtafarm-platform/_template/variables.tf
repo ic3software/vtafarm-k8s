@@ -16,6 +16,12 @@ variable "cert_manager_version" {
   default     = "v1.21.1"
 }
 
+variable "trust_manager_version" {
+  description = "trust-manager chart version used to distribute the private Vault CA."
+  type        = string
+  default     = "v0.25.0"
+}
+
 variable "longhorn_version" {
   description = "Longhorn chart version."
   type        = string

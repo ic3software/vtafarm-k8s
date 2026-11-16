@@ -23,3 +23,13 @@ networkPolicy:
   # Only this namespace may reach the Vault API port.
   allowFromNamespace: ""
   port: 8200
+
+# The farm Vault enables this to publish its CA to farm-managed namespaces.
+# Transit Vault leaves it disabled because tenant workloads never connect to it.
+trustBundle:
+  enabled: false
+  name: vtafarm-vault-ca
+  sourceConfigMapName: vtafarm-vault-trust-source
+  namespaceSelector:
+    matchLabels:
+      managed-by: vtafarm

@@ -1,0 +1,22 @@
+{{- if .Values.trustBundle.enabled }}
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: {{ .Values.trustBundle.name }}
+spec:
+  sources:
+    # This source is a public-only copy managed by OpenTofu in trust-manager's
+    # namespace. The Vault CA Secret and its private key remain inaccessible.
+    - configMap:
+        name: {{ .Values.trustBundle.sourceConfigMapName }}
+        key: ca.crt
+  target:
+    configMap:
+      key: ca.crt
+      metadata:
+        labels:
+          app.kubernetes.io/component: vault-trust-bundle
+          app.kubernetes.io/managed-by: trust-manager
+    namespaceSelector:
+{{ toYaml .Values.trustBundle.namespaceSelector | indent 6 }}
+{{- end }}

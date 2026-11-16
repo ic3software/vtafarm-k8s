@@ -104,6 +104,7 @@ lint: ## Check OpenTofu formatting and Markdown style
 	$(MAKE) test-tfvars-sync
 	$(MAKE) test-kubeconfig
 	$(MAKE) test-retired-nodes
+	$(MAKE) test-vault-pki
 	markdownlint-cli2
 
 .PHONY: test-tfvars-sync
@@ -114,10 +115,13 @@ test-tfvars-sync: ## Test selective tfvars push and pull without bucket access
 test-kubeconfig: ## Test kubeconfig renewal and safe merging without cluster access
 	bash scripts/tests/kubeconfig.sh
 
-.PHONY: test-retired-nodes
+.PHONY: test-retired-nodes test-vault-pki
 test-retired-nodes: ## Test Rancher and Longhorn node retirement without cluster access
 	bash scripts/tests/retired-nodes.sh
 	bash scripts/tests/rke2-apply.sh
+
+test-vault-pki: ## Test the internal Vault certificate and trust-bundle chart
+	bash scripts/tests/vault-pki.sh
 
 .PHONY: fmt
 fmt: ## Auto-format OpenTofu and Markdown in place
