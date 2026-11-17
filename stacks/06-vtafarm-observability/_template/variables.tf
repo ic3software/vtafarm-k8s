@@ -111,12 +111,6 @@ variable "thanos_chart_version" {
   default     = "0.49.0"
 }
 
-variable "thanos_image_version" {
-  description = "Pinned official Thanos image tag used by the sidecar and standalone components."
-  type        = string
-  default     = "v0.42.5"
-}
-
 variable "thanos_s3_bucket" {
   description = "Private S3-compatible bucket containing the configured Thanos object prefix."
   type        = string
@@ -184,13 +178,25 @@ variable "thanos_storegateway_replicas" {
 }
 
 variable "thanos_storegateway_storage_size" {
-  description = "Retained Hetzner Volume capacity for each Store Gateway index cache."
+  description = "Longhorn capacity for each Store Gateway index cache."
   type        = string
-  default     = "10Gi"
+  default     = "3Gi"
+}
+
+variable "thanos_storegateway_storage_class" {
+  description = "StorageClass for each Store Gateway index cache."
+  type        = string
+  default     = "longhorn"
+}
+
+variable "thanos_compactor_storage_class" {
+  description = "StorageClass for the Compactor workspace."
+  type        = string
+  default     = "hcloud-volumes"
 }
 
 variable "thanos_compactor_storage_size" {
-  description = "Retained Hetzner Volume capacity for the Compactor workspace."
+  description = "Hetzner Cloud Volume capacity for the Compactor workspace."
   type        = string
   default     = "50Gi"
 }

@@ -20,20 +20,21 @@ variable "config" {
     prometheus_memory_request = optional(string, "1Gi")
     prometheus_memory_limit   = optional(string, "3Gi")
 
-    thanos_enabled                   = optional(bool, true)
-    thanos_chart_version             = optional(string, "0.49.0")
-    thanos_image_version             = optional(string, "v0.42.5")
-    thanos_s3_bucket                 = optional(string, "")
-    thanos_s3_prefix                 = optional(string, "")
-    thanos_s3_endpoint               = optional(string, "")
-    thanos_s3_region                 = optional(string, "")
-    thanos_s3_access_key             = optional(string, "")
-    thanos_s3_secret_key             = optional(string, "")
-    thanos_retention                 = optional(string, "30d")
-    thanos_query_replicas            = optional(number, 2)
-    thanos_storegateway_replicas     = optional(number, 2)
-    thanos_storegateway_storage_size = optional(string, "10Gi")
-    thanos_compactor_storage_size    = optional(string, "50Gi")
+    thanos_enabled                    = optional(bool, true)
+    thanos_chart_version              = optional(string, "0.49.0")
+    thanos_s3_bucket                  = optional(string, "")
+    thanos_s3_prefix                  = optional(string, "")
+    thanos_s3_endpoint                = optional(string, "")
+    thanos_s3_region                  = optional(string, "")
+    thanos_s3_access_key              = optional(string, "")
+    thanos_s3_secret_key              = optional(string, "")
+    thanos_retention                  = optional(string, "30d")
+    thanos_query_replicas             = optional(number, 2)
+    thanos_storegateway_replicas      = optional(number, 2)
+    thanos_storegateway_storage_class = optional(string, "longhorn")
+    thanos_storegateway_storage_size  = optional(string, "3Gi")
+    thanos_compactor_storage_class    = optional(string, "hcloud-volumes")
+    thanos_compactor_storage_size     = optional(string, "50Gi")
 
     grafana_enabled      = optional(bool, true)
     alertmanager_enabled = optional(bool, false)
@@ -52,6 +53,14 @@ variable "config" {
   validation {
     condition     = can(regex("^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", var.config.storage_class_name))
     error_message = "storage_class_name must be a valid Kubernetes StorageClass name."
+  }
+
+  validation {
+    condition = alltrue([
+      can(regex("^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", var.config.thanos_storegateway_storage_class)),
+      can(regex("^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", var.config.thanos_compactor_storage_class)),
+    ])
+    error_message = "Thanos StorageClass names must be valid Kubernetes StorageClass names."
   }
 
   validation {
@@ -123,7 +132,6 @@ variable "config" {
       !var.config.thanos_enabled ||
       alltrue([
         trimspace(var.config.thanos_chart_version) != "",
-        trimspace(var.config.thanos_image_version) != "",
         trimspace(var.config.thanos_s3_bucket) != "",
         trimspace(var.config.thanos_s3_endpoint) != "",
         trimspace(var.config.thanos_s3_region) != "",
@@ -131,7 +139,7 @@ variable "config" {
         trimspace(var.config.thanos_s3_secret_key) != "",
       ])
     )
-    error_message = "Thanos chart, image, bucket, endpoint, region, access key, and secret key must be set when observability and Thanos are enabled."
+    error_message = "Thanos chart, bucket, endpoint, region, access key, and secret key must be set when observability and Thanos are enabled."
   }
 
   validation {

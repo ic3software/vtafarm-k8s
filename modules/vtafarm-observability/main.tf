@@ -110,7 +110,6 @@ locals {
           cluster = var.config.cluster_name
         } : {}
         thanos = var.config.thanos_enabled ? {
-          image = "quay.io/thanos/thanos:${var.config.thanos_image_version}"
           objectStorageConfig = {
             existingSecret = {
               name = local.thanos_objstore_secret_name
@@ -372,11 +371,6 @@ locals {
     fullnameOverride = local.thanos_release_name
 
     global = {
-      image = {
-        registry   = "quay.io"
-        repository = "thanos/thanos"
-        tag        = var.config.thanos_image_version
-      }
       commonLabels = {
         "app.kubernetes.io/managed-by" = "opentofu"
         "vtafarm.ic3.dev/cluster"      = var.config.cluster_name
@@ -405,8 +399,9 @@ locals {
       enabled      = true
       replicaCount = 1
       persistence = {
-        enabled = true
-        size    = var.config.thanos_compactor_storage_size
+        enabled      = true
+        storageClass = var.config.thanos_compactor_storage_class
+        size         = var.config.thanos_compactor_storage_size
       }
       vpa = {
         enabled = false
@@ -489,8 +484,9 @@ locals {
         grpc    = { enabled = false }
       }
       persistence = {
-        enabled = true
-        size    = var.config.thanos_storegateway_storage_size
+        enabled      = true
+        storageClass = var.config.thanos_storegateway_storage_class
+        size         = var.config.thanos_storegateway_storage_size
       }
       resources = {
         requests = { cpu = "100m", memory = "512Mi" }
