@@ -192,11 +192,11 @@ variable "thanos_storegateway_storage_class" {
 variable "thanos_compactor_storage_class" {
   description = "StorageClass for the Compactor workspace."
   type        = string
-  default     = "hcloud-volumes-retain"
+  default     = "hcloud-volumes"
 }
 
 variable "thanos_compactor_storage_size" {
-  description = "Retained Hetzner Volume capacity for the Compactor workspace."
+  description = "Hetzner Cloud Volume capacity for the Compactor workspace."
   type        = string
   default     = "50Gi"
 }

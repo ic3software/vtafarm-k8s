@@ -96,7 +96,7 @@ run "prometheus_on_retained_hcloud_volume" {
       yamldecode(helm_release.thanos[0].values[0]).storegateway.persistence.storageClass == "longhorn" &&
       yamldecode(helm_release.thanos[0].values[0]).storegateway.persistence.size == "3Gi" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.replicaCount == 1 &&
-      yamldecode(helm_release.thanos[0].values[0]).compactor.persistence.storageClass == "hcloud-volumes-retain" &&
+      yamldecode(helm_release.thanos[0].values[0]).compactor.persistence.storageClass == "hcloud-volumes" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.persistence.size == "50Gi" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.retention.resolutionRaw == "30d" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.retention.resolution5m == "30d" &&

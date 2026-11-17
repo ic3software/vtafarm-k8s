@@ -33,7 +33,7 @@ variable "config" {
     thanos_storegateway_replicas      = optional(number, 2)
     thanos_storegateway_storage_class = optional(string, "longhorn")
     thanos_storegateway_storage_size  = optional(string, "3Gi")
-    thanos_compactor_storage_class    = optional(string, "hcloud-volumes-retain")
+    thanos_compactor_storage_class    = optional(string, "hcloud-volumes")
     thanos_compactor_storage_size     = optional(string, "50Gi")
 
     grafana_enabled      = optional(bool, true)
