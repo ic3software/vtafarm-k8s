@@ -58,6 +58,7 @@ run "prometheus_on_retained_hcloud_volume" {
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.replicas == 1 &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.externalLabels.cluster == "rke2-vtafarm-production" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.thanos.objectStorageConfig.existingSecret.name == "thanos-objstore" &&
+      !contains(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.thanos), "image") &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues == false &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.thanosService.enabled == true &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.sidecar.datasources.url == "http://thanos-query-frontend.monitoring.svc:9090" &&
@@ -84,7 +85,7 @@ run "prometheus_on_retained_hcloud_volume" {
       yamldecode(kubernetes_secret_v1.thanos_objstore[0].data["objstore.yml"]).prefix == "observability/production/metrics" &&
       helm_release.thanos[0].name == "thanos" &&
       helm_release.thanos[0].version == "0.49.0" &&
-      yamldecode(helm_release.thanos[0].values[0]).global.image.tag == "v0.42.5" &&
+      !contains(keys(yamldecode(helm_release.thanos[0].values[0]).global), "image") &&
       yamldecode(helm_release.thanos[0].values[0]).global.storageClass == "hcloud-volumes-retain" &&
       yamldecode(helm_release.thanos[0].values[0]).receive.enabled == false &&
       yamldecode(helm_release.thanos[0].values[0]).query.replicaCount == 2 &&
@@ -92,14 +93,16 @@ run "prometheus_on_retained_hcloud_volume" {
       yamldecode(helm_release.thanos[0].values[0]).queryFrontend.replicaCount == 2 &&
       yamldecode(helm_release.thanos[0].values[0]).queryFrontend.downstreamUrl == "http://thanos-query.monitoring.svc:9090" &&
       yamldecode(helm_release.thanos[0].values[0]).storegateway.replicaCount == 2 &&
-      yamldecode(helm_release.thanos[0].values[0]).storegateway.persistence.size == "10Gi" &&
+      yamldecode(helm_release.thanos[0].values[0]).storegateway.persistence.storageClass == "longhorn" &&
+      yamldecode(helm_release.thanos[0].values[0]).storegateway.persistence.size == "3Gi" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.replicaCount == 1 &&
+      yamldecode(helm_release.thanos[0].values[0]).compactor.persistence.storageClass == "hcloud-volumes-retain" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.persistence.size == "50Gi" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.retention.resolutionRaw == "30d" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.retention.resolution5m == "30d" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.retention.resolution1h == "30d"
     )
-    error_message = "Thanos must upload to the configured object store and retain all resolutions for 30 days."
+    error_message = "Thanos must upload to the configured object store, use Longhorn for its Store Gateway cache, and retain all resolutions for 30 days."
   }
 
   assert {

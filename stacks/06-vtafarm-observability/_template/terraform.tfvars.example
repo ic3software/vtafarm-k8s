@@ -33,7 +33,6 @@ prometheus_memory_limit   = "3Gi"
 # prefix and scoped S3 credentials. The endpoint has no https:// or path.
 thanos_enabled       = true
 thanos_chart_version = "0.49.0"
-thanos_image_version = "v0.42.5"
 
 thanos_s3_bucket     = "replace-with-thanos-bucket"
 # Empty defaults to thanos/<stack-directory-name>, for example
@@ -47,8 +46,10 @@ thanos_s3_secret_key = "replace-with-secret-key"
 thanos_retention                 = "30d"
 thanos_query_replicas            = 2
 thanos_storegateway_replicas     = 2
-thanos_storegateway_storage_size = "10Gi"
-thanos_compactor_storage_size    = "50Gi"
+thanos_storegateway_storage_class = "longhorn"
+thanos_storegateway_storage_size  = "3Gi"
+thanos_compactor_storage_class = "hcloud-volumes-retain"
+thanos_compactor_storage_size  = "50Gi"
 
 # Prometheus, Thanos Query and Grafana remain private ClusterIP services. Use
 # kubectl port-forward for operator access; tenant metrics go through the API.
