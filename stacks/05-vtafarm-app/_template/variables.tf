@@ -87,6 +87,12 @@ variable "monitor_token" {
   sensitive   = true
 }
 
+variable "metrics_query_url" {
+  description = "Private Prometheus-compatible endpoint created by stack 06. Empty disables tenant metrics."
+  type        = string
+  default     = ""
+}
+
 variable "placement" {
   description = "Workload placement activation and safety thresholds. Ship disabled, validate canaries, then switch to enabled."
   type = object({

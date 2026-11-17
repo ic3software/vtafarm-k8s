@@ -36,6 +36,10 @@ farm_signing_key = ""
 # openssl rand -hex 32. Empty disables /api/v1/monitor/*.
 monitor_token = ""
 
+# Empty disables tenant metrics. When stack 06 is enabled, use its
+# metrics_query_url output here.
+metrics_query_url = ""
+
 # --- Workload placement ---------------------------------------------------
 # Deploy the complete feature with mode=disabled first. After backup/restore
 # validation, list the two canary VTA setup-session numeric IDs. Change only
