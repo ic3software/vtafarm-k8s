@@ -31,6 +31,25 @@ output "grafana_url" {
   value       = var.config.enabled && var.config.grafana_enabled ? "http://${local.release_name}-grafana.${var.config.namespace}.svc:80" : null
 }
 
+output "loki_gateway_url" {
+  description = "Private in-cluster Loki gateway URL used by Alloy and Grafana."
+  value       = var.config.enabled && var.config.loki_enabled ? local.loki_gateway_url : null
+}
+
+output "loki_s3_buckets" {
+  description = "Private object-storage locations used for Loki chunks/indexes and ruler data."
+  value = var.config.enabled && var.config.loki_enabled ? {
+    chunks = {
+      bucket = var.config.loki_s3_chunks_bucket
+      prefix = var.config.loki_s3_chunks_prefix
+    }
+    ruler = {
+      bucket = var.config.loki_s3_ruler_bucket
+      prefix = var.config.loki_s3_ruler_prefix
+    }
+  } : null
+}
+
 output "storage_class_name" {
   value = var.config.enabled ? var.config.storage_class_name : null
 }

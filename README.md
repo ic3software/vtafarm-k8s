@@ -8,7 +8,7 @@ with a running application. It builds six layers, in this order:
 3. an **RKE2** cluster that Rancher creates for a farm
 4. the platform inside that cluster: **cert-manager**, **Longhorn** and **HashiCorp Vault**
 5. the vtafarm frontend and API
-6. optional observability: **Prometheus**, **Grafana** and **Alertmanager**
+6. optional observability: **Prometheus**, **Thanos**, **Grafana**, **Loki**, and **Alloy**
 
 Each layer is one OpenTofu stack. You build layers 1 and 2 once. Layers 3 to 6 are one farm, so
 repeat steps 6 to 9 for every farm you need. Stack 06 is opt-in and is a no-op when monitoring is
@@ -521,10 +521,11 @@ make new-vtafarm-observability CLUSTER=rke2-vtafarm-production
 code stacks/06-vtafarm-observability/clusters/rke2-vtafarm-production/terraform.tfvars
 ```
 
-Choose a private Hetzner Object Storage bucket and an isolated prefix for Thanos, fill in its
-endpoint and S3 credentials, then set `observability_enabled = true`. The bucket may be shared
-with other data because the Compactor only sees its configured prefix. Review both 30-day
-retention settings and the Volume sizes before applying:
+Choose a private Hetzner Object Storage bucket and an isolated prefix for Thanos. Also create
+the private `loki` bucket. Each cluster receives separate `<cluster-name>-loki-chunks` and
+`<cluster-name>-loki-ruler` prefixes inside it. Fill in the Thanos endpoint and S3 credentials, then
+set `observability_enabled = true`. Loki reuses those S3 connection settings unless dedicated
+values are provided. Review the 30-day retention settings and Volume sizes before applying:
 
 ```bash
 make init-vtafarm-observability  CLUSTER=rke2-vtafarm-production
@@ -540,6 +541,12 @@ interfaces remain private `ClusterIP` services. Tenant-facing metrics must be au
 returned by `vtafarm-api`. The installed recording rules aggregate each VTA Farm Pod's CPU,
 memory, requests, limits, network I/O and mounted PVC usage by its existing `session-id` and
 `app` labels.
+
+Alloy runs once per node and moves CRI Pod logs out of `/var/log/pods` before kubelet rotation
+or Pod deletion removes them. Loki uses a retained 10 GiB Hetzner Volume in dev and three
+retained 20 GiB Hetzner Volumes in staging and production; durable chunks and TSDB indexes live
+under that cluster's chunks prefix for 30 days. Grafana receives a private Loki data source
+automatically. Ruler data uses its own small prefix in the same bucket.
 
 ---
 

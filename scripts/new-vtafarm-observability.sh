@@ -48,7 +48,7 @@ for config_file in main.tf; do
 done
 
 echo "created ${TARGET_DIR}"
-echo "next: configure the dedicated Thanos bucket and set observability_enabled = true"
+echo "next: configure Thanos, create the shared loki bucket, and set observability_enabled = true"
 echo "      in ${TARGET_DIR}/terraform.tfvars"
 echo "then: make init-vtafarm-observability CLUSTER=${CLUSTER_NAME}"
 echo "      make apply-vtafarm-observability CLUSTER=${CLUSTER_NAME}"

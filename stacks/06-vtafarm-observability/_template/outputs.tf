@@ -26,6 +26,14 @@ output "grafana_url" {
   value = module.observability.grafana_url
 }
 
+output "loki_gateway_url" {
+  value = module.observability.loki_gateway_url
+}
+
+output "loki_s3_buckets" {
+  value = module.observability.loki_s3_buckets
+}
+
 output "storage_class_name" {
   value = module.observability.storage_class_name
 }
