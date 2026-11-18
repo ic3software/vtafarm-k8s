@@ -82,7 +82,7 @@ The full arrangement, including how a second operator joins, is in
 │   │   └── templates/          # Vault chart values
 │   ├── vtafarm-app/            # the frontend and the API, from GHCR
 │   │   └── charts/vtafarm-tls/ # ACME issuers, wildcard certificate, TLS store
-│   └── vtafarm-observability/  # Prometheus, Thanos and VTA Farm recording rules
+│   └── vtafarm-observability/  # Prometheus, Thanos, Loki, Alloy and recording rules
 ├── scripts/
 │   ├── fetch-kubeconfig.sh     # pull the kubeconfig and rewrite its API endpoint
 │   ├── merge-kubeconfig.sh     # merge it into ~/.kube/config

@@ -15,10 +15,24 @@ variable "observability_enabled" {
   default     = false
 }
 
-variable "observability_namespace" {
-  description = "Namespace for the observability stack."
+variable "monitoring_namespace" {
+  description = "Namespace for Prometheus, Thanos, Grafana, and Alertmanager."
   type        = string
   default     = "monitoring"
+}
+
+variable "logging_namespace" {
+  description = "Separate namespace for Loki, its gateway, Alloy, and logging credentials."
+  type        = string
+  default     = "logging"
+
+  validation {
+    condition = (
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.logging_namespace)) &&
+      var.logging_namespace != var.monitoring_namespace
+    )
+    error_message = "logging_namespace must be a lowercase DNS-safe name distinct from monitoring_namespace."
+  }
 }
 
 variable "kube_prometheus_stack_version" {
@@ -199,6 +213,102 @@ variable "thanos_compactor_storage_size" {
   description = "Hetzner Cloud Volume capacity for the Compactor workspace."
   type        = string
   default     = "50Gi"
+}
+
+variable "loki_enabled" {
+  description = "Install monolithic Loki plus an Alloy log collector on every node."
+  type        = bool
+  default     = true
+}
+
+variable "loki_chart_version" {
+  description = "Pinned grafana-community/loki chart version."
+  type        = string
+  default     = "21.4.0"
+}
+
+variable "alloy_chart_version" {
+  description = "Pinned grafana/alloy chart version."
+  type        = string
+  default     = "1.16.0"
+}
+
+variable "loki_replicas" {
+  description = "Monolithic Loki replicas. Use 1 for dev and 3 for staging/production."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = contains([1, 3], var.loki_replicas)
+    error_message = "loki_replicas must be 1 or 3."
+  }
+}
+
+variable "loki_gateway_replicas" {
+  description = "Loki gateway replicas. Use 1 for dev and 2 for staging/production."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.loki_gateway_replicas >= 1 && var.loki_gateway_replicas <= 5 && floor(var.loki_gateway_replicas) == var.loki_gateway_replicas
+    error_message = "loki_gateway_replicas must be a whole number from 1 to 5."
+  }
+}
+
+variable "loki_storage_class" {
+  description = "Retained Hetzner CSI StorageClass used for each Loki WAL and working-state PVC."
+  type        = string
+  default     = "hcloud-volumes-retain"
+}
+
+variable "loki_storage_size" {
+  description = "Capacity of each Loki working PVC. Use 10Gi for dev and 20Gi for staging/production."
+  type        = string
+  default     = "10Gi"
+}
+
+variable "loki_retention" {
+  description = "Maximum age of logs in Loki object storage."
+  type        = string
+  default     = "720h"
+}
+
+variable "loki_s3_chunks_bucket" {
+  description = "Private bucket for Loki chunks and TSDB indexes. Empty uses the shared loki bucket."
+  type        = string
+  default     = ""
+}
+
+variable "loki_s3_ruler_bucket" {
+  description = "Private bucket for Loki ruler data. Empty uses the shared loki bucket."
+  type        = string
+  default     = ""
+}
+
+variable "loki_s3_endpoint" {
+  description = "S3-compatible endpoint without a scheme. Empty reuses the Thanos endpoint."
+  type        = string
+  default     = ""
+}
+
+variable "loki_s3_region" {
+  description = "S3-compatible bucket region. Empty reuses the Thanos region."
+  type        = string
+  default     = ""
+}
+
+variable "loki_s3_access_key" {
+  description = "S3 access key for the Loki buckets. Empty reuses the Thanos access key."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "loki_s3_secret_key" {
+  description = "S3 secret key for the Loki buckets. Empty reuses the Thanos secret key."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "grafana_enabled" {

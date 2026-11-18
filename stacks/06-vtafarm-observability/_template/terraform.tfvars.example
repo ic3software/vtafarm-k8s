@@ -7,7 +7,7 @@ kubeconfig_path = ""
 # environments that do not want monitoring can still apply it as a safe no-op.
 observability_enabled = false
 
-observability_namespace       = "monitoring"
+monitoring_namespace          = "monitoring"
 kube_prometheus_stack_version = "93.3.0"
 
 # Prometheus uses a dedicated Hetzner Cloud Volume rather than Longhorn. The
@@ -51,7 +51,32 @@ thanos_storegateway_storage_size  = "3Gi"
 thanos_compactor_storage_class = "hcloud-volumes"
 thanos_compactor_storage_size  = "50Gi"
 
-# Prometheus, Thanos Query and Grafana remain private ClusterIP services. Use
-# kubectl port-forward for operator access; tenant metrics go through the API.
+# Loki and Alloy run in the separate logging namespace. Loki stores durable
+# data in one private loki bucket with cluster-scoped prefixes such as
+# rke2-vtafarm-dev-loki-chunks and rke2-vtafarm-dev-loki-ruler. Create the
+# bucket before apply. Empty S3 connection fields reuse the Thanos values.
+loki_enabled        = true
+logging_namespace   = "logging"
+loki_chart_version  = "21.4.0"
+alloy_chart_version = "1.16.0"
+
+loki_s3_chunks_bucket = "loki"
+loki_s3_ruler_bucket  = "loki"
+loki_s3_endpoint      = ""
+loki_s3_region        = ""
+loki_s3_access_key    = ""
+loki_s3_secret_key    = ""
+
+# Development topology: 1 Loki replica, 1 gateway, and one 10Gi retained
+# Hetzner Volume. For staging and production, set these to 3, 2, and 20Gi.
+loki_replicas         = 1
+loki_gateway_replicas = 1
+loki_storage_class    = "hcloud-volumes-retain"
+loki_storage_size     = "10Gi"
+loki_retention        = "720h"
+
+# Prometheus, Thanos Query, Loki, Alloy, and Grafana remain private ClusterIP
+# services. Use kubectl port-forward for operator access; tenant telemetry goes
+# through an authorized API rather than exposing the backends directly.
 grafana_enabled      = true
 alertmanager_enabled = false

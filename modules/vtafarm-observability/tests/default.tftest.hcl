@@ -14,11 +14,128 @@ run "disabled_by_default" {
     condition = (
       length(helm_release.kube_prometheus_stack) == 0 &&
       length(helm_release.thanos) == 0 &&
+      length(helm_release.loki) == 0 &&
+      length(helm_release.alloy) == 0 &&
       length(kubernetes_namespace_v1.monitoring) == 0 &&
+      length(kubernetes_namespace_v1.logging) == 0 &&
       length(kubernetes_secret_v1.thanos_objstore) == 0 &&
+      length(kubernetes_secret_v1.loki_s3) == 0 &&
       length(kubernetes_storage_class_v1.hcloud_volumes_retain) == 0
     )
     error_message = "Observability must create no resources unless explicitly enabled."
+  }
+}
+
+run "loki_and_alloy_logging_pipeline" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name          = "rke2-vtafarm-staging"
+      enabled               = true
+      thanos_enabled        = false
+      loki_enabled          = true
+      loki_replicas         = 3
+      loki_gateway_replicas = 2
+      loki_storage_size     = "20Gi"
+      loki_s3_chunks_bucket = "loki"
+      loki_s3_ruler_bucket  = "loki"
+      loki_s3_chunks_prefix = "rke2-vtafarm-staging-loki-chunks"
+      loki_s3_ruler_prefix  = "rke2-vtafarm-staging-loki-ruler"
+      loki_s3_endpoint      = "nbg1.your-objectstorage.com"
+      loki_s3_region        = "nbg1"
+      loki_s3_access_key    = "test-access-key"
+      loki_s3_secret_key    = "test-secret-key"
+    }
+  }
+
+  assert {
+    condition = (
+      length(kubernetes_namespace_v1.logging) == 1 &&
+      kubernetes_namespace_v1.logging[0].metadata[0].name == "logging" &&
+      length(kubernetes_secret_v1.loki_s3) == 1 &&
+      kubernetes_secret_v1.loki_s3[0].metadata[0].name == "loki-s3" &&
+      kubernetes_secret_v1.loki_s3[0].metadata[0].namespace == "logging" &&
+      kubernetes_secret_v1.loki_s3[0].data.AWS_ACCESS_KEY_ID == "test-access-key" &&
+      kubernetes_secret_v1.loki_s3[0].data.AWS_SECRET_ACCESS_KEY == "test-secret-key"
+    )
+    error_message = "Loki S3 credentials must be injected through a dedicated Kubernetes Secret."
+  }
+
+  assert {
+    condition = (
+      helm_release.loki[0].name == "loki" &&
+      helm_release.loki[0].namespace == "logging" &&
+      helm_release.loki[0].version == "21.4.0" &&
+      yamldecode(helm_release.loki[0].values[0]).deploymentMode == "Monolithic" &&
+      yamldecode(helm_release.loki[0].values[0]).global.clusterDomain == "cluster.local" &&
+      yamldecode(helm_release.loki[0].values[0]).global.dnsService == "rke2-coredns-rke2-coredns" &&
+      yamldecode(helm_release.loki[0].values[0]).global.dnsNamespace == "kube-system" &&
+      yamldecode(helm_release.loki[0].values[0]).memberlist.service.publishNotReadyAddresses == true &&
+      yamldecode(helm_release.loki[0].values[0]).loki.auth_enabled == false &&
+      yamldecode(helm_release.loki[0].values[0]).loki.commonConfig.replication_factor == 3 &&
+      yamldecode(helm_release.loki[0].values[0]).loki.schemaConfig.configs[0].store == "tsdb" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.schemaConfig.configs[0].schema == "v13" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.schemaConfig.configs[0].index.period == "24h" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.storage.bucketNames.chunks == "loki" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.storage.bucketNames.ruler == "loki" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.storage.use_thanos_objstore == true &&
+      yamldecode(helm_release.loki[0].values[0]).loki.storage.object_store.storage_prefix == "rke2-vtafarm-staging-loki-chunks" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.storage.object_store.s3.access_key_id == "$${AWS_ACCESS_KEY_ID}" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.storage.object_store.s3.secret_access_key == "$${AWS_SECRET_ACCESS_KEY}" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.structuredConfig.ruler_storage.storage_prefix == "rke2-vtafarm-staging-loki-ruler" &&
+      !strcontains(helm_release.loki[0].values[0], "test-secret-key") &&
+      yamldecode(helm_release.loki[0].values[0]).loki.limits_config.retention_period == "720h" &&
+      yamldecode(helm_release.loki[0].values[0]).loki.compactor.retention_enabled == true &&
+      yamldecode(helm_release.loki[0].values[0]).loki.compactor.delete_request_store == "s3"
+    )
+    error_message = "Loki must use RKE2 DNS, bootstrap memberlist, and configure monolithic TSDB v13 with cluster-scoped S3 storage and retention."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.loki[0].values[0]).singleBinary.replicas == 3 &&
+      yamldecode(helm_release.loki[0].values[0]).singleBinary.persistence.storageClass == "hcloud-volumes-retain" &&
+      yamldecode(helm_release.loki[0].values[0]).singleBinary.persistence.size == "20Gi" &&
+      yamldecode(helm_release.loki[0].values[0]).singleBinary.persistence.enableStatefulSetAutoDeletePVC == false &&
+      yamldecode(helm_release.loki[0].values[0]).singleBinary.podDisruptionBudget.minAvailable == 2 &&
+      yamldecode(helm_release.loki[0].values[0]).gateway.replicas == 2 &&
+      yamldecode(helm_release.loki[0].values[0]).gateway.podDisruptionBudget.minAvailable == 1 &&
+      yamldecode(helm_release.loki[0].values[0]).chunksCache.enabled == false &&
+      yamldecode(helm_release.loki[0].values[0]).resultsCache.enabled == false &&
+      yamldecode(helm_release.loki[0].values[0]).monitoring.serviceMonitor.enabled == true
+    )
+    error_message = "Staging Loki must use the approved three-replica, 20Gi, two-gateway topology without oversized caches."
+  }
+
+  assert {
+    condition = (
+      helm_release.alloy[0].name == "alloy" &&
+      helm_release.alloy[0].namespace == "logging" &&
+      helm_release.alloy[0].version == "1.16.0" &&
+      yamldecode(helm_release.alloy[0].values[0]).controller.type == "daemonset" &&
+      yamldecode(helm_release.alloy[0].values[0]).alloy.clustering.enabled == false &&
+      yamldecode(helm_release.alloy[0].values[0]).alloy.storagePath == "/var/lib/alloy" &&
+      yamldecode(helm_release.alloy[0].values[0]).alloy.mounts.varlog == true &&
+      yamldecode(helm_release.alloy[0].values[0]).controller.volumes.extra[0].hostPath.path == "/var/lib/alloy" &&
+      yamldecode(helm_release.alloy[0].values[0]).serviceMonitor.enabled == true &&
+      strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "spec.nodeName=") &&
+      strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "/var/log/pods/*$1/*.log") &&
+      strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "stage.structured_metadata") &&
+      strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "http://loki-gateway.logging.svc.cluster.local/loki/api/v1/push")
+    )
+    error_message = "Alloy must run once per node, persist file positions, collect only local CRI Pod logs, and write through the private Loki gateway."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.additionalDataSources[0].name == "Loki" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.additionalDataSources[0].url == "http://loki-gateway.logging.svc.cluster.local" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.sidecar.dashboards.searchNamespace == "ALL" &&
+      length(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.serviceMonitorNamespaceSelector)) == 0 &&
+      length(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.ruleNamespaceSelector)) == 0
+    )
+    error_message = "Grafana and Prometheus must discover logging data, dashboards, monitors, and rules across namespaces."
   }
 }
 

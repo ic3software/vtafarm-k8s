@@ -417,11 +417,11 @@ init-vtafarm-observability: check-vtafarm-observability check-state-env ## Initi
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) init $(call backend_config,06-vtafarm-observability/$(CLUSTER))
 
 .PHONY: plan-vtafarm-observability
-plan-vtafarm-observability: check-vtafarm-observability ## Plan optional Prometheus and Thanos observability (CLUSTER=name)
+plan-vtafarm-observability: check-vtafarm-observability ## Plan optional metrics and logging observability (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) plan
 
 .PHONY: apply-vtafarm-observability
-apply-vtafarm-observability: check-vtafarm-observability ## Install or upgrade optional Prometheus and Thanos observability (CLUSTER=name)
+apply-vtafarm-observability: check-vtafarm-observability ## Install or upgrade optional metrics and logging observability (CLUSTER=name)
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) apply
 
 .PHONY: outputs-vtafarm-observability
@@ -433,9 +433,9 @@ destroy-vtafarm-observability: check-vtafarm-observability ## Remove observabili
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) destroy
 
 .PHONY: observability-status
-observability-status: check-vtafarm-observability ## Show Prometheus and Thanos health and storage (CLUSTER=name)
+observability-status: check-vtafarm-observability ## Show metrics and logging health and storage (CLUSTER=name)
 	@export KUBECONFIG=$(RKE2_KUBECONFIG_FILE); \
-	namespace="$$(tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output -raw namespace)"; \
+	namespace="$$(tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output -raw monitoring_namespace)"; \
 	echo "== monitoring pods =="; kubectl -n "$$namespace" get pods; \
 	echo; echo "== monitoring PVCs =="; kubectl -n "$$namespace" get pvc; \
 	echo; echo "== metrics resources =="; \
