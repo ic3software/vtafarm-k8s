@@ -5,10 +5,10 @@ locals {
   loki_release_name           = "loki"
   alloy_release_name          = "alloy"
   loki_s3_secret_name         = "loki-s3"
-  prometheus_url              = "http://${local.release_name}-prometheus.${var.config.namespace}.svc:9090"
-  thanos_query_url            = "http://${local.thanos_release_name}-query.${var.config.namespace}.svc:9090"
-  thanos_query_frontend_url   = "http://${local.thanos_release_name}-query-frontend.${var.config.namespace}.svc:9090"
-  loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.loki_namespace}.svc.cluster.local"
+  prometheus_url              = "http://${local.release_name}-prometheus.${var.config.monitoring_namespace}.svc:9090"
+  thanos_query_url            = "http://${local.thanos_release_name}-query.${var.config.monitoring_namespace}.svc:9090"
+  thanos_query_frontend_url   = "http://${local.thanos_release_name}-query-frontend.${var.config.monitoring_namespace}.svc:9090"
+  loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.logging_namespace}.svc.cluster.local"
   thanos_s3_prefix            = var.config.thanos_s3_prefix != "" ? var.config.thanos_s3_prefix : "thanos/${var.config.cluster_name}"
 
   # The RKE2 control-plane processes are static pods whose metrics listeners
@@ -448,7 +448,7 @@ locals {
       endpoints = {
         autogen = { enabled = true }
         static = [
-          "dnssrv+_grpc._tcp.${local.release_name}-thanos-discovery.${var.config.namespace}.svc.cluster.local",
+          "dnssrv+_grpc._tcp.${local.release_name}-thanos-discovery.${var.config.monitoring_namespace}.svc.cluster.local",
         ]
       }
       resources = {
@@ -688,7 +688,7 @@ locals {
             rules = [
               {
                 alert  = "VTAFarmAlloyUnavailable"
-                expr   = "kube_daemonset_status_number_unavailable{namespace=\"${var.config.loki_namespace}\",daemonset=\"${local.alloy_release_name}\"} > 0"
+                expr   = "kube_daemonset_status_number_unavailable{namespace=\"${var.config.logging_namespace}\",daemonset=\"${local.alloy_release_name}\"} > 0"
                 for    = "5m"
                 labels = { severity = "warning" }
                 annotations = {
@@ -697,7 +697,7 @@ locals {
               },
               {
                 alert  = "VTAFarmLokiReplicaUnavailable"
-                expr   = "kube_statefulset_status_replicas_ready{namespace=\"${var.config.loki_namespace}\",statefulset=\"${local.loki_release_name}\"} < ${var.config.loki_replicas}"
+                expr   = "kube_statefulset_status_replicas_ready{namespace=\"${var.config.logging_namespace}\",statefulset=\"${local.loki_release_name}\"} < ${var.config.loki_replicas}"
                 for    = "5m"
                 labels = { severity = "warning" }
                 annotations = {
@@ -706,7 +706,7 @@ locals {
               },
               {
                 alert  = "VTAFarmLokiGatewayUnavailable"
-                expr   = "kube_deployment_status_replicas_available{namespace=\"${var.config.loki_namespace}\",deployment=\"${local.loki_release_name}-gateway\"} < 1"
+                expr   = "kube_deployment_status_replicas_available{namespace=\"${var.config.logging_namespace}\",deployment=\"${local.loki_release_name}-gateway\"} < 1"
                 for    = "5m"
                 labels = { severity = "critical" }
                 annotations = {
@@ -715,7 +715,7 @@ locals {
               },
               {
                 alert  = "VTAFarmLokiPVCUsageHigh"
-                expr   = "kubelet_volume_stats_used_bytes{namespace=\"${var.config.loki_namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} / kubelet_volume_stats_capacity_bytes{namespace=\"${var.config.loki_namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} > 0.85"
+                expr   = "kubelet_volume_stats_used_bytes{namespace=\"${var.config.logging_namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} / kubelet_volume_stats_capacity_bytes{namespace=\"${var.config.logging_namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} > 0.85"
                 for    = "15m"
                 labels = { severity = "critical" }
                 annotations = {
@@ -934,7 +934,7 @@ resource "kubernetes_namespace_v1" "monitoring" {
   count = var.config.enabled ? 1 : 0
 
   metadata {
-    name = var.config.namespace
+    name = var.config.monitoring_namespace
     labels = {
       "app.kubernetes.io/managed-by" = "opentofu"
       "vtafarm.ic3.dev/purpose"      = "observability"
@@ -946,7 +946,7 @@ resource "kubernetes_namespace_v1" "logging" {
   count = var.config.enabled && var.config.loki_enabled ? 1 : 0
 
   metadata {
-    name = var.config.loki_namespace
+    name = var.config.logging_namespace
     labels = {
       "app.kubernetes.io/managed-by" = "opentofu"
       "vtafarm.ic3.dev/purpose"      = "logging"

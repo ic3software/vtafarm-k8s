@@ -15,23 +15,23 @@ variable "observability_enabled" {
   default     = false
 }
 
-variable "observability_namespace" {
+variable "monitoring_namespace" {
   description = "Namespace for Prometheus, Thanos, Grafana, and Alertmanager."
   type        = string
   default     = "monitoring"
 }
 
-variable "loki_namespace" {
+variable "logging_namespace" {
   description = "Separate namespace for Loki, its gateway, Alloy, and logging credentials."
   type        = string
   default     = "logging"
 
   validation {
     condition = (
-      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.loki_namespace)) &&
-      var.loki_namespace != var.observability_namespace
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.logging_namespace)) &&
+      var.logging_namespace != var.monitoring_namespace
     )
-    error_message = "loki_namespace must be a lowercase DNS-safe name distinct from observability_namespace."
+    error_message = "logging_namespace must be a lowercase DNS-safe name distinct from monitoring_namespace."
   }
 }
 

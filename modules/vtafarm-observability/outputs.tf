@@ -2,13 +2,14 @@ output "enabled" {
   value = var.config.enabled
 }
 
-output "namespace" {
-  value = var.config.enabled ? var.config.namespace : null
+output "monitoring_namespace" {
+  description = "Namespace containing Prometheus, Thanos, Grafana, and Alertmanager."
+  value       = var.config.enabled ? var.config.monitoring_namespace : null
 }
 
-output "loki_namespace" {
+output "logging_namespace" {
   description = "Namespace containing Loki, its gateway, Alloy, and logging credentials."
-  value       = var.config.enabled && var.config.loki_enabled ? var.config.loki_namespace : null
+  value       = var.config.enabled && var.config.loki_enabled ? var.config.logging_namespace : null
 }
 
 output "prometheus_url" {
@@ -33,7 +34,7 @@ output "metrics_query_url" {
 
 output "grafana_url" {
   description = "Private in-cluster Grafana URL; use kubectl port-forward for operator access."
-  value       = var.config.enabled && var.config.grafana_enabled ? "http://${local.release_name}-grafana.${var.config.namespace}.svc:80" : null
+  value       = var.config.enabled && var.config.grafana_enabled ? "http://${local.release_name}-grafana.${var.config.monitoring_namespace}.svc:80" : null
 }
 
 output "loki_gateway_url" {

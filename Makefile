@@ -435,7 +435,7 @@ destroy-vtafarm-observability: check-vtafarm-observability ## Remove observabili
 .PHONY: observability-status
 observability-status: check-vtafarm-observability ## Show metrics and logging health and storage (CLUSTER=name)
 	@export KUBECONFIG=$(RKE2_KUBECONFIG_FILE); \
-	namespace="$$(tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output -raw namespace)"; \
+	namespace="$$(tofu -chdir=$(VTAFARM_OBSERVABILITY_CLUSTER_DIR) output -raw monitoring_namespace)"; \
 	echo "== monitoring pods =="; kubectl -n "$$namespace" get pods; \
 	echo; echo "== monitoring PVCs =="; kubectl -n "$$namespace" get pvc; \
 	echo; echo "== metrics resources =="; \

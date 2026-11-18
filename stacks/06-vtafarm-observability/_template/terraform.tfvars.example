@@ -7,8 +7,7 @@ kubeconfig_path = ""
 # environments that do not want monitoring can still apply it as a safe no-op.
 observability_enabled = false
 
-observability_namespace       = "monitoring"
-loki_namespace                = "logging"
+monitoring_namespace          = "monitoring"
 kube_prometheus_stack_version = "93.3.0"
 
 # Prometheus uses a dedicated Hetzner Cloud Volume rather than Longhorn. The
@@ -57,6 +56,7 @@ thanos_compactor_storage_size  = "50Gi"
 # rke2-vtafarm-dev-loki-chunks and rke2-vtafarm-dev-loki-ruler. Create the
 # bucket before apply. Empty S3 connection fields reuse the Thanos values.
 loki_enabled        = true
+logging_namespace   = "logging"
 loki_chart_version  = "21.4.0"
 alloy_chart_version = "1.16.0"
 

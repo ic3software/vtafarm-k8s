@@ -2,12 +2,12 @@ output "enabled" {
   value = module.observability.enabled
 }
 
-output "namespace" {
-  value = module.observability.namespace
+output "monitoring_namespace" {
+  value = module.observability.monitoring_namespace
 }
 
-output "loki_namespace" {
-  value = module.observability.loki_namespace
+output "logging_namespace" {
+  value = module.observability.logging_namespace
 }
 
 output "prometheus_url" {
