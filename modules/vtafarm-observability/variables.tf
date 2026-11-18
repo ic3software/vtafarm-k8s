@@ -3,9 +3,10 @@ variable "config" {
   type = object({
     cluster_name = string
 
-    enabled       = optional(bool, false)
-    namespace     = optional(string, "monitoring")
-    chart_version = optional(string, "93.2.2")
+    enabled        = optional(bool, false)
+    namespace      = optional(string, "monitoring")
+    loki_namespace = optional(string, "logging")
+    chart_version  = optional(string, "93.2.2")
 
     storage_class_name        = optional(string, "hcloud-volumes-retain")
     prometheus_storage_size   = optional(string, "50Gi")
@@ -63,8 +64,12 @@ variable "config" {
   }
 
   validation {
-    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.config.namespace))
-    error_message = "namespace must be a lowercase DNS-safe name."
+    condition = (
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.config.namespace)) &&
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.config.loki_namespace)) &&
+      var.config.namespace != var.config.loki_namespace
+    )
+    error_message = "Metrics and logging namespaces must be distinct lowercase DNS-safe names."
   }
 
   validation {

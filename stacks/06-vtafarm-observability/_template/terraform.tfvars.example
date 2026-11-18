@@ -8,6 +8,7 @@ kubeconfig_path = ""
 observability_enabled = false
 
 observability_namespace       = "monitoring"
+loki_namespace                = "logging"
 kube_prometheus_stack_version = "93.3.0"
 
 # Prometheus uses a dedicated Hetzner Cloud Volume rather than Longhorn. The
@@ -51,16 +52,16 @@ thanos_storegateway_storage_size  = "3Gi"
 thanos_compactor_storage_class = "hcloud-volumes"
 thanos_compactor_storage_size  = "50Gi"
 
-# Loki stores durable data in a shared private bucket. When both bucket fields
-# are empty, they use loki with separate cluster-scoped prefixes such as
-# rke2-vtafarm-dev-loki-chunks and rke2-vtafarm-dev-loki-ruler. Create loki
-# before apply. Empty S3 connection fields reuse the Thanos values.
+# Loki and Alloy run in the separate logging namespace. Loki stores durable
+# data in one private loki bucket with cluster-scoped prefixes such as
+# rke2-vtafarm-dev-loki-chunks and rke2-vtafarm-dev-loki-ruler. Create the
+# bucket before apply. Empty S3 connection fields reuse the Thanos values.
 loki_enabled        = true
 loki_chart_version  = "21.4.0"
 alloy_chart_version = "1.16.0"
 
-loki_s3_chunks_bucket = ""
-loki_s3_ruler_bucket  = ""
+loki_s3_chunks_bucket = "loki"
+loki_s3_ruler_bucket  = "loki"
 loki_s3_endpoint      = ""
 loki_s3_region        = ""
 loki_s3_access_key    = ""

@@ -543,10 +543,12 @@ memory, requests, limits, network I/O and mounted PVC usage by its existing `ses
 `app` labels.
 
 Alloy runs once per node and moves CRI Pod logs out of `/var/log/pods` before kubelet rotation
-or Pod deletion removes them. Loki uses a retained 10 GiB Hetzner Volume in dev and three
-retained 20 GiB Hetzner Volumes in staging and production; durable chunks and TSDB indexes live
-under that cluster's chunks prefix for 30 days. Grafana receives a private Loki data source
-automatically. Ruler data uses its own small prefix in the same bucket.
+or Pod deletion removes them. Loki, its gateway, and Alloy run in the separate `logging`
+namespace while Prometheus, Thanos, and Grafana remain in `monitoring`. Loki uses a retained
+10 GiB Hetzner Volume in dev and three retained 20 GiB Hetzner Volumes in staging and
+production; durable chunks and TSDB indexes live under that cluster's chunks prefix for 30
+days. Grafana receives a private Loki data source automatically. Ruler data uses its own small
+prefix in the same bucket.
 
 ---
 

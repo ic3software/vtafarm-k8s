@@ -6,6 +6,11 @@ output "namespace" {
   value = var.config.enabled ? var.config.namespace : null
 }
 
+output "loki_namespace" {
+  description = "Namespace containing Loki, its gateway, Alloy, and logging credentials."
+  value       = var.config.enabled && var.config.loki_enabled ? var.config.loki_namespace : null
+}
+
 output "prometheus_url" {
   description = "Private in-cluster URL for the local Prometheus instance."
   value       = var.config.enabled ? local.prometheus_url : null

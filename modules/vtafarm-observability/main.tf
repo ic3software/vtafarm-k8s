@@ -8,7 +8,7 @@ locals {
   prometheus_url              = "http://${local.release_name}-prometheus.${var.config.namespace}.svc:9090"
   thanos_query_url            = "http://${local.thanos_release_name}-query.${var.config.namespace}.svc:9090"
   thanos_query_frontend_url   = "http://${local.thanos_release_name}-query-frontend.${var.config.namespace}.svc:9090"
-  loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.namespace}.svc.cluster.local"
+  loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.loki_namespace}.svc.cluster.local"
   thanos_s3_prefix            = var.config.thanos_s3_prefix != "" ? var.config.thanos_s3_prefix : "thanos/${var.config.cluster_name}"
 
   # The RKE2 control-plane processes are static pods whose metrics listeners
@@ -192,6 +192,9 @@ locals {
         limits   = { memory = "512Mi" }
       }
       sidecar = {
+        dashboards = {
+          searchNamespace = "ALL"
+        }
         datasources = {
           url = var.config.thanos_enabled ? local.thanos_query_frontend_url : local.prometheus_url
         }
@@ -524,6 +527,13 @@ locals {
   loki_values = {
     deploymentMode   = "Monolithic"
     fullnameOverride = local.loki_release_name
+    global = {
+      # RKE2 packages CoreDNS under this Service name rather than kube-dns,
+      # which the Loki gateway otherwise writes into its nginx resolver.
+      clusterDomain = "cluster.local"
+      dnsService    = "rke2-coredns-rke2-coredns"
+      dnsNamespace  = "kube-system"
+    }
     commonLabels = {
       "app.kubernetes.io/managed-by" = "opentofu"
       "vtafarm.ic3.dev/cluster"      = var.config.cluster_name
@@ -589,6 +599,14 @@ locals {
         working_directory    = "/var/loki/compactor"
         retention_enabled    = true
         delete_request_store = "s3"
+      }
+    }
+
+    # A single monolithic replica must be discoverable through the headless
+    # Service before its readiness probe succeeds so it can bootstrap its ring.
+    memberlist = {
+      service = {
+        publishNotReadyAddresses = true
       }
     }
 
@@ -670,7 +688,7 @@ locals {
             rules = [
               {
                 alert  = "VTAFarmAlloyUnavailable"
-                expr   = "kube_daemonset_status_number_unavailable{namespace=\"${var.config.namespace}\",daemonset=\"${local.alloy_release_name}\"} > 0"
+                expr   = "kube_daemonset_status_number_unavailable{namespace=\"${var.config.loki_namespace}\",daemonset=\"${local.alloy_release_name}\"} > 0"
                 for    = "5m"
                 labels = { severity = "warning" }
                 annotations = {
@@ -679,7 +697,7 @@ locals {
               },
               {
                 alert  = "VTAFarmLokiReplicaUnavailable"
-                expr   = "kube_statefulset_status_replicas_ready{namespace=\"${var.config.namespace}\",statefulset=\"${local.loki_release_name}\"} < ${var.config.loki_replicas}"
+                expr   = "kube_statefulset_status_replicas_ready{namespace=\"${var.config.loki_namespace}\",statefulset=\"${local.loki_release_name}\"} < ${var.config.loki_replicas}"
                 for    = "5m"
                 labels = { severity = "warning" }
                 annotations = {
@@ -688,7 +706,7 @@ locals {
               },
               {
                 alert  = "VTAFarmLokiGatewayUnavailable"
-                expr   = "kube_deployment_status_replicas_available{namespace=\"${var.config.namespace}\",deployment=\"${local.loki_release_name}-gateway\"} < 1"
+                expr   = "kube_deployment_status_replicas_available{namespace=\"${var.config.loki_namespace}\",deployment=\"${local.loki_release_name}-gateway\"} < 1"
                 for    = "5m"
                 labels = { severity = "critical" }
                 annotations = {
@@ -697,7 +715,7 @@ locals {
               },
               {
                 alert  = "VTAFarmLokiPVCUsageHigh"
-                expr   = "kubelet_volume_stats_used_bytes{namespace=\"${var.config.namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} / kubelet_volume_stats_capacity_bytes{namespace=\"${var.config.namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} > 0.85"
+                expr   = "kubelet_volume_stats_used_bytes{namespace=\"${var.config.loki_namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} / kubelet_volume_stats_capacity_bytes{namespace=\"${var.config.loki_namespace}\",persistentvolumeclaim=~\"storage-${local.loki_release_name}-.*\"} > 0.85"
                 for    = "15m"
                 labels = { severity = "critical" }
                 annotations = {
@@ -924,6 +942,18 @@ resource "kubernetes_namespace_v1" "monitoring" {
   }
 }
 
+resource "kubernetes_namespace_v1" "logging" {
+  count = var.config.enabled && var.config.loki_enabled ? 1 : 0
+
+  metadata {
+    name = var.config.loki_namespace
+    labels = {
+      "app.kubernetes.io/managed-by" = "opentofu"
+      "vtafarm.ic3.dev/purpose"      = "logging"
+    }
+  }
+}
+
 # hcloud-csi's built-in class deletes its cloud Volume with the PVC. Metrics
 # are replaceable, but an accidental Helm uninstall should not silently erase
 # their history. A retained PV can be re-bound or deliberately purged later.
@@ -975,7 +1005,7 @@ resource "kubernetes_secret_v1" "loki_s3" {
 
   metadata {
     name      = local.loki_s3_secret_name
-    namespace = kubernetes_namespace_v1.monitoring[0].metadata[0].name
+    namespace = kubernetes_namespace_v1.logging[0].metadata[0].name
     labels = {
       "app.kubernetes.io/managed-by" = "opentofu"
       "vtafarm.ic3.dev/cluster"      = var.config.cluster_name
@@ -1033,7 +1063,7 @@ resource "helm_release" "loki" {
   name      = local.loki_release_name
   chart     = "oci://ghcr.io/grafana-community/helm-charts/loki"
   version   = var.config.loki_chart_version
-  namespace = kubernetes_namespace_v1.monitoring[0].metadata[0].name
+  namespace = kubernetes_namespace_v1.logging[0].metadata[0].name
 
   values = [yamlencode(local.loki_values)]
 
@@ -1052,7 +1082,7 @@ resource "helm_release" "alloy" {
   name      = local.alloy_release_name
   chart     = "oci://ghcr.io/grafana/helm-charts/alloy"
   version   = var.config.alloy_chart_version
-  namespace = kubernetes_namespace_v1.monitoring[0].metadata[0].name
+  namespace = kubernetes_namespace_v1.logging[0].metadata[0].name
 
   values = [yamlencode(local.alloy_values)]
 

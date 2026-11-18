@@ -38,13 +38,14 @@ run "enabled_with_sensitive_credentials" {
 
   assert {
     condition = (
-      output.loki_gateway_url == "http://loki-gateway.monitoring.svc.cluster.local" &&
+      output.loki_namespace == "logging" &&
+      output.loki_gateway_url == "http://loki-gateway.logging.svc.cluster.local" &&
       output.loki_s3_buckets.chunks.bucket == "loki" &&
       output.loki_s3_buckets.chunks.prefix == "template-loki-chunks" &&
       output.loki_s3_buckets.ruler.bucket == "loki" &&
       output.loki_s3_buckets.ruler.prefix == "template-loki-ruler"
     )
-    error_message = "The stack must expose the private gateway and derive cluster-scoped chunks and ruler prefixes in the shared Loki bucket."
+    error_message = "The stack must place logging in its own namespace, expose the private gateway, and derive cluster-scoped S3 locations."
   }
 }
 

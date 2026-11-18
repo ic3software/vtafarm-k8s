@@ -22,9 +22,10 @@ module "observability" {
   config = {
     cluster_name = local.cluster_name
 
-    enabled       = var.observability_enabled
-    namespace     = var.observability_namespace
-    chart_version = var.kube_prometheus_stack_version
+    enabled        = var.observability_enabled
+    namespace      = var.observability_namespace
+    loki_namespace = var.loki_namespace
+    chart_version  = var.kube_prometheus_stack_version
 
     storage_class_name        = var.prometheus_storage_class
     prometheus_storage_size   = var.prometheus_storage_size

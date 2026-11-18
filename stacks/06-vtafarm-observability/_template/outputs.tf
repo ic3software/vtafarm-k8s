@@ -6,6 +6,10 @@ output "namespace" {
   value = module.observability.namespace
 }
 
+output "loki_namespace" {
+  value = module.observability.loki_namespace
+}
+
 output "prometheus_url" {
   value = module.observability.prometheus_url
 }
