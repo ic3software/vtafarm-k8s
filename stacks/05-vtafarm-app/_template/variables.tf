@@ -93,6 +93,12 @@ variable "metrics_query_url" {
   default     = ""
 }
 
+variable "logging_query_url" {
+  description = "Private Loki endpoint created by stack 06. Empty uses live Kubernetes Pod logs."
+  type        = string
+  default     = ""
+}
+
 variable "placement" {
   description = "Workload placement activation and safety thresholds. Ship disabled, validate canaries, then switch to enabled."
   type = object({

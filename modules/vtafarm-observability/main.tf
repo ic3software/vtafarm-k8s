@@ -8,7 +8,7 @@ locals {
   prometheus_url              = "http://${local.release_name}-prometheus.${var.config.monitoring_namespace}.svc:9090"
   thanos_query_url            = "http://${local.thanos_release_name}-query.${var.config.monitoring_namespace}.svc:9090"
   thanos_query_frontend_url   = "http://${local.thanos_release_name}-query-frontend.${var.config.monitoring_namespace}.svc:9090"
-  loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.logging_namespace}.svc.cluster.local"
+  loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.logging_namespace}.svc"
   thanos_s3_prefix            = var.config.thanos_s3_prefix != "" ? var.config.thanos_s3_prefix : "thanos/${var.config.cluster_name}"
 
   # The RKE2 control-plane processes are static pods whose metrics listeners
