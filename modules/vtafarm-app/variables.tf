@@ -35,6 +35,10 @@ variable "config" {
     # tenant metrics disabled until an operator explicitly enables them.
     metrics_query_url = optional(string, "")
 
+    # Private Loki endpoint created by stack 06. Empty preserves the live Pod
+    # log export used before centralized logging was enabled.
+    logging_query_url = optional(string, "")
+
     # The complete placement implementation is always deployed. This switch
     # controls production activation without changing the release artifact.
     placement = optional(object({

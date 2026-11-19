@@ -122,7 +122,7 @@ run "loki_and_alloy_logging_pipeline" {
       strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "spec.nodeName=") &&
       strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "/var/log/pods/*$1/*.log") &&
       strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "stage.structured_metadata") &&
-      strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "http://loki-gateway.logging.svc.cluster.local/loki/api/v1/push")
+      strcontains(yamldecode(helm_release.alloy[0].values[0]).alloy.configMap.content, "http://loki-gateway.logging.svc/loki/api/v1/push")
     )
     error_message = "Alloy must run once per node, persist file positions, collect only local CRI Pod logs, and write through the private Loki gateway."
   }
@@ -130,7 +130,7 @@ run "loki_and_alloy_logging_pipeline" {
   assert {
     condition = (
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.additionalDataSources[0].name == "Loki" &&
-      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.additionalDataSources[0].url == "http://loki-gateway.logging.svc.cluster.local" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.additionalDataSources[0].url == "http://loki-gateway.logging.svc" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).grafana.sidecar.dashboards.searchNamespace == "ALL" &&
       length(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.serviceMonitorNamespaceSelector)) == 0 &&
       length(keys(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).prometheus.prometheusSpec.ruleNamespaceSelector)) == 0

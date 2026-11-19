@@ -39,7 +39,7 @@ run "enabled_with_sensitive_credentials" {
   assert {
     condition = (
       output.logging_namespace == "logging" &&
-      output.loki_gateway_url == "http://loki-gateway.logging.svc.cluster.local" &&
+      output.loki_gateway_url == "http://loki-gateway.logging.svc" &&
       output.loki_s3_buckets.chunks.bucket == "loki" &&
       output.loki_s3_buckets.chunks.prefix == "template-loki-chunks" &&
       output.loki_s3_buckets.ruler.bucket == "loki" &&

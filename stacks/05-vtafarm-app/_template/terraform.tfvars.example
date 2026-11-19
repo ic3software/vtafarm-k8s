@@ -39,6 +39,7 @@ monitor_token = ""
 # Empty disables tenant metrics. When stack 06 is enabled, use its
 # metrics_query_url output here.
 metrics_query_url = ""
+logging_query_url = ""
 
 # --- Workload placement ---------------------------------------------------
 # Deploy the complete feature with mode=disabled first. After backup/restore

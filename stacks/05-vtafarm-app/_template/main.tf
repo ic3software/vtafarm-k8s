@@ -29,6 +29,7 @@ module "app" {
     farm_signing_key        = var.farm_signing_key
     monitor_token           = var.monitor_token
     metrics_query_url       = var.metrics_query_url
+    logging_query_url       = var.logging_query_url
     placement               = var.placement
 
     vtafarm_version     = var.vtafarm_version
