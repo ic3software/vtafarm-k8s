@@ -18,6 +18,8 @@ WORK="$(mktemp -d)"
 LOCK="$CLUSTER_DIR/.rke2-apply-lock"
 LOCKED=false
 MIN_SERVER_NODES=3
+CONTROL_PLANE_DELETE_EMPTY_DIR_DATA=false
+WORKER_DELETE_EMPTY_DIR_DATA=false
 cleanup() {
   rm -rf "$WORK"
   if [ "$LOCKED" = true ]; then rmdir "$LOCK"; fi
@@ -53,6 +55,10 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
   if [ "$(jq -r '.planned_values.outputs.development_mode.value // false' "$WORK/plan.json")" = true ]; then
     MIN_SERVER_NODES=1
   fi
+  CONTROL_PLANE_DELETE_EMPTY_DIR_DATA="$(jq -r '.planned_values.outputs.control_plane_delete_empty_dir_data.value // false' "$WORK/plan.json")"
+  WORKER_DELETE_EMPTY_DIR_DATA="$(jq -r '.planned_values.outputs.worker_delete_empty_dir_data.value // false' "$WORK/plan.json")"
+  [[ "$CONTROL_PLANE_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid control-plane emptyDir retirement setting'
+  [[ "$WORKER_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid worker emptyDir retirement setting'
   jq '[.planned_values.outputs.nodes.value[] | .name] | sort' "$WORK/plan.json" >"$WORK/desired"
   jq --slurpfile desired "$WORK/desired" '[.resource_changes[]? | .change.after.name as $node |
     select(.mode == "managed" and .type == "hcloud_server" and ($desired[0] | index($node)) != null) |
@@ -218,6 +224,34 @@ storage_detached() {
     .status.currentNodeID != $node and .status.pendingNodeID != $node)' "$WORK/volumes" >/dev/null
 }
 
+patch_longhorn_node() {
+  local node="$1" expected_uid="$2" operation="$3" attempt
+  for attempt in 1 2 3 4 5; do
+    read_downstream longhorn-current get nodes.longhorn.io "$node" -n longhorn-system --ignore-not-found -o json
+    [ -s "$WORK/longhorn-current" ] || return 1
+    jq -e --arg uid "$expected_uid" '.metadata.uid == $uid' "$WORK/longhorn-current" >/dev/null || return 1
+    if [ "$operation" = disable-scheduling ]; then
+      jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},
+        spec:{allowScheduling:false,disks:(.spec.disks | with_entries(.value.allowScheduling=false))}}' \
+        "$WORK/longhorn-current" >"$WORK/patch"
+    else
+      jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},spec:{evictionRequested:true}}' \
+        "$WORK/longhorn-current" >"$WORK/patch"
+    fi
+    if downstream patch nodes.longhorn.io "$node" -n longhorn-system --type=merge --patch-file="$WORK/patch" \
+      >"$WORK/patched" 2>"$WORK/error"; then
+      return 0
+    fi
+    if [ "$attempt" -lt 5 ] && grep -Eq 'Conflict|object has been modified' "$WORK/error"; then
+      echo "Longhorn Node $node changed concurrently; retrying ($attempt/5)."
+      sleep 1
+      continue
+    fi
+    return 1
+  done
+  return 1
+}
+
 # Exclude every retiring node so eviction cannot move data to the next victim.
 while IFS=$'\t' read -r node vm_id; do
   read_downstream current-node get node "$node" --ignore-not-found -o json
@@ -233,10 +267,8 @@ if [ "$LONGHORN" = true ]; then
     read_downstream longhorn get nodes.longhorn.io "$node" -n longhorn-system --ignore-not-found -o json
     [ -s "$WORK/longhorn" ] || continue
     jq -r '.metadata.uid' "$WORK/longhorn" >"$WORK/$node-longhorn-uid"
-    jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},
-      spec:{allowScheduling:false,disks:(.spec.disks | with_entries(.value.allowScheduling=false))}}' "$WORK/longhorn" >"$WORK/patch"
-    downstream patch nodes.longhorn.io "$node" -n longhorn-system --type=merge --patch-file="$WORK/patch" \
-      >"$WORK/patched" 2>"$WORK/error" || fail "Cannot disable Longhorn scheduling on $node; VMs are preserved"
+    patch_longhorn_node "$node" "$(cat "$WORK/$node-longhorn-uid")" disable-scheduling ||
+      fail "Cannot disable Longhorn scheduling on $node; VMs are preserved"
   done <"$WORK/retire"
 fi
 
@@ -249,9 +281,8 @@ while IFS=$'\t' read -r node vm_id; do
       [ -f "$WORK/$node-longhorn-uid" ] || fail "Longhorn Node $node appeared during retirement"
       jq -e --arg uid "$(cat "$WORK/$node-longhorn-uid")" '.metadata.uid == $uid and .spec.allowScheduling == false' \
         "$WORK/longhorn" >/dev/null || fail "Longhorn Node $node changed identity or scheduling"
-      jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},spec:{evictionRequested:true}}' "$WORK/longhorn" >"$WORK/patch"
-      downstream patch nodes.longhorn.io "$node" -n longhorn-system --type=merge --patch-file="$WORK/patch" \
-        >"$WORK/patched" 2>"$WORK/error" || fail "Cannot request Longhorn eviction for $node; VMs are preserved"
+      patch_longhorn_node "$node" "$(cat "$WORK/$node-longhorn-uid")" request-eviction ||
+        fail "Cannot request Longhorn eviction for $node; VMs are preserved"
     fi
     deadline=$((SECONDS + 1800))
     while ! storage_empty; do
@@ -268,8 +299,17 @@ while IFS=$'\t' read -r node vm_id; do
     [ -f "$WORK/$node-uid" ] || fail "$node appeared during retirement"
     jq -e --arg id "$vm_id" --arg uid "$(cat "$WORK/$node-uid")" '.spec.providerID == ("hcloud://" + $id) and
       .metadata.uid == $uid and .spec.unschedulable == true' "$WORK/current-node" >/dev/null || fail "$node changed or was uncordoned"
-    # Honour PDBs and protect emptyDir / unmanaged Pods instead of forcing eviction.
-    downstream drain "$node" --ignore-daemonsets --timeout=30m >"$WORK/drain" 2>"$WORK/error" ||
+    # Honour PDBs and unmanaged Pods; discard emptyDir only when explicitly configured for this role.
+    drain_args=("$node" --ignore-daemonsets --timeout=30m)
+    case "$node" in
+      "$NAME-server-"*|"$NAME-control-plane-"*)
+        [ "$CONTROL_PLANE_DELETE_EMPTY_DIR_DATA" = true ] && drain_args+=(--delete-emptydir-data)
+        ;;
+      "$NAME-worker-"*)
+        [ "$WORKER_DELETE_EMPTY_DIR_DATA" = true ] && drain_args+=(--delete-emptydir-data)
+        ;;
+    esac
+    downstream drain "${drain_args[@]}" >"$WORK/drain" 2>"$WORK/error" ||
       fail "Drain failed for $node (check PDBs, emptyDir and unmanaged Pods); VMs are preserved"
   fi
   if [ "$LONGHORN" = true ]; then

@@ -18,6 +18,14 @@ output "development_mode" {
   value = module.rke2.development_mode
 }
 
+output "control_plane_delete_empty_dir_data" {
+  value = module.rke2.control_plane_delete_empty_dir_data
+}
+
+output "worker_delete_empty_dir_data" {
+  value = module.rke2.worker_delete_empty_dir_data
+}
+
 output "nodes" {
   value = module.rke2.nodes
 }

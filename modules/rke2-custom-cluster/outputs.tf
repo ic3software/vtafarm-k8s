@@ -25,6 +25,16 @@ output "development_mode" {
   value       = var.config.dev
 }
 
+output "control_plane_delete_empty_dir_data" {
+  description = "Whether control-plane retirement may discard emptyDir data."
+  value       = var.config.control_plane_delete_empty_dir_data
+}
+
+output "worker_delete_empty_dir_data" {
+  description = "Whether worker retirement may discard emptyDir data."
+  value       = var.config.worker_delete_empty_dir_data
+}
+
 output "nodes" {
   description = "RKE2 node names, classes, pools, types, roles, locations, and addresses."
   value = {

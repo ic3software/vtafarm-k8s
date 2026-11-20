@@ -42,7 +42,11 @@ changes += [{'address': f'module.rke2.hcloud_server.node["server-{i}"]', 'mode':
              'change': {'actions': ['no-op'], 'after': {'name': f'rke2-test-server-{i}', 'id': str(i)}}} for i in range(1, 4)]
 save('plan', {'resource_changes': changes, 'planned_values': {'outputs': {
     'nodes': {'value': {f'server-{i}': {'name': f'rke2-test-server-{i}'} for i in range(1, 4)}},
-    'cluster_id': {'value': 'fleet-default/rke2-test'}, 'cluster_v1_id': {'value': 'c-test'}}}})
+    'cluster_id': {'value': 'fleet-default/rke2-test'},
+    'cluster_v1_id': {'value': 'c-test'},
+    'control_plane_delete_empty_dir_data': {'value': False},
+    'worker_delete_empty_dir_data': {'value': False},
+}}})
 save('nodes', {'items': nodes})
 save('machines', {'items': machines})
 save('longhorn', {'items': longhorn})
@@ -134,6 +138,10 @@ if action == 'get':
 elif action == 'patch':
     resource, name = args[1:3]
     body = read(Path(next(a.split('=', 1)[1] for a in args if a.startswith('--patch-file='))))
+    if resource == 'nodes.longhorn.io' and mode == 'longhorn-conflict' and not (root / 'longhorn-conflicted').exists():
+        (root / 'longhorn-conflicted').touch()
+        print('Error from server (Conflict): the object has been modified', file=sys.stderr)
+        sys.exit(1)
     key = 'nodes' if resource == 'node' else 'longhorn'
     data = read(key)
     item = next(item for item in data['items'] if item['metadata']['name'] == name)
@@ -147,7 +155,9 @@ elif action == 'patch':
         (root / 'evicting').write_text(name)
 elif action == 'drain':
     name = args[1]
-    assert not any(a in args for a in ('--force', '--delete-emptydir-data', '--disable-eviction'))
+    assert not any(a in args for a in ('--force', '--disable-eviction'))
+    expected_emptydir = mode == 'dev-emptydir' or (mode == 'worker-emptydir' and '-worker-' in name)
+    assert ('--delete-emptydir-data' in args) == expected_emptydir
     assert mode == 'no-longhorn' or not any(item['spec']['nodeID'] == name for item in read('replicas')['items'])
     event('DRAIN ' + name)
     if mode == 'drain-blocked':
@@ -247,7 +257,7 @@ reset_case() {
   export TEST_MODE="$1"
   python3 "$TEST_DIR/fixture.py"
   rm -f "$TEST_DIR/applied" "$TEST_DIR/evicting" "$TEST_DIR/retired" "$TEST_DIR/deleting" \
-    "$TEST_DIR/health-failed" "$TEST_DIR/health-retried"
+    "$TEST_DIR/health-failed" "$TEST_DIR/health-retried" "$TEST_DIR/longhorn-conflicted"
   : >"$TEST_DIR/events"
 }
 run() {
@@ -275,6 +285,13 @@ assert (root / 'applied').exists()
 assert not (root / 'rke2-test/.rke2-apply-lock').exists()
 PY
 echo 'PASS: single-replica data is rebuilt before drain; Rancher retires servers sequentially before VM apply'
+
+reset_case longhorn-conflict
+run || { cat "$TEST_DIR/log"; fail 'Longhorn conflict retry'; }
+[ -f "$TEST_DIR/longhorn-conflicted" ] || fail 'did not exercise the Longhorn conflict retry'
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply after the Longhorn conflict cleared'
+rg -q 'Longhorn Node .* changed concurrently; retrying' "$TEST_DIR/log" || fail 'did not report the Longhorn conflict retry'
+echo 'PASS: a concurrent Longhorn status update is retried with the latest resource version'
 
 reset_case ok
 python3 - <<'PY'
@@ -350,13 +367,16 @@ save('plan', {
         'cluster_id': {'value': 'fleet-default/rke2-test'},
         'cluster_v1_id': {'value': 'c-test'},
         'development_mode': {'value': True},
+        'control_plane_delete_empty_dir_data': {'value': True},
+        'worker_delete_empty_dir_data': {'value': False},
     }},
 })
 PY
+export TEST_MODE=dev-emptydir
 run || { cat "$TEST_DIR/log"; fail 'dev control-plane migration'; }
 [ -f "$TEST_DIR/applied" ] || fail 'did not apply dev control-plane migration'
 rg -q '^RETIRED rke2-test-server-1$' "$TEST_DIR/events" || fail 'did not retire the dev legacy server'
-echo 'PASS: dev migration can retire legacy etcd after the replacement control-plane node is healthy'
+echo 'PASS: dev migration honors explicit control-plane emptyDir deletion and retires to one healthy etcd member'
 
 reset_case ok
 jq '.items += [{metadata:{name:"detached-volume"},spec:{numberOfReplicas:1},status:{state:"detached",robustness:"unknown"}}]' \
@@ -473,11 +493,15 @@ for filename in ('plan', 'nodes', 'machines', 'longhorn', 'replicas', 'engines')
 members = json.loads((root / 'members').read_text())
 members['members'] = members['members'][:3]
 (root / 'members').write_text(json.dumps(members))
+plan = json.loads((root / 'plan').read_text())
+plan['planned_values']['outputs']['worker_delete_empty_dir_data']['value'] = True
+(root / 'plan').write_text(json.dumps(plan))
 PY
+export TEST_MODE=worker-emptydir
 run || { cat "$TEST_DIR/log"; fail 'dedicated worker shrink'; }
 [ -f "$TEST_DIR/applied" ] || fail 'did not apply worker shrink'
 rg -q '^RETIRED rke2-test-worker-2$' "$TEST_DIR/events" || fail 'missed the second worker'
-echo 'PASS: dedicated worker shrink evacuates storage without removing a surviving server'
+echo 'PASS: dedicated worker shrink honors explicit worker emptyDir deletion without removing a surviving server'
 
 reset_case ok
 jq '.resource_changes=[]' "$TEST_DIR/plan" >"$TEST_DIR/next"
