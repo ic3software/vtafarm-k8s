@@ -35,6 +35,9 @@ resource "terraform_data" "retired_nodes" {
       trap 'exit 143' TERM
       management() { kubectl --kubeconfig="$MANAGEMENT_CONFIG" --request-timeout=20s "$@"; }
       downstream() { kubectl --kubeconfig="$DOWNSTREAM_CONFIG" --request-timeout=20s "$@"; }
+      DOWNSTREAM_READ_ATTEMPTS="$${RKE2_DOWNSTREAM_READ_ATTEMPTS:-60}"
+      [[ "$DOWNSTREAM_READ_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] && [ "$DOWNSTREAM_READ_ATTEMPTS" -le 60 ] ||
+        fail 'RKE2_DOWNSTREAM_READ_ATTEMPTS must be an integer from 1 to 60'
 
       printf '%s\n' "$DESIRED_NODES" >"$WORK/desired"
       jq -e --arg name "$NAME" 'type == "array" and length > 0 and
@@ -78,7 +81,15 @@ resource "terraform_data" "retired_nodes" {
       fi
       [ -f "$DOWNSTREAM_CONFIG" ] || fail 'Downstream kubeconfig is missing; renew it and rerun apply'
       read_nodes() {
-        downstream get nodes -o json >"$WORK/nodes" 2>"$WORK/error" || fail 'Cannot reach downstream nodes; rerun apply after restoring access'
+        local attempt
+        for ((attempt = 1; attempt <= DOWNSTREAM_READ_ATTEMPTS; attempt++)); do
+          if downstream get nodes -o json >"$WORK/nodes" 2>"$WORK/error"; then return 0; fi
+          if [ "$attempt" -lt "$DOWNSTREAM_READ_ATTEMPTS" ]; then
+            echo "Waiting for downstream API after infrastructure changes ($attempt/$DOWNSTREAM_READ_ATTEMPTS)."
+            sleep 5
+          fi
+        done
+        fail 'Cannot reach downstream nodes after five minutes; rerun apply after restoring access'
       }
       read_nodes
       jq -r '.[] | [.metadata.name, .metadata.uid, .status.nodeRef.name] | @tsv' "$WORK/candidates" >"$WORK/list"

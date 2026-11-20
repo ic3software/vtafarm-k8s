@@ -18,6 +18,7 @@ WORK="$(mktemp -d)"
 LOCK="$CLUSTER_DIR/.rke2-apply-lock"
 LOCKED=false
 MIN_SERVER_NODES=3
+DEVELOPMENT_MODE=false
 CONTROL_PLANE_DELETE_EMPTY_DIR_DATA=false
 WORKER_DELETE_EMPTY_DIR_DATA=false
 cleanup() {
@@ -52,7 +53,9 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
     fail 'Apply other infrastructure or Rancher configuration changes separately from node retirement'
   jq -e '.planned_values.outputs.nodes.value | type == "object" and length > 0' "$WORK/plan.json" >/dev/null ||
     fail 'The saved plan has no known remaining node inventory'
-  if [ "$(jq -r '.planned_values.outputs.development_mode.value // false' "$WORK/plan.json")" = true ]; then
+  DEVELOPMENT_MODE="$(jq -r '.planned_values.outputs.development_mode.value // false' "$WORK/plan.json")"
+  [[ "$DEVELOPMENT_MODE" =~ ^(true|false)$ ]] || fail 'Invalid development-mode output'
+  if [ "$DEVELOPMENT_MODE" = true ]; then
     MIN_SERVER_NODES=1
   fi
   CONTROL_PLANE_DELETE_EMPTY_DIR_DATA="$(jq -r '.planned_values.outputs.control_plane_delete_empty_dir_data.value // false' "$WORK/plan.json")"
@@ -60,6 +63,8 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
   [[ "$CONTROL_PLANE_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid control-plane emptyDir retirement setting'
   [[ "$WORKER_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid worker emptyDir retirement setting'
   jq '[.planned_values.outputs.nodes.value[] | .name] | sort' "$WORK/plan.json" >"$WORK/desired"
+  SURVIVOR="$(jq -r '[.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))][0] // empty' "$WORK/desired")"
+  [ -n "$SURVIVOR" ] || fail 'The saved plan has no surviving control-plane node'
   jq --slurpfile desired "$WORK/desired" '[.resource_changes[]? | .change.after.name as $node |
     select(.mode == "managed" and .type == "hcloud_server" and ($desired[0] | index($node)) != null) |
     {name:.change.after.name,id:(.change.after.id|tostring)}]' \
@@ -112,6 +117,29 @@ read_management cluster get clusters.cluster.x-k8s.io "$NAME" -n "$NAMESPACE" -o
 CLUSTER_UID="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' "$WORK/cluster")"
 jq -e '.metadata.deletionTimestamp == null' "$WORK/cluster" >/dev/null || fail 'Cluster is deleting'
 read_management machines get machines.cluster.x-k8s.io -n "$NAMESPACE" -l "cluster.x-k8s.io/cluster-name=$NAME" -o json
+if [ "$DEVELOPMENT_MODE" = true ]; then
+  SURVIVOR_EXTERNAL_IP="$(jq -er --arg node "$SURVIVOR" '
+    [.items[] | select(.status.nodeRef.name == $node) | .status.addresses[]? |
+      select(.type == "ExternalIP") | .address] | unique |
+    select(length == 1) | .[0] | select(test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' "$WORK/machines")" ||
+    fail 'The surviving dev control-plane Machine has no unique external IPv4 address'
+  DEV_TLS_NAME="$(jq -er '.planned_values.outputs.kubernetes_api_endpoint.value |
+    capture("^https://(?<host>[A-Za-z0-9.-]+):6443$").host' "$WORK/plan.json")" ||
+    fail 'The dev Kubernetes endpoint cannot be used as a TLS server name'
+  kubectl --kubeconfig="$DOWNSTREAM_CONFIG" config view --raw -o json >"$WORK/downstream-base" 2>"$WORK/error" ||
+    fail 'Cannot read the downstream kubeconfig for dev API cutover'
+  jq -e --arg server "https://$SURVIVOR_EXTERNAL_IP:6443" --arg tls_name "$DEV_TLS_NAME" '
+    .["current-context"] as $current |
+    ([.contexts[] | select(.name == $current) | .context.cluster] | unique) as $selected |
+    select($selected | length == 1) | $selected[0] as $cluster |
+    .clusters |= map(if .name == $cluster then
+      .cluster.server = $server | .cluster["tls-server-name"] = $tls_name
+    else . end)' "$WORK/downstream-base" >"$WORK/downstream-cutover" ||
+    fail 'Cannot construct the downstream kubeconfig for dev API cutover'
+  chmod 600 "$WORK/downstream-cutover"
+  DOWNSTREAM_CONFIG="$WORK/downstream-cutover"
+  echo "Using surviving dev control-plane $SURVIVOR for API access during Primary IP cutover."
+fi
 read_downstream nodes get nodes -o json
 jq -e --slurpfile remaining "$WORK/remaining-vms" '.items as $nodes | all($remaining[0][]; . as $vm |
   any($nodes[]; .metadata.name == $vm.name and .spec.providerID == ("hcloud://" + $vm.id) and .metadata.deletionTimestamp == null and
@@ -147,7 +175,6 @@ while IFS=$'\t' read -r node vm_id; do
   fi
 done <"$WORK/retire"
 
-SURVIVOR="$(jq -r '[.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))][0]' "$WORK/desired")"
 etcd() {
   downstream exec -n kube-system "etcd-$SURVIVOR" -c etcd -- etcdctl \
     --endpoints=https://127.0.0.1:2379 \

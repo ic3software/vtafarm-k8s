@@ -31,7 +31,10 @@ for i in range(1, 6):
                      'annotations': {'pre-terminate.delete.hook.machine.cluster.x-k8s.io/rke-bootstrap-cleanup': 'rke-bootstrap-controller'},
                      'ownerReferences': [{'kind': 'Cluster', 'name': 'rke2-test', 'uid': 'cluster-uid'}]},
         'spec': {'infrastructureRef': {'apiGroup': 'rke.cattle.io', 'kind': 'CustomMachine', 'name': f'custom-{i}'}},
-        'status': {'nodeRef': {'name': name}}})
+        'status': {'nodeRef': {'name': name},
+                   'addresses': [{'type': 'InternalIP', 'address': f'10.10.1.{100 + i}'},
+                                 {'type': 'ExternalIP', 'address': f'203.0.113.{i}'},
+                                 {'type': 'Hostname', 'address': name}]}})
     longhorn.append({'metadata': {'name': name, 'uid': f'longhorn-{i}', 'resourceVersion': '42'},
                     'spec': {'allowScheduling': True, 'disks': {'disk': {'allowScheduling': True}}},
                     'status': {'diskStatus': {'disk': {'diskUUID': f'disk-{i}',
@@ -107,7 +110,18 @@ def get(name, resource):
         output(value)
 
 action = args[0]
-if action == 'get':
+if action == 'config':
+    (root / 'cutover-configured').touch()
+    output({
+        'apiVersion': 'v1',
+        'kind': 'Config',
+        'clusters': [{'name': 'rke2-test', 'cluster': {'server': 'https://203.0.113.10:6443',
+                                                       'certificate-authority-data': 'dGVzdA=='}}],
+        'users': [{'name': 'rke2-test', 'user': {'token': 'test-token'}}],
+        'contexts': [{'name': 'rke2-test', 'context': {'cluster': 'rke2-test', 'user': 'rke2-test'}}],
+        'current-context': 'rke2-test',
+    })
+elif action == 'get':
     resource = args[1]
     name = args[2] if len(args) > 2 and not args[2].startswith('-') else None
     if resource == 'clusters.provisioning.cattle.io':
@@ -257,7 +271,8 @@ reset_case() {
   export TEST_MODE="$1"
   python3 "$TEST_DIR/fixture.py"
   rm -f "$TEST_DIR/applied" "$TEST_DIR/evicting" "$TEST_DIR/retired" "$TEST_DIR/deleting" \
-    "$TEST_DIR/health-failed" "$TEST_DIR/health-retried" "$TEST_DIR/longhorn-conflicted"
+    "$TEST_DIR/health-failed" "$TEST_DIR/health-retried" "$TEST_DIR/longhorn-conflicted" \
+    "$TEST_DIR/cutover-configured"
   : >"$TEST_DIR/events"
 }
 run() {
@@ -329,11 +344,14 @@ replacement = 'rke2-test-control-plane-primary-1'
 nodes = load('nodes')
 nodes['items'] = nodes['items'][:2]
 nodes['items'][1]['metadata']['name'] = replacement
+nodes['items'] = nodes['items'][1:]
 save('nodes', nodes)
 
 machines = load('machines')
 machines['items'] = machines['items'][:2]
 machines['items'][1]['status']['nodeRef']['name'] = replacement
+machines['items'][1]['status']['addresses'][2]['address'] = replacement
+machines['items'] = machines['items'][1:]
 save('machines', machines)
 
 longhorn = load('longhorn')
@@ -344,7 +362,6 @@ save('longhorn', longhorn)
 save('replicas', {'items': []})
 save('engines', {'items': []})
 save('members', {'members': [
-    {'name': legacy + '-suffix'},
     {'name': replacement + '-suffix'},
 ]})
 save('plan', {
@@ -367,6 +384,7 @@ save('plan', {
         'cluster_id': {'value': 'fleet-default/rke2-test'},
         'cluster_v1_id': {'value': 'c-test'},
         'development_mode': {'value': True},
+        'kubernetes_api_endpoint': {'value': 'https://203.0.113.10:6443'},
         'control_plane_delete_empty_dir_data': {'value': True},
         'worker_delete_empty_dir_data': {'value': False},
     }},
@@ -375,8 +393,9 @@ PY
 export TEST_MODE=dev-emptydir
 run || { cat "$TEST_DIR/log"; fail 'dev control-plane migration'; }
 [ -f "$TEST_DIR/applied" ] || fail 'did not apply dev control-plane migration'
-rg -q '^RETIRED rke2-test-server-1$' "$TEST_DIR/events" || fail 'did not retire the dev legacy server'
-echo 'PASS: dev migration honors explicit control-plane emptyDir deletion and retires to one healthy etcd member'
+[ -f "$TEST_DIR/cutover-configured" ] || fail 'did not configure survivor API access for the dev cutover'
+if rg -q '^RETIRE rke2-test-server-1$' "$TEST_DIR/events"; then fail 'retired an already absent Rancher Machine again'; fi
+echo 'PASS: dev migration resumes after Rancher retirement through the surviving control-plane API endpoint'
 
 reset_case ok
 jq '.items += [{metadata:{name:"detached-volume"},spec:{numberOfReplicas:1},status:{state:"detached",robustness:"unknown"}}]' \

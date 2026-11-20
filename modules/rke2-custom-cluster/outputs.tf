@@ -47,7 +47,7 @@ output "nodes" {
       location    = server.location
       public_ip   = server.ipv4_address
       private_ip  = one(server.network).ip
-    }
+    } if contains(keys(local.nodes), key)
   }
 }
 

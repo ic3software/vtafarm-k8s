@@ -11,9 +11,10 @@ touch "$TEST_DIR/management" "$TEST_DIR/downstream"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 export CLUSTER_NAME=rke2-test CLUSTER_ID=fleet-default/rke2-test CLUSTER_V1_ID=c-test
+export RKE2_DOWNSTREAM_READ_ATTEMPTS=2
 export MANAGEMENT_CONFIG="$TEST_DIR/management" DOWNSTREAM_CONFIG="$TEST_DIR/downstream"
 export DESIRED_NODES='["rke2-test-server-1","rke2-test-server-2","rke2-test-server-3"]'
-awk '/^[[:space:]]*SHELL$/ {exit} /command = <<-SHELL/ {inside=1;next} inside {sub(/^      /, "");print}' \
+awk '/^[[:space:]]*SHELL$/ {exit} /command = <<-SHELL/ {inside=1;next} inside {sub(/^      /, "");gsub(/\$\$\{/, "${");print}' \
   "$ROOT/modules/rke2-custom-cluster/retired-nodes.tf" >"$TEST_DIR/command"
 jq -n '{metadata:{uid:"cluster-uid"}}' >"$TEST_DIR/cluster"
 jq -n '{status:{clusterName:"c-test"}}' >"$TEST_DIR/provisioning"
@@ -73,6 +74,7 @@ case "$1 $2" in
   'get nodes')
     [ "$config" = "$TEST_DIR/downstream" ] || exit 1
     [ "$TEST_MODE" != unavailable ] || exit 1
+    if [ "$TEST_MODE" = api-converging ] && [ ! -f "$TEST_DIR/api-retried" ]; then exit 1; fi
     if [ "$TEST_MODE" = reappeared ] && [ -f "$TEST_DIR/probed" ]; then
       jq '.items += [{metadata:{name:"rke2-test-worker-1"}}]' "$TEST_DIR/nodes"
     else
@@ -127,6 +129,10 @@ if [ "$TEST_MODE" = converging ]; then
   cp "$TEST_DIR/machines-base" "$TEST_DIR/machines"
   exit 0
 fi
+if [ "$TEST_MODE" = api-converging ]; then
+  touch "$TEST_DIR/api-retried"
+  exit 0
+fi
 exit 1
 MOCK
 chmod +x "$TEST_DIR/bin/"*
@@ -141,7 +147,7 @@ reset_case() {
   : >"$TEST_DIR/calls"
   : >"$TEST_DIR/deletions"
   : >"$TEST_DIR/patches"
-  rm -f "$TEST_DIR/probed"
+  rm -f "$TEST_DIR/probed" "$TEST_DIR/api-retried"
 }
 run() {
   export DOWNSTREAM_CONFIG="${2:-$TEST_DIR/downstream}"
@@ -200,6 +206,14 @@ jq '.items |= map(select(.metadata.name != "custom-worker-1" and .metadata.name 
 run cleanup "$TEST_DIR/missing-config" || { cat "$TEST_DIR/log"; fail 'first-deployment cleanup'; }
 assert_no_deletes
 echo 'PASS: a first deployment without retired Machines needs no downstream kubeconfig'
+
+reset_case api-converging
+jq '.items |= map(select(.metadata.name != "custom-worker-1" and .metadata.name != "custom-worker-2"))' \
+  "$TEST_DIR/machines-base" >"$TEST_DIR/machines"
+run cleanup || { cat "$TEST_DIR/log"; fail 'downstream API convergence'; }
+assert_no_deletes
+grep -q 'Waiting for downstream API after infrastructure changes' "$TEST_DIR/log" || fail 'did not retry the downstream API'
+echo 'PASS: cleanup waits for the downstream API after a Primary IP cutover'
 
 reset_case converging
 jq '.items += [{metadata:{name:"rke2-test-worker-1"},status:{conditions:[{type:"Ready",status:"False"}]}}]' \
