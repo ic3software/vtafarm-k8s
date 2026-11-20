@@ -31,6 +31,7 @@ variable "config" {
     thanos_s3_secret_key              = optional(string, "")
     thanos_retention                  = optional(string, "30d")
     thanos_query_replicas             = optional(number, 2)
+    thanos_query_frontend_replicas    = optional(number, 2)
     thanos_storegateway_replicas      = optional(number, 2)
     thanos_storegateway_storage_class = optional(string, "longhorn")
     thanos_storegateway_storage_size  = optional(string, "3Gi")
@@ -148,11 +149,14 @@ variable "config" {
       var.config.thanos_query_replicas >= 1,
       var.config.thanos_query_replicas <= 5,
       floor(var.config.thanos_query_replicas) == var.config.thanos_query_replicas,
+      var.config.thanos_query_frontend_replicas >= 1,
+      var.config.thanos_query_frontend_replicas <= 5,
+      floor(var.config.thanos_query_frontend_replicas) == var.config.thanos_query_frontend_replicas,
       var.config.thanos_storegateway_replicas >= 1,
       var.config.thanos_storegateway_replicas <= 5,
       floor(var.config.thanos_storegateway_replicas) == var.config.thanos_storegateway_replicas,
     ])
-    error_message = "Thanos Query and Store Gateway replicas must be whole numbers from 1 to 5."
+    error_message = "Thanos Query, Query Frontend, and Store Gateway replicas must be whole numbers from 1 to 5."
   }
 
   validation {

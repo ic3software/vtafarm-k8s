@@ -463,7 +463,7 @@ locals {
 
     queryFrontend = {
       enabled       = true
-      replicaCount  = 2
+      replicaCount  = var.config.thanos_query_frontend_replicas
       downstreamUrl = local.thanos_query_url
       service = {
         type = "ClusterIP"
@@ -484,8 +484,8 @@ locals {
         limits   = { memory = "1Gi" }
       }
       pdb = {
-        enabled      = true
-        minAvailable = 1
+        enabled      = var.config.thanos_query_frontend_replicas > 1
+        minAvailable = var.config.thanos_query_frontend_replicas > 1 ? 1 : ""
       }
     }
 
@@ -618,16 +618,6 @@ locals {
         minAvailable = var.config.loki_replicas > 1 ? 2 : null
       }
       affinity = {
-        nodeAffinity = {
-          requiredDuringSchedulingIgnoredDuringExecution = {
-            nodeSelectorTerms = [{
-              matchExpressions = [{
-                key      = "node-role.kubernetes.io/control-plane"
-                operator = "DoesNotExist"
-              }]
-            }]
-          }
-        }
         podAntiAffinity = {
           preferredDuringSchedulingIgnoredDuringExecution = [{
             weight = 100

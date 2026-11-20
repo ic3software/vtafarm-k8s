@@ -180,6 +180,17 @@ variable "thanos_query_replicas" {
   }
 }
 
+variable "thanos_query_frontend_replicas" {
+  description = "Thanos Query Frontend replicas."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.thanos_query_frontend_replicas >= 1 && var.thanos_query_frontend_replicas <= 5 && floor(var.thanos_query_frontend_replicas) == var.thanos_query_frontend_replicas
+    error_message = "thanos_query_frontend_replicas must be a whole number from 1 to 5."
+  }
+}
+
 variable "thanos_storegateway_replicas" {
   description = "Thanos Store Gateway replicas."
   type        = number

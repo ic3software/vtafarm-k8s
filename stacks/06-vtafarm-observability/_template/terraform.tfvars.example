@@ -45,6 +45,7 @@ thanos_s3_secret_key = "replace-with-secret-key"
 
 thanos_retention                 = "30d"
 thanos_query_replicas            = 2
+thanos_query_frontend_replicas   = 2
 thanos_storegateway_replicas     = 2
 thanos_storegateway_storage_class = "longhorn"
 thanos_storegateway_storage_size  = "3Gi"

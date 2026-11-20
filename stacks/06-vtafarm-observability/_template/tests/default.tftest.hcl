@@ -5,16 +5,17 @@ run "enabled_with_sensitive_credentials" {
   command = plan
 
   variables {
-    observability_enabled = true
-    thanos_s3_bucket      = "vtafarm-thanos-test"
-    thanos_s3_prefix      = "observability/production/metrics"
-    thanos_s3_endpoint    = "nbg1.your-objectstorage.com"
-    thanos_s3_region      = "nbg1"
-    thanos_s3_access_key  = "test-access-key"
-    thanos_s3_secret_key  = "test-secret-key"
-    loki_replicas         = 3
-    loki_gateway_replicas = 2
-    loki_storage_size     = "20Gi"
+    observability_enabled          = true
+    thanos_s3_bucket               = "vtafarm-thanos-test"
+    thanos_s3_prefix               = "observability/production/metrics"
+    thanos_s3_endpoint             = "nbg1.your-objectstorage.com"
+    thanos_s3_region               = "nbg1"
+    thanos_s3_access_key           = "test-access-key"
+    thanos_s3_secret_key           = "test-secret-key"
+    thanos_query_frontend_replicas = 3
+    loki_replicas                  = 3
+    loki_gateway_replicas          = 2
+    loki_storage_size              = "20Gi"
   }
 
   assert {
@@ -31,7 +32,8 @@ run "enabled_with_sensitive_credentials" {
     condition = (
       var.loki_replicas == 3 &&
       var.loki_gateway_replicas == 2 &&
-      var.loki_storage_size == "20Gi"
+      var.loki_storage_size == "20Gi" &&
+      var.thanos_query_frontend_replicas == 3
     )
     error_message = "The explicit staging/production settings must select three Loki replicas, two gateways, and 20Gi per replica."
   }

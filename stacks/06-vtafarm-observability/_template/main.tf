@@ -50,6 +50,7 @@ module "observability" {
     thanos_s3_secret_key              = var.thanos_s3_secret_key
     thanos_retention                  = var.thanos_retention
     thanos_query_replicas             = var.thanos_query_replicas
+    thanos_query_frontend_replicas    = var.thanos_query_frontend_replicas
     thanos_storegateway_replicas      = var.thanos_storegateway_replicas
     thanos_storegateway_storage_class = var.thanos_storegateway_storage_class
     thanos_storegateway_storage_size  = var.thanos_storegateway_storage_size

@@ -99,6 +99,8 @@ run "loki_and_alloy_logging_pipeline" {
       yamldecode(helm_release.loki[0].values[0]).singleBinary.persistence.size == "20Gi" &&
       yamldecode(helm_release.loki[0].values[0]).singleBinary.persistence.enableStatefulSetAutoDeletePVC == false &&
       yamldecode(helm_release.loki[0].values[0]).singleBinary.podDisruptionBudget.minAvailable == 2 &&
+      !contains(keys(yamldecode(helm_release.loki[0].values[0]).singleBinary.affinity), "nodeAffinity") &&
+      contains(keys(yamldecode(helm_release.loki[0].values[0]).singleBinary.affinity), "podAntiAffinity") &&
       yamldecode(helm_release.loki[0].values[0]).gateway.replicas == 2 &&
       yamldecode(helm_release.loki[0].values[0]).gateway.podDisruptionBudget.minAvailable == 1 &&
       yamldecode(helm_release.loki[0].values[0]).chunksCache.enabled == false &&
@@ -139,19 +141,50 @@ run "loki_and_alloy_logging_pipeline" {
   }
 }
 
+run "single_replica_loki_can_run_on_control_plane" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name          = "rke2-vtafarm-dev"
+      enabled               = true
+      thanos_enabled        = false
+      loki_enabled          = true
+      loki_replicas         = 1
+      loki_s3_chunks_bucket = "loki"
+      loki_s3_ruler_bucket  = "loki"
+      loki_s3_endpoint      = "nbg1.your-objectstorage.com"
+      loki_s3_region        = "nbg1"
+      loki_s3_access_key    = "test-access-key"
+      loki_s3_secret_key    = "test-secret-key"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.loki[0].values[0]).singleBinary.replicas == 1 &&
+      !contains(keys(yamldecode(helm_release.loki[0].values[0]).singleBinary.affinity), "nodeAffinity") &&
+      contains(keys(yamldecode(helm_release.loki[0].values[0]).singleBinary.affinity), "podAntiAffinity")
+    )
+    error_message = "Single-replica dev Loki must remain spread-aware without excluding the only control-plane worker."
+  }
+}
+
 run "prometheus_on_retained_hcloud_volume" {
   command = plan
 
   variables {
     config = {
-      cluster_name         = "rke2-vtafarm-production"
-      enabled              = true
-      thanos_s3_bucket     = "vtafarm-thanos-test"
-      thanos_s3_prefix     = "observability/production/metrics"
-      thanos_s3_endpoint   = "nbg1.your-objectstorage.com"
-      thanos_s3_region     = "nbg1"
-      thanos_s3_access_key = "test-access-key"
-      thanos_s3_secret_key = "test-secret-key"
+      cluster_name                   = "rke2-vtafarm-production"
+      enabled                        = true
+      thanos_s3_bucket               = "vtafarm-thanos-test"
+      thanos_s3_prefix               = "observability/production/metrics"
+      thanos_s3_endpoint             = "nbg1.your-objectstorage.com"
+      thanos_s3_region               = "nbg1"
+      thanos_s3_access_key           = "test-access-key"
+      thanos_s3_secret_key           = "test-secret-key"
+      thanos_query_replicas          = 1
+      thanos_query_frontend_replicas = 3
     }
   }
 
@@ -205,9 +238,10 @@ run "prometheus_on_retained_hcloud_volume" {
       !contains(keys(yamldecode(helm_release.thanos[0].values[0]).global), "image") &&
       yamldecode(helm_release.thanos[0].values[0]).global.storageClass == "hcloud-volumes-retain" &&
       yamldecode(helm_release.thanos[0].values[0]).receive.enabled == false &&
-      yamldecode(helm_release.thanos[0].values[0]).query.replicaCount == 2 &&
+      yamldecode(helm_release.thanos[0].values[0]).query.replicaCount == 1 &&
       yamldecode(helm_release.thanos[0].values[0]).queryFrontend.enabled == true &&
-      yamldecode(helm_release.thanos[0].values[0]).queryFrontend.replicaCount == 2 &&
+      yamldecode(helm_release.thanos[0].values[0]).queryFrontend.replicaCount == 3 &&
+      yamldecode(helm_release.thanos[0].values[0]).queryFrontend.pdb.enabled == true &&
       yamldecode(helm_release.thanos[0].values[0]).queryFrontend.downstreamUrl == "http://thanos-query.monitoring.svc:9090" &&
       yamldecode(helm_release.thanos[0].values[0]).storegateway.replicaCount == 2 &&
       yamldecode(helm_release.thanos[0].values[0]).storegateway.persistence.storageClass == "longhorn" &&
@@ -219,7 +253,7 @@ run "prometheus_on_retained_hcloud_volume" {
       yamldecode(helm_release.thanos[0].values[0]).compactor.retention.resolution5m == "30d" &&
       yamldecode(helm_release.thanos[0].values[0]).compactor.retention.resolution1h == "30d"
     )
-    error_message = "Thanos must upload to the configured object store, use Longhorn for its Store Gateway cache, and retain all resolutions for 30 days."
+    error_message = "Thanos component replica counts, object storage, cache storage, and retention must follow configuration."
   }
 
   assert {
