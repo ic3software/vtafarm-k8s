@@ -10,14 +10,13 @@ variable "config" {
       server_type   = string
       auto_location = optional(bool, false)
       })), {
-      legacy = {
+      primary = {
         count         = 3
         server_type   = "cx33"
         auto_location = false
       }
     })
-    server_pool_migration = optional(bool, false)
-    servers_are_workers   = optional(bool, true)
+    servers_are_workers = optional(bool, true)
     worker_pools = optional(map(object({
       count         = number
       server_type   = string
@@ -69,28 +68,33 @@ variable "config" {
 
   validation {
     condition = var.config.dev ? (
-      var.config.server_pool_migration ? (
+      sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) == 1 || (
         sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) == 2 &&
         length(var.config.server_pools) == 2 &&
-        try(var.config.server_pools.legacy.count, 0) == 1 &&
         alltrue([for pool in values(var.config.server_pools) : pool.count == 1])
-        ) : (
-        sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) == 1
       )
       ) : (
       sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) >= 3 &&
       sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) <= 9 &&
       (
         sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) % 2 == 1 ||
-        var.config.server_pool_migration
+        length(var.config.server_pools) > 1
       )
     )
-    error_message = "Dev requires one control-plane node, or exactly one legacy and one replacement node while server_pool_migration is true. Outside dev, the total must be between 3 and 9 and odd unless migration mode is enabled."
+    error_message = "Dev requires one control-plane node, or exactly two one-node pools during a migration. Outside dev, the total must be between 3 and 9; an even total is allowed only while multiple pools coexist."
   }
 
   validation {
     condition     = sum(concat([0], [for pool in values(var.config.worker_pools) : pool.count])) <= 49
     error_message = "The worker-pool total must be between 0 and 49."
+  }
+
+  validation {
+    condition = !var.config.dev || length(distinct([
+      for name in keys(var.config.server_pools) :
+      name == "primary" ? 111 : 112 + parseint(substr(md5(name), 0, 8), 16) % 88
+    ])) == length(var.config.server_pools)
+    error_message = "Dev server pool names must map to distinct private address slots; rename one of the pools."
   }
 
   validation {
@@ -103,7 +107,7 @@ variable "config" {
       for name, pool in var.config.server_pools :
       can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name)) &&
       pool.count >= 1 && floor(pool.count) == pool.count &&
-      length(name == "legacy" ? "${var.config.cluster_name}-server-${pool.count}" : "${var.config.cluster_name}-control-plane-${name}-${pool.count}") <= 63
+      length("${var.config.cluster_name}-control-plane-${name}-${pool.count}") <= 63
     ])
     error_message = "Every server pool needs a DNS-safe name, a positive whole count, and node names no longer than 63 characters."
   }
@@ -113,7 +117,7 @@ variable "config" {
       for name, pool in var.config.worker_pools :
       can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name)) &&
       pool.count >= 1 && floor(pool.count) == pool.count &&
-      length(name == "legacy" ? "${var.config.cluster_name}-worker-${pool.count}" : "${var.config.cluster_name}-worker-${name}-${pool.count}") <= 63
+      length("${var.config.cluster_name}-worker-${name}-${pool.count}") <= 63
     ])
     error_message = "Every worker pool needs a DNS-safe name, a positive whole count, and node names no longer than 63 characters."
   }

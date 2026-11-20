@@ -11,16 +11,16 @@ rke2-vtafarm-staging-control-plane-green-1
 rke2-vtafarm-staging-worker-batch-1
 ```
 
-`legacy` is reserved for adopting an existing cluster. It keeps the original names, private
-addresses and OpenTofu resource keys (`server-1`, `worker-1`, and so on), so introducing the
-pool model does not replace or reconnect any VM.
+Add a pool or increase an existing pool's `count` to create nodes. Decrease `count` or remove a
+pool to retire nodes through the guarded apply workflow.
 
 ## Node numbering and private addresses
 
 Every pool has its own one-based node sequence, such as `control-plane-green-1` through
-`control-plane-green-3`. Hetzner assigns private addresses for named pools and the bootstrap discovers
-them before registering with Rancher. The module internally preserves the legacy pool's old
-addresses; users do not allocate address slots in pool config.
+`control-plane-green-3`. Hetzner assigns private addresses and the bootstrap discovers them
+before registering with Rancher; users do not allocate address slots in pool config. Dev server
+pools use stable private addresses derived from their pool names so adding another pool does not
+renumber an existing node.
 
 ## Move three CX33 servers to CX43
 
@@ -29,14 +29,11 @@ uses two separate `make apply-rke2` runs.
 
 ### 1. Add the CX43 pool
 
-Start with the legacy pool representing the existing nodes, then add `green`. Only the three
-`green` nodes are new.
+Start with the `primary` pool, then add `green`. Only the three `green` nodes are new.
 
 ```hcl
-server_pool_migration = true
-
 server_pools = {
-  legacy = {
+  primary = {
     count         = 3
     server_type   = "cx33"
     auto_location = false
@@ -55,9 +52,9 @@ omitted and Hetzner chooses among the server type's locations in the same networ
 Hetzner API does not support a preferred location followed by ordered fallbacks, so automatic
 placement may choose any of those locations rather than trying the configured location first.
 
-The migration flag is an explicit acknowledgement that etcd temporarily has an even six
-members. Six members require a quorum of four and tolerate only two failures, the same as five;
-the even topology is for migration, not steady state.
+Multiple server pools automatically permit the temporary even total needed for a migration.
+Six etcd members require a quorum of four and tolerate only two failures, the same as five;
+the even topology is for migration, not steady state. A single server pool must remain odd.
 
 ```bash
 make plan-rke2  CLUSTER=rke2-vtafarm-staging
@@ -66,15 +63,14 @@ kubectl --kubeconfig=stacks/03-rke2-clusters/clusters/rke2-vtafarm-staging/kubec
 ```
 
 The plan must create three `control-plane-green-*` resources and must not delete or replace a
-`server-*` resource. Wait until all six nodes are Ready and Rancher reports the cluster Active.
+`control-plane-primary-*` resource. Wait until all six nodes are Ready and Rancher reports the
+cluster Active.
 
 ### 2. Retire the CX33 pool
 
-Remove `legacy` and return to an odd steady-state membership:
+Remove `primary` and return to an odd steady-state membership:
 
 ```hcl
-server_pool_migration = false
-
 server_pools = {
   green = {
     count         = 3
@@ -84,7 +80,7 @@ server_pools = {
 }
 ```
 
-The plan must contain only deletion of the three legacy-pool servers and their load-balancer
+The plan must contain only deletion of the three primary-pool servers and their load-balancer
 targets. Run the wrapper, not a direct `tofu apply`:
 
 ```bash
@@ -109,11 +105,10 @@ condition and run the same command again; partial retirement is resumable.
 ## Development clusters
 
 A dev cluster normally has one control-plane node and no load balancer. For a shape migration,
-set `server_pool_migration = true` and define exactly two one-node pools: `legacy` and one
-replacement pool. The legacy node keeps the stable public API Primary IP while the replacement
-joins over the private network. After the replacement is Ready, remove `legacy` and set the flag
-back to `false`; the apply wrapper permits the dev cluster to retire down to its single healthy
-replacement etcd member.
+define exactly two one-node pools: `primary` and one replacement pool. The primary node keeps
+the stable public API Primary IP while the replacement joins over the private network. After
+the replacement is Ready, remove `primary`; the apply wrapper permits the dev cluster to retire
+down to its single healthy replacement etcd member.
 
 Dev pools remain pinned to the configured `location`, even when `auto_location = true`, because
 the stable Primary IP is location-bound. Normal HA clusters can use automatic placement within
@@ -125,7 +120,7 @@ Workers use the same model but do not need the temporary-etcd flag:
 
 ```hcl
 worker_pools = {
-  legacy = {
+  primary = {
     count         = 3
     server_type   = "cx33"
     auto_location = false

@@ -7,7 +7,6 @@ module "rke2" {
     location                            = var.location
     dev                                 = var.dev
     server_pools                        = var.server_pools
-    server_pool_migration               = var.server_pool_migration
     servers_are_workers                 = var.servers_are_workers
     worker_pools                        = var.worker_pools
     os_image                            = var.os_image

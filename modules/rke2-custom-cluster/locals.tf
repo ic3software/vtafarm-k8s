@@ -25,30 +25,24 @@ locals {
   # hands out sits in the first /24 of the subnet.
   private_subnet_regex = "^${replace(regex("^\\d+\\.\\d+\\.\\d+", cidrhost(var.config.subnet_cidr, 0)), ".", "\\.")}\\."
 
-  # The reserved legacy pool keeps the original resource keys and node names.
-  # Named pools keep their own 1..N sequence; Hetzner assigns their private IPs.
+  # Every pool keeps its own 1..N sequence. Hetzner assigns private IPs outside
+  # dev; deterministic dev server addresses keep migration testing predictable.
   server_pools = var.config.server_pools
   worker_pools = var.config.worker_pools
-  named_server_pool_names = sort([
-    for pool_name in keys(local.server_pools) : pool_name
-    if pool_name != "legacy"
-  ])
+  dev_server_pool_slots = {
+    for pool_name in keys(local.server_pools) :
+    pool_name => pool_name == "primary" ? 111 : 112 + parseint(substr(md5(pool_name), 0, 8), 16) % 88
+  }
 
   server_nodes = merge({}, [
     for pool_name, pool in local.server_pools : {
       for i in range(pool.count) :
-      (pool_name == "legacy" ? "server-${i + 1}" : "control-plane-${pool_name}-${i + 1}") => {
-        name = pool_name == "legacy" ? (
-          "${var.config.cluster_name}-server-${i + 1}"
-          ) : (
-          "${var.config.cluster_name}-control-plane-${pool_name}-${i + 1}"
-        )
-        requested_private_ip = pool_name == "legacy" ? cidrhost(var.config.subnet_cidr, 101 + i) : (
-          var.config.dev ? cidrhost(
-            var.config.subnet_cidr,
-            111 + index(local.named_server_pool_names, pool_name) * 10 + i,
-          ) : null
-        )
+      "control-plane-${pool_name}-${i + 1}" => {
+        name = "${var.config.cluster_name}-control-plane-${pool_name}-${i + 1}"
+        requested_private_ip = var.config.dev ? cidrhost(
+          var.config.subnet_cidr,
+          local.dev_server_pool_slots[pool_name] + i,
+        ) : null
         server_type = pool.server_type
         # Dev stays pinned because its public Primary IP is location-bound.
         location      = var.config.dev || !pool.auto_location ? var.config.location : null
@@ -66,13 +60,9 @@ locals {
   worker_nodes = merge({}, [
     for pool_name, pool in local.worker_pools : {
       for i in range(pool.count) :
-      (pool_name == "legacy" ? "worker-${i + 1}" : "worker-${pool_name}-${i + 1}") => {
-        name = pool_name == "legacy" ? (
-          "${var.config.cluster_name}-worker-${i + 1}"
-          ) : (
-          "${var.config.cluster_name}-worker-${pool_name}-${i + 1}"
-        )
-        requested_private_ip = pool_name == "legacy" ? cidrhost(var.config.subnet_cidr, 151 + i) : null
+      "worker-${pool_name}-${i + 1}" => {
+        name                 = "${var.config.cluster_name}-worker-${pool_name}-${i + 1}"
+        requested_private_ip = null
         server_type          = pool.server_type
         # Dev workers share the server's location to keep its test topology
         # predictable. Automatic placement is reserved for normal HA clusters.
@@ -88,7 +78,7 @@ locals {
   nodes = merge(local.server_nodes, local.worker_nodes)
 
   dev_server_key = var.config.dev ? (
-    contains(keys(local.server_nodes), "server-1") ? "server-1" : sort(keys(local.server_nodes))[0]
+    contains(keys(local.server_nodes), "control-plane-primary-1") ? "control-plane-primary-1" : sort(keys(local.server_nodes))[0]
   ) : null
 
   tls_sans = var.config.dev ? compact([

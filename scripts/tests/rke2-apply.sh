@@ -354,12 +354,16 @@ for filename in ('plan', 'nodes', 'machines', 'longhorn', 'replicas', 'volumes',
         text = text.replace(f'rke2-test-server-{index}', f'rke2-test-control-plane-green-{index}')
         if filename == 'plan':
             text = text.replace(f'node["server-{index}"]', f'node["control-plane-green-{index}"]')
+    for index in (5, 4):
+        text = text.replace(f'rke2-test-server-{index}', f'rke2-test-control-plane-primary-{index}')
+        if filename == 'plan':
+            text = text.replace(f'node["server-{index}"]', f'node["control-plane-primary-{index}"]')
     (root / filename).write_text(text)
 PY
 run || { cat "$TEST_DIR/log"; fail 'pool retirement'; }
 [ -f "$TEST_DIR/applied" ] || fail 'did not apply pool retirement'
-rg -q '^RETIRED rke2-test-server-5$' "$TEST_DIR/events" || fail 'did not retire the final legacy-pool server'
-echo 'PASS: a named server pool can survive while legacy-pool servers are evacuated and retired'
+rg -q '^RETIRED rke2-test-control-plane-primary-5$' "$TEST_DIR/events" || fail 'did not retire the final primary-pool server'
+echo 'PASS: one named server pool can survive while another pool is evacuated and retired'
 
 reset_case ok
 python3 - <<'PY'
@@ -373,8 +377,8 @@ def load(name):
 def save(name, value):
     (root / name).write_text(json.dumps(value))
 
-legacy = 'rke2-test-server-1'
-replacement = 'rke2-test-control-plane-primary-1'
+original = 'rke2-test-control-plane-primary-1'
+replacement = 'rke2-test-control-plane-green-1'
 
 nodes = load('nodes')
 nodes['items'] = nodes['items'][:2]
@@ -402,20 +406,20 @@ save('members', {'members': [
 save('plan', {
     'resource_changes': [
         {
-            'address': 'module.rke2.hcloud_server.node["server-1"]',
+            'address': 'module.rke2.hcloud_server.node["control-plane-primary-1"]',
             'mode': 'managed',
             'type': 'hcloud_server',
-            'change': {'actions': ['delete'], 'before': {'name': legacy, 'id': '1'}},
+            'change': {'actions': ['delete'], 'before': {'name': original, 'id': '1'}},
         },
         {
-            'address': 'module.rke2.hcloud_server.node["control-plane-primary-1"]',
+            'address': 'module.rke2.hcloud_server.node["control-plane-green-1"]',
             'mode': 'managed',
             'type': 'hcloud_server',
             'change': {'actions': ['no-op'], 'after': {'name': replacement, 'id': '2'}},
         },
     ],
     'planned_values': {'outputs': {
-        'nodes': {'value': {'control-plane-primary-1': {'name': replacement}}},
+        'nodes': {'value': {'control-plane-green-1': {'name': replacement}}},
         'cluster_id': {'value': 'fleet-default/rke2-test'},
         'cluster_v1_id': {'value': 'c-test'},
         'development_mode': {'value': True},

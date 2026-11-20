@@ -14,15 +14,14 @@ location = "nbg1"
 rke2_version = "v1.35.9+rke2r1"
 
 # Set dev = true with one server-pool node for an all-in-one RKE2 server with no
-# load balancer. Migration mode temporarily permits legacy plus one replacement.
+# load balancer. Two one-node pools may coexist temporarily during a migration.
 # Every environment always has a private node network.
 dev = false
 
-# Every machine belongs to a named pool. The reserved "legacy" pool uses the
-# original server-N and worker-N names so an existing cluster can adopt this
-# model without replacing nodes. Other pools include their name in each node.
+# Every machine belongs to a named pool, and every node name includes its pool.
+# Add a pool or increase its count to create nodes.
 server_pools = {
-  legacy = {
+  primary = {
     count         = 3
     server_type   = "cx33"
     auto_location = false
@@ -38,7 +37,7 @@ worker_pools = {}
 
 # Example worker pool:
 # worker_pools = {
-#   legacy = {
+#   primary = {
 #     count         = 3
 #     server_type   = "cx33"
 #     auto_location = false
@@ -46,14 +45,13 @@ worker_pools = {}
 # }
 #
 # A safe cx33 -> cx43 server migration takes two separate applies:
-#   1. Add the green entry and set server_pool_migration=true, then apply.
-#   2. After all new nodes are Ready, remove legacy and set migration false.
+#   1. Add the green entry, then apply.
+#   2. After all new nodes are Ready, remove primary.
 #      `make apply-rke2` evacuates Longhorn, drains, and retires each cx33 node
 #      through Rancher before OpenTofu deletes any VM.
 #
-# server_pool_migration = true
 # server_pools = {
-#   legacy = {
+#   primary = {
 #     count         = 3
 #     server_type   = "cx33"
 #     auto_location = false

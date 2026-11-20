@@ -33,31 +33,25 @@ variable "location" {
 }
 
 variable "dev" {
-  description = "Run without a load balancer. Steady state has one control-plane node; migration mode temporarily permits one legacy and one replacement node."
+  description = "Run without a load balancer. Steady state has one control-plane node; two one-node pools may coexist during a migration."
   type        = bool
   default     = false
 }
 
 variable "server_pools" {
-  description = "Named RKE2 server pools. The reserved legacy pool adopts existing server-N nodes without replacing them."
+  description = "Named RKE2 server pools. Adding a pool or increasing its count creates control-plane nodes."
   type = map(object({
     count         = number
     server_type   = string
     auto_location = optional(bool, false)
   }))
   default = {
-    legacy = {
+    primary = {
       count         = 3
       server_type   = "cx33"
       auto_location = false
     }
   }
-}
-
-variable "server_pool_migration" {
-  description = "Explicitly allow a temporary even total of etcd server nodes while moving between server pools."
-  type        = bool
-  default     = false
 }
 
 variable "servers_are_workers" {
@@ -67,7 +61,7 @@ variable "servers_are_workers" {
 }
 
 variable "worker_pools" {
-  description = "Named dedicated-worker pools. The reserved legacy pool adopts existing worker-N nodes without replacing them."
+  description = "Named dedicated-worker pools. Adding a pool or increasing its count creates worker nodes."
   type = map(object({
     count         = number
     server_type   = string

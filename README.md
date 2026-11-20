@@ -301,13 +301,13 @@ SSH and Kubernetes API access and may be left open for a disposable cluster:
 ```hcl
 dev = true
 server_pools = {
-  legacy = {
+  primary = {
     count       = 1
     server_type = "cx33"
   }
 }
 worker_pools = {
-  legacy = {
+  primary = {
     count       = 2
     server_type = "cx23"
   }
@@ -318,16 +318,15 @@ ssh_allowed_cidrs = ["0.0.0.0/0"]
 Omit `dev` or leave it `false` for the normal highly available topology. A dev cluster has no
 control-plane redundancy and is not suitable for production.
 
-During a dev shape migration, `server_pool_migration = true` permits exactly two control-plane
-nodes: one node in `legacy` and one replacement node in another pool. The legacy node keeps the
-public API Primary IP while both nodes communicate over the private network.
+During a dev shape migration, exactly two one-node control-plane pools may coexist. The
+`primary` node keeps the public API Primary IP while both nodes communicate over the private
+network. No separate migration flag is required.
 
 Normal HA clusters can use named server and worker pools when two machine shapes must coexist.
-The reserved `legacy` pool adopts the original `server-1..N` or `worker-1..N` nodes without
-renaming or replacing them. A shape migration is deliberately two applies: first add the new
-pool, wait for it to become healthy, then remove the old pool. The apply wrapper evacuates
-Longhorn and retires nodes through Rancher before deleting their VMs; it rejects a plan that
-tries to add and remove nodes together.
+Adding a pool or increasing its `count` creates nodes with pool-scoped names. A shape migration
+is deliberately two applies: first add the new pool, wait for it to become healthy, then remove
+the old pool. The apply wrapper evacuates Longhorn and retires nodes through Rancher before
+deleting their VMs; it rejects a plan that tries to add and remove nodes together.
 
 See [RKE2 node pools](docs/rke2-node-pools.md) for the complete `cx33` to `cx43` example.
 
