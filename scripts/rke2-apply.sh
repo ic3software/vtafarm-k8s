@@ -51,8 +51,6 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
     .type != "hcloud_server" and .type != "hcloud_load_balancer_target" and .type != "terraform_data");
     .change.actions == ["no-op"] or .change.actions == ["read"])' "$WORK/plan.json" >/dev/null ||
     fail 'Apply other infrastructure or Rancher configuration changes separately from node retirement'
-  jq -e '.planned_values.outputs.nodes.value | type == "object" and length > 0' "$WORK/plan.json" >/dev/null ||
-    fail 'The saved plan has no known remaining node inventory'
   DEVELOPMENT_MODE="$(jq -r '.planned_values.outputs.development_mode.value // false' "$WORK/plan.json")"
   [[ "$DEVELOPMENT_MODE" =~ ^(true|false)$ ]] || fail 'Invalid development-mode output'
   if [ "$DEVELOPMENT_MODE" = true ]; then
@@ -62,15 +60,17 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
   WORKER_DELETE_EMPTY_DIR_DATA="$(jq -r '.planned_values.outputs.worker_delete_empty_dir_data.value // false' "$WORK/plan.json")"
   [[ "$CONTROL_PLANE_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid control-plane emptyDir retirement setting'
   [[ "$WORKER_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid worker emptyDir retirement setting'
-  jq '[.planned_values.outputs.nodes.value[] | .name] | sort' "$WORK/plan.json" >"$WORK/desired"
+  jq '[.resource_changes[]? | select(.mode == "managed" and .type == "hcloud_server" and
+    (.change.actions | index("delete")) == null) | .change.after |
+    select(type == "object") | {name:.name,id:(.id|tostring)}] | sort_by(.name)' \
+    "$WORK/plan.json" >"$WORK/remaining-vms"
+  jq -e 'length > 0' "$WORK/remaining-vms" >/dev/null ||
+    fail 'The saved plan has no known remaining node inventory'
+  jq -e 'all(.[]; (.name | type == "string" and length > 0) and (.id | test("^[0-9]+$")))' \
+    "$WORK/remaining-vms" >/dev/null || fail 'The remaining VM identities must be known in the saved plan'
+  jq '[.[].name] | sort' "$WORK/remaining-vms" >"$WORK/desired"
   SURVIVOR="$(jq -r '[.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))][0] // empty' "$WORK/desired")"
   [ -n "$SURVIVOR" ] || fail 'The saved plan has no surviving control-plane node'
-  jq --slurpfile desired "$WORK/desired" '[.resource_changes[]? | .change.after.name as $node |
-    select(.mode == "managed" and .type == "hcloud_server" and ($desired[0] | index($node)) != null) |
-    {name:.change.after.name,id:(.change.after.id|tostring)}]' \
-    "$WORK/plan.json" >"$WORK/remaining-vms"
-  jq -e --slurpfile desired "$WORK/desired" 'length == ($desired[0] | length) and
-    all(.[]; .id | test("^[0-9]+$"))' "$WORK/remaining-vms" >/dev/null || fail 'The remaining VM identities must be known in the saved plan'
   jq -e --arg name "$NAME" --argjson minimum "$MIN_SERVER_NODES" '
     all(.[]; test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
     ([.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))] | length) >= $minimum' \
@@ -117,7 +117,9 @@ read_management cluster get clusters.cluster.x-k8s.io "$NAME" -n "$NAMESPACE" -o
 CLUSTER_UID="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' "$WORK/cluster")"
 jq -e '.metadata.deletionTimestamp == null' "$WORK/cluster" >/dev/null || fail 'Cluster is deleting'
 read_management machines get machines.cluster.x-k8s.io -n "$NAMESPACE" -l "cluster.x-k8s.io/cluster-name=$NAME" -o json
-if [ "$DEVELOPMENT_MODE" = true ]; then
+if [ "$DEVELOPMENT_MODE" = true ] && jq -e '
+  any(.[]; (.change.before.name | test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$")))' \
+  "$WORK/deletions" >/dev/null; then
   SURVIVOR_EXTERNAL_IP="$(jq -er --arg node "$SURVIVOR" '
     [.items[] | select(.status.nodeRef.name == $node) | .status.addresses[]? |
       select(.type == "ExternalIP") | .address] | unique |

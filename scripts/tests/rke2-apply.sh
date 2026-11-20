@@ -301,6 +301,13 @@ assert not (root / 'rke2-test/.rke2-apply-lock').exists()
 PY
 echo 'PASS: single-replica data is rebuilt before drain; Rancher retires servers sequentially before VM apply'
 
+reset_case ok
+jq 'del(.planned_values.outputs.nodes.value)' "$TEST_DIR/plan" >"$TEST_DIR/next"
+mv "$TEST_DIR/next" "$TEST_DIR/plan"
+run || { cat "$TEST_DIR/log"; fail 'partially unknown node output'; }
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply with a partially unknown node output'
+echo 'PASS: survivor inventory comes from resource changes when the node output is partially unknown'
+
 reset_case longhorn-conflict
 run || { cat "$TEST_DIR/log"; fail 'Longhorn conflict retry'; }
 [ -f "$TEST_DIR/longhorn-conflicted" ] || fail 'did not exercise the Longhorn conflict retry'
@@ -513,6 +520,7 @@ members = json.loads((root / 'members').read_text())
 members['members'] = members['members'][:3]
 (root / 'members').write_text(json.dumps(members))
 plan = json.loads((root / 'plan').read_text())
+plan['planned_values']['outputs']['development_mode'] = {'value': True}
 plan['planned_values']['outputs']['worker_delete_empty_dir_data']['value'] = True
 (root / 'plan').write_text(json.dumps(plan))
 PY
@@ -520,7 +528,8 @@ export TEST_MODE=worker-emptydir
 run || { cat "$TEST_DIR/log"; fail 'dedicated worker shrink'; }
 [ -f "$TEST_DIR/applied" ] || fail 'did not apply worker shrink'
 rg -q '^RETIRED rke2-test-worker-2$' "$TEST_DIR/events" || fail 'missed the second worker'
-echo 'PASS: dedicated worker shrink honors explicit worker emptyDir deletion without removing a surviving server'
+[ ! -f "$TEST_DIR/cutover-configured" ] || fail 'changed the dev API endpoint during a worker-only retirement'
+echo 'PASS: dev worker shrink preserves its API endpoint and honors explicit worker emptyDir deletion'
 
 reset_case ok
 jq '.resource_changes=[]' "$TEST_DIR/plan" >"$TEST_DIR/next"
