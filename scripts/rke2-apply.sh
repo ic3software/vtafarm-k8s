@@ -101,6 +101,8 @@ check_state
 
 MANAGEMENT_CONFIG="$ROOT/stacks/01-infra/kubeconfig.yaml"
 DOWNSTREAM_CONFIG="$CLUSTER_DIR/kubeconfig.yaml"
+PERSISTED_DOWNSTREAM_CONFIG="$DOWNSTREAM_CONFIG"
+DEV_CONTROL_PLANE_CUTOVER=false
 [ -f "$MANAGEMENT_CONFIG" ] && [ -f "$DOWNSTREAM_CONFIG" ] || fail 'Both management and downstream kubeconfigs are required for retirement'
 CLUSTER_ID="$(jq -er '.planned_values.outputs.cluster_id.value' "$WORK/plan.json")"
 CLUSTER_V1_ID="$(jq -er '.planned_values.outputs.cluster_v1_id.value' "$WORK/plan.json")"
@@ -120,6 +122,7 @@ read_management machines get machines.cluster.x-k8s.io -n "$NAMESPACE" -l "clust
 if [ "$DEVELOPMENT_MODE" = true ] && jq -e '
   any(.[]; (.change.before.name | test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$")))' \
   "$WORK/deletions" >/dev/null; then
+  DEV_CONTROL_PLANE_CUTOVER=true
   SURVIVOR_EXTERNAL_IP="$(jq -er --arg node "$SURVIVOR" '
     [.items[] | select(.status.nodeRef.name == $node) | .status.addresses[]? |
       select(.type == "ExternalIP") | .address] | unique |
@@ -403,3 +406,44 @@ if [ "$LONGHORN" = true ]; then
 fi
 check_state
 tofu -chdir="$CLUSTER_DIR" apply "$WORK/plan"
+
+if [ "$DEV_CONTROL_PLANE_CUTOVER" = true ]; then
+  # A dev Primary IP moves only after the old control-plane is retired. Rancher
+  # otherwise keeps the survivor's registration-time ExternalIP indefinitely.
+  DOWNSTREAM_CONFIG="$PERSISTED_DOWNSTREAM_CONFIG"
+  survivor_id="$(jq -er --arg node "$SURVIVOR" '.[] | select(.name == $node) | .id' "$WORK/remaining-vms")"
+  survivor_machine="$(jq -er --arg node "$SURVIVOR" --arg name "$NAME" --arg namespace "$NAMESPACE" \
+    --arg cluster_uid "$CLUSTER_UID" "$(cat "$WORK/machine.jq")
+      [.items[] | select(owned and .status.nodeRef.name == \$node)] |
+      select(length == 1) | .[0].metadata.name" "$WORK/machines")"
+  deadline=$((SECONDS + 300))
+  survivor_external_ip=""
+  while :; do
+    survivor_external_ip=""
+    if downstream get node "$SURVIVOR" -o json >"$WORK/survivor-node" 2>"$WORK/error" &&
+      jq -e --arg id "$survivor_id" '.spec.providerID == ("hcloud://" + $id) and
+        any(.status.conditions[]?; .type == "Ready" and .status == "True")' "$WORK/survivor-node" >/dev/null; then
+      survivor_external_ip="$(jq -er '[.status.addresses[]? | select(.type == "ExternalIP") | .address] |
+        unique | select(length == 1) | .[0] | select(test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' \
+        "$WORK/survivor-node")" || :
+      [ -n "${survivor_external_ip:-}" ] && break
+    fi
+    [ "$SECONDS" -lt "$deadline" ] || fail 'The surviving dev control-plane did not publish its Primary IP after apply'
+    sleep 5
+  done
+  read_management survivor-custom-machine get custommachines.rke.cattle.io "$survivor_machine" -n "$NAMESPACE" -o json
+  jq -e --arg id "$survivor_id" --arg machine "$survivor_machine" '.metadata.name == $machine and
+    .metadata.deletionTimestamp == null and .spec.providerID == ("hcloud://" + $id) and
+    ([.status.addresses[]? | select(.type == "ExternalIP")] | length) == 1' \
+    "$WORK/survivor-custom-machine" >/dev/null || fail 'The surviving dev CustomMachine cannot be safely reconciled'
+  jq --arg ip "$survivor_external_ip" '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},
+    status:{addresses:(.status.addresses | map(if .type == "ExternalIP" then .address = $ip else . end))}}' \
+    "$WORK/survivor-custom-machine" >"$WORK/custom-machine-status-patch"
+  management patch custommachines.rke.cattle.io "$survivor_machine" -n "$NAMESPACE" --subresource=status \
+    --type=merge --patch-file="$WORK/custom-machine-status-patch" >"$WORK/patched" 2>"$WORK/error" ||
+    fail 'Cannot reconcile the surviving dev control-plane address in Rancher'
+  management wait --for=jsonpath="{.status.addresses[?(@.type=='ExternalIP')].address}=$survivor_external_ip" \
+    "machines.cluster.x-k8s.io/$survivor_machine" -n "$NAMESPACE" --timeout=60s >"$WORK/wait" 2>"$WORK/error" ||
+    fail 'Rancher did not publish the surviving dev control-plane Primary IP'
+  echo "Reconciled surviving dev control-plane $SURVIVOR to Primary IP $survivor_external_ip."
+fi
