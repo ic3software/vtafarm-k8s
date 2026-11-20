@@ -42,6 +42,8 @@ resource "hcloud_server" "node" {
   network {
     network_id = hcloud_network.this[0].id
     ip         = each.value.requested_private_ip
+    # Keep the provider's TypeSet hash stable after Hetzner fills computed fields.
+    alias_ips = []
   }
 
   lifecycle {

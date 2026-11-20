@@ -911,6 +911,7 @@ run "creates_named_server_and_worker_pools_without_renumbering_legacy_nodes" {
       hcloud_server.node["control-plane-green-1"].server_type == "cx43" &&
       hcloud_server.node["control-plane-green-1"].labels.node_class == "control-plane" &&
       hcloud_server.node["control-plane-green-1"].labels.node_pool == "green" &&
+      length(one(hcloud_server.node["control-plane-green-1"].network).alias_ips) == 0 &&
       contains(keys(data.hcloud_server_type.auto_location), "cx43") &&
       strcontains(
         base64decode(one([
