@@ -48,7 +48,9 @@ The destroy targets are in [teardown.md](teardown.md).
 
 ### Scale down nodes
 
-Reduce `server_count` or `worker_count`, then run `make apply-rke2 CLUSTER=<name>`.
+Reduce a pool's `count` or remove the pool from `server_pools` or `worker_pools`, then run
+`make apply-rke2 CLUSTER=<name>`. See [RKE2 node pools](rke2-node-pools.md) for the staged
+replacement workflow.
 The Make target saves an OpenTofu plan and asks for `yes` before starting retirement or apply.
 It executes that same saved plan only after retirement succeeds. No separate cleanup command is needed.
 The workflow requires the management kubeconfig at `stacks/01-infra/kubeconfig.yaml` and that

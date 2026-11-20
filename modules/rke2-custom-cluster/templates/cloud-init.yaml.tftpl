@@ -33,7 +33,7 @@ write_files:
     permissions: "0700"
     owner: root:root
     encoding: b64
-    content: ${base64encode("#!/usr/bin/env bash\nset -euo pipefail\n${registration_script}\n")}
+    content: ${base64encode("#!/usr/bin/env bash\nset -euo pipefail\n${registration_script} --internal-address \"$1\"\n")}
 
   - path: /usr/local/bin/rancher-node-bootstrap.sh
     permissions: "0700"

@@ -17,6 +17,10 @@ ETCD_HEALTH_ATTEMPTS="${RKE2_ETCD_HEALTH_ATTEMPTS:-60}"
 WORK="$(mktemp -d)"
 LOCK="$CLUSTER_DIR/.rke2-apply-lock"
 LOCKED=false
+MIN_SERVER_NODES=3
+DEVELOPMENT_MODE=false
+CONTROL_PLANE_DELETE_EMPTY_DIR_DATA=false
+WORKER_DELETE_EMPTY_DIR_DATA=false
 cleanup() {
   rm -rf "$WORK"
   if [ "$LOCKED" = true ]; then rmdir "$LOCK"; fi
@@ -35,11 +39,11 @@ jq '[.resource_changes[]? | select(.mode == "managed" and .type == "hcloud_serve
 if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
   # Replacement and mixed grow/shrink plans need new capacity before retirement.
   jq -e --arg name "$NAME" '
-    all(.[]; .address | test("^module\\.rke2\\.hcloud_server\\.node\\[\"(server|worker)-[0-9]+\"\\]$")) and
+    all(.[]; .address | test("^module\\.rke2\\.hcloud_server\\.node\\[\"(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)\"\\]$")) and
     all(.[]; .change.actions == ["delete"] and
-      (.change.before.name | test("^" + $name + "-(server|worker)-[0-9]+$")) and
+      (.change.before.name | test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
       (.change.before.id | tostring | test("^[0-9]+$")))' "$WORK/deletions" >/dev/null ||
-    fail 'Only count reductions of this custom cluster are supported; stage VM replacements separately'
+    fail 'Only node-pool reductions of this custom cluster are supported; stage VM replacements separately'
   jq -e 'all(.resource_changes[]? | select(.mode == "managed" and .type == "hcloud_server");
     (.change.actions | index("create")) == null)' "$WORK/plan.json" >/dev/null ||
     fail 'Add the new nodes in a separate apply before reducing existing node counts'
@@ -47,18 +51,30 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
     .type != "hcloud_server" and .type != "hcloud_load_balancer_target" and .type != "terraform_data");
     .change.actions == ["no-op"] or .change.actions == ["read"])' "$WORK/plan.json" >/dev/null ||
     fail 'Apply other infrastructure or Rancher configuration changes separately from node retirement'
-  jq -e '.planned_values.outputs.nodes.value | type == "object" and length > 0' "$WORK/plan.json" >/dev/null ||
-    fail 'The saved plan has no known remaining node inventory'
-  jq '[.planned_values.outputs.nodes.value[] | .name] | sort' "$WORK/plan.json" >"$WORK/desired"
-  jq --slurpfile desired "$WORK/desired" '[.resource_changes[]? | .change.after.name as $node |
-    select(.mode == "managed" and .type == "hcloud_server" and ($desired[0] | index($node)) != null) |
-    {name:.change.after.name,id:(.change.after.id|tostring)}]' \
+  DEVELOPMENT_MODE="$(jq -r '.planned_values.outputs.development_mode.value // false' "$WORK/plan.json")"
+  [[ "$DEVELOPMENT_MODE" =~ ^(true|false)$ ]] || fail 'Invalid development-mode output'
+  if [ "$DEVELOPMENT_MODE" = true ]; then
+    MIN_SERVER_NODES=1
+  fi
+  CONTROL_PLANE_DELETE_EMPTY_DIR_DATA="$(jq -r '.planned_values.outputs.control_plane_delete_empty_dir_data.value // false' "$WORK/plan.json")"
+  WORKER_DELETE_EMPTY_DIR_DATA="$(jq -r '.planned_values.outputs.worker_delete_empty_dir_data.value // false' "$WORK/plan.json")"
+  [[ "$CONTROL_PLANE_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid control-plane emptyDir retirement setting'
+  [[ "$WORKER_DELETE_EMPTY_DIR_DATA" =~ ^(true|false)$ ]] || fail 'Invalid worker emptyDir retirement setting'
+  jq '[.resource_changes[]? | select(.mode == "managed" and .type == "hcloud_server" and
+    (.change.actions | index("delete")) == null) | .change.after |
+    select(type == "object") | {name:.name,id:(.id|tostring)}] | sort_by(.name)' \
     "$WORK/plan.json" >"$WORK/remaining-vms"
-  jq -e --slurpfile desired "$WORK/desired" 'length == ($desired[0] | length) and
-    all(.[]; .id | test("^[0-9]+$"))' "$WORK/remaining-vms" >/dev/null || fail 'The remaining VM identities must be known in the saved plan'
-  jq -e --arg name "$NAME" 'all(.[]; test("^" + $name + "-(server|worker)-[0-9]+$")) and
-    ([.[] | select(test("-server-[0-9]+$"))] | length) >= 3' "$WORK/desired" >/dev/null ||
-    fail 'Retirement requires at least three remaining server nodes'
+  jq -e 'length > 0' "$WORK/remaining-vms" >/dev/null ||
+    fail 'The saved plan has no known remaining node inventory'
+  jq -e 'all(.[]; (.name | type == "string" and length > 0) and (.id | test("^[0-9]+$")))' \
+    "$WORK/remaining-vms" >/dev/null || fail 'The remaining VM identities must be known in the saved plan'
+  jq '[.[].name] | sort' "$WORK/remaining-vms" >"$WORK/desired"
+  SURVIVOR="$(jq -r '[.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))][0] // empty' "$WORK/desired")"
+  [ -n "$SURVIVOR" ] || fail 'The saved plan has no surviving control-plane node'
+  jq -e --arg name "$NAME" --argjson minimum "$MIN_SERVER_NODES" '
+    all(.[]; test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
+    ([.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))] | length) >= $minimum' \
+    "$WORK/desired" >/dev/null || fail "Retirement requires at least $MIN_SERVER_NODES remaining control-plane node(s)"
   jq -e --slurpfile desired "$WORK/desired" 'all(.[]; .change.before.name as $node |
     ($desired[0] | index($node)) == null)' "$WORK/deletions" >/dev/null || fail 'A retiring node is still desired by the saved plan'
   echo 'Before deleting VMs, this apply will migrate Longhorn data and retire these nodes through Rancher:'
@@ -85,6 +101,8 @@ check_state
 
 MANAGEMENT_CONFIG="$ROOT/stacks/01-infra/kubeconfig.yaml"
 DOWNSTREAM_CONFIG="$CLUSTER_DIR/kubeconfig.yaml"
+PERSISTED_DOWNSTREAM_CONFIG="$DOWNSTREAM_CONFIG"
+DEV_CONTROL_PLANE_CUTOVER=false
 [ -f "$MANAGEMENT_CONFIG" ] && [ -f "$DOWNSTREAM_CONFIG" ] || fail 'Both management and downstream kubeconfigs are required for retirement'
 CLUSTER_ID="$(jq -er '.planned_values.outputs.cluster_id.value' "$WORK/plan.json")"
 CLUSTER_V1_ID="$(jq -er '.planned_values.outputs.cluster_v1_id.value' "$WORK/plan.json")"
@@ -101,6 +119,32 @@ read_management cluster get clusters.cluster.x-k8s.io "$NAME" -n "$NAMESPACE" -o
 CLUSTER_UID="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' "$WORK/cluster")"
 jq -e '.metadata.deletionTimestamp == null' "$WORK/cluster" >/dev/null || fail 'Cluster is deleting'
 read_management machines get machines.cluster.x-k8s.io -n "$NAMESPACE" -l "cluster.x-k8s.io/cluster-name=$NAME" -o json
+if [ "$DEVELOPMENT_MODE" = true ] && jq -e '
+  any(.[]; (.change.before.name | test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$")))' \
+  "$WORK/deletions" >/dev/null; then
+  DEV_CONTROL_PLANE_CUTOVER=true
+  SURVIVOR_EXTERNAL_IP="$(jq -er --arg node "$SURVIVOR" '
+    [.items[] | select(.status.nodeRef.name == $node) | .status.addresses[]? |
+      select(.type == "ExternalIP") | .address] | unique |
+    select(length == 1) | .[0] | select(test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' "$WORK/machines")" ||
+    fail 'The surviving dev control-plane Machine has no unique external IPv4 address'
+  DEV_TLS_NAME="$(jq -er '.planned_values.outputs.kubernetes_api_endpoint.value |
+    capture("^https://(?<host>[A-Za-z0-9.-]+):6443$").host' "$WORK/plan.json")" ||
+    fail 'The dev Kubernetes endpoint cannot be used as a TLS server name'
+  kubectl --kubeconfig="$DOWNSTREAM_CONFIG" config view --raw -o json >"$WORK/downstream-base" 2>"$WORK/error" ||
+    fail 'Cannot read the downstream kubeconfig for dev API cutover'
+  jq -e --arg server "https://$SURVIVOR_EXTERNAL_IP:6443" --arg tls_name "$DEV_TLS_NAME" '
+    .["current-context"] as $current |
+    ([.contexts[] | select(.name == $current) | .context.cluster] | unique) as $selected |
+    select($selected | length == 1) | $selected[0] as $cluster |
+    .clusters |= map(if .name == $cluster then
+      .cluster.server = $server | .cluster["tls-server-name"] = $tls_name
+    else . end)' "$WORK/downstream-base" >"$WORK/downstream-cutover" ||
+    fail 'Cannot construct the downstream kubeconfig for dev API cutover'
+  chmod 600 "$WORK/downstream-cutover"
+  DOWNSTREAM_CONFIG="$WORK/downstream-cutover"
+  echo "Using surviving dev control-plane $SURVIVOR for API access during Primary IP cutover."
+fi
 read_downstream nodes get nodes -o json
 jq -e --slurpfile remaining "$WORK/remaining-vms" '.items as $nodes | all($remaining[0][]; . as $vm |
   any($nodes[]; .metadata.name == $vm.name and .spec.providerID == ("hcloud://" + $vm.id) and .metadata.deletionTimestamp == null and
@@ -128,7 +172,7 @@ while IFS=$'\t' read -r node vm_id; do
     jq -e 'length == 1' "$WORK/$node-machine" >/dev/null || fail "$node has no matching Rancher Machine"
     jq -r --arg node "$node" '.items[] | select(.metadata.name == $node) | .metadata.uid' "$WORK/nodes" >"$WORK/$node-uid"
   fi
-  if [[ "$node" == "$NAME-server-"* ]] && [ "$(jq length "$WORK/$node-machine")" -eq 1 ]; then
+  if [[ "$node" == "$NAME-server-"* || "$node" == "$NAME-control-plane-"* ]] && [ "$(jq length "$WORK/$node-machine")" -eq 1 ]; then
     jq -e '.[0].metadata.labels["rke.cattle.io/etcd-role"] == "true" and
       (.[0].metadata.deletionTimestamp != null or
        .[0].metadata.annotations["pre-terminate.delete.hook.machine.cluster.x-k8s.io/rke-bootstrap-cleanup"] != null)' \
@@ -136,7 +180,6 @@ while IFS=$'\t' read -r node vm_id; do
   fi
 done <"$WORK/retire"
 
-SURVIVOR="$(jq -r '[.[] | select(test("-server-[0-9]+$"))][0]' "$WORK/desired")"
 etcd() {
   downstream exec -n kube-system "etcd-$SURVIVOR" -c etcd -- etcdctl \
     --endpoints=https://127.0.0.1:2379 \
@@ -148,12 +191,12 @@ check_etcd() {
   local attempt
   for ((attempt = 1; attempt <= ETCD_HEALTH_ATTEMPTS; attempt++)); do
     if etcd member list -w json >"$WORK/members" 2>"$WORK/error" &&
-      jq -e --slurpfile desired "$WORK/desired" '.members as $members |
-        all($desired[0][] | select(test("-server-[0-9]+$")); . as $name |
+      jq -e --argjson minimum "$MIN_SERVER_NODES" --slurpfile desired "$WORK/desired" '.members as $members |
+        all($desired[0][] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$")); . as $name |
           any($members[]; (.name == $name or (.name | startswith($name + "-"))) and .isLearner != true))' \
         "$WORK/members" >/dev/null &&
       etcd endpoint health --cluster -w json >"$WORK/health" 2>"$WORK/error" &&
-      jq -e --slurpfile members "$WORK/members" 'length == ($members[0].members | length) and length >= 3 and
+      jq -e --argjson minimum "$MIN_SERVER_NODES" --slurpfile members "$WORK/members" 'length == ($members[0].members | length) and length >= $minimum and
         all(.[]; .health == true)' "$WORK/health" >/dev/null; then
       return 0
     fi
@@ -213,6 +256,34 @@ storage_detached() {
     .status.currentNodeID != $node and .status.pendingNodeID != $node)' "$WORK/volumes" >/dev/null
 }
 
+patch_longhorn_node() {
+  local node="$1" expected_uid="$2" operation="$3" attempt
+  for attempt in 1 2 3 4 5; do
+    read_downstream longhorn-current get nodes.longhorn.io "$node" -n longhorn-system --ignore-not-found -o json
+    [ -s "$WORK/longhorn-current" ] || return 1
+    jq -e --arg uid "$expected_uid" '.metadata.uid == $uid' "$WORK/longhorn-current" >/dev/null || return 1
+    if [ "$operation" = disable-scheduling ]; then
+      jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},
+        spec:{allowScheduling:false,disks:(.spec.disks | with_entries(.value.allowScheduling=false))}}' \
+        "$WORK/longhorn-current" >"$WORK/patch"
+    else
+      jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},spec:{evictionRequested:true}}' \
+        "$WORK/longhorn-current" >"$WORK/patch"
+    fi
+    if downstream patch nodes.longhorn.io "$node" -n longhorn-system --type=merge --patch-file="$WORK/patch" \
+      >"$WORK/patched" 2>"$WORK/error"; then
+      return 0
+    fi
+    if [ "$attempt" -lt 5 ] && grep -Eq 'Conflict|object has been modified' "$WORK/error"; then
+      echo "Longhorn Node $node changed concurrently; retrying ($attempt/5)."
+      sleep 1
+      continue
+    fi
+    return 1
+  done
+  return 1
+}
+
 # Exclude every retiring node so eviction cannot move data to the next victim.
 while IFS=$'\t' read -r node vm_id; do
   read_downstream current-node get node "$node" --ignore-not-found -o json
@@ -228,10 +299,8 @@ if [ "$LONGHORN" = true ]; then
     read_downstream longhorn get nodes.longhorn.io "$node" -n longhorn-system --ignore-not-found -o json
     [ -s "$WORK/longhorn" ] || continue
     jq -r '.metadata.uid' "$WORK/longhorn" >"$WORK/$node-longhorn-uid"
-    jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},
-      spec:{allowScheduling:false,disks:(.spec.disks | with_entries(.value.allowScheduling=false))}}' "$WORK/longhorn" >"$WORK/patch"
-    downstream patch nodes.longhorn.io "$node" -n longhorn-system --type=merge --patch-file="$WORK/patch" \
-      >"$WORK/patched" 2>"$WORK/error" || fail "Cannot disable Longhorn scheduling on $node; VMs are preserved"
+    patch_longhorn_node "$node" "$(cat "$WORK/$node-longhorn-uid")" disable-scheduling ||
+      fail "Cannot disable Longhorn scheduling on $node; VMs are preserved"
   done <"$WORK/retire"
 fi
 
@@ -244,9 +313,8 @@ while IFS=$'\t' read -r node vm_id; do
       [ -f "$WORK/$node-longhorn-uid" ] || fail "Longhorn Node $node appeared during retirement"
       jq -e --arg uid "$(cat "$WORK/$node-longhorn-uid")" '.metadata.uid == $uid and .spec.allowScheduling == false' \
         "$WORK/longhorn" >/dev/null || fail "Longhorn Node $node changed identity or scheduling"
-      jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},spec:{evictionRequested:true}}' "$WORK/longhorn" >"$WORK/patch"
-      downstream patch nodes.longhorn.io "$node" -n longhorn-system --type=merge --patch-file="$WORK/patch" \
-        >"$WORK/patched" 2>"$WORK/error" || fail "Cannot request Longhorn eviction for $node; VMs are preserved"
+      patch_longhorn_node "$node" "$(cat "$WORK/$node-longhorn-uid")" request-eviction ||
+        fail "Cannot request Longhorn eviction for $node; VMs are preserved"
     fi
     deadline=$((SECONDS + 1800))
     while ! storage_empty; do
@@ -263,8 +331,17 @@ while IFS=$'\t' read -r node vm_id; do
     [ -f "$WORK/$node-uid" ] || fail "$node appeared during retirement"
     jq -e --arg id "$vm_id" --arg uid "$(cat "$WORK/$node-uid")" '.spec.providerID == ("hcloud://" + $id) and
       .metadata.uid == $uid and .spec.unschedulable == true' "$WORK/current-node" >/dev/null || fail "$node changed or was uncordoned"
-    # Honour PDBs and protect emptyDir / unmanaged Pods instead of forcing eviction.
-    downstream drain "$node" --ignore-daemonsets --timeout=30m >"$WORK/drain" 2>"$WORK/error" ||
+    # Honour PDBs and unmanaged Pods; discard emptyDir only when explicitly configured for this role.
+    drain_args=("$node" --ignore-daemonsets --timeout=30m)
+    case "$node" in
+      "$NAME-server-"*|"$NAME-control-plane-"*)
+        [ "$CONTROL_PLANE_DELETE_EMPTY_DIR_DATA" = true ] && drain_args+=(--delete-emptydir-data)
+        ;;
+      "$NAME-worker-"*)
+        [ "$WORKER_DELETE_EMPTY_DIR_DATA" = true ] && drain_args+=(--delete-emptydir-data)
+        ;;
+    esac
+    downstream drain "${drain_args[@]}" >"$WORK/drain" 2>"$WORK/error" ||
       fail "Drain failed for $node (check PDBs, emptyDir and unmanaged Pods); VMs are preserved"
   fi
   if [ "$LONGHORN" = true ]; then
@@ -329,3 +406,44 @@ if [ "$LONGHORN" = true ]; then
 fi
 check_state
 tofu -chdir="$CLUSTER_DIR" apply "$WORK/plan"
+
+if [ "$DEV_CONTROL_PLANE_CUTOVER" = true ]; then
+  # A dev Primary IP moves only after the old control-plane is retired. Rancher
+  # otherwise keeps the survivor's registration-time ExternalIP indefinitely.
+  DOWNSTREAM_CONFIG="$PERSISTED_DOWNSTREAM_CONFIG"
+  survivor_id="$(jq -er --arg node "$SURVIVOR" '.[] | select(.name == $node) | .id' "$WORK/remaining-vms")"
+  survivor_machine="$(jq -er --arg node "$SURVIVOR" --arg name "$NAME" --arg namespace "$NAMESPACE" \
+    --arg cluster_uid "$CLUSTER_UID" "$(cat "$WORK/machine.jq")
+      [.items[] | select(owned and .status.nodeRef.name == \$node)] |
+      select(length == 1) | .[0].metadata.name" "$WORK/machines")"
+  deadline=$((SECONDS + 300))
+  survivor_external_ip=""
+  while :; do
+    survivor_external_ip=""
+    if downstream get node "$SURVIVOR" -o json >"$WORK/survivor-node" 2>"$WORK/error" &&
+      jq -e --arg id "$survivor_id" '.spec.providerID == ("hcloud://" + $id) and
+        any(.status.conditions[]?; .type == "Ready" and .status == "True")' "$WORK/survivor-node" >/dev/null; then
+      survivor_external_ip="$(jq -er '[.status.addresses[]? | select(.type == "ExternalIP") | .address] |
+        unique | select(length == 1) | .[0] | select(test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' \
+        "$WORK/survivor-node")" || :
+      [ -n "${survivor_external_ip:-}" ] && break
+    fi
+    [ "$SECONDS" -lt "$deadline" ] || fail 'The surviving dev control-plane did not publish its Primary IP after apply'
+    sleep 5
+  done
+  read_management survivor-custom-machine get custommachines.rke.cattle.io "$survivor_machine" -n "$NAMESPACE" -o json
+  jq -e --arg id "$survivor_id" --arg machine "$survivor_machine" '.metadata.name == $machine and
+    .metadata.deletionTimestamp == null and .spec.providerID == ("hcloud://" + $id) and
+    ([.status.addresses[]? | select(.type == "ExternalIP")] | length) == 1' \
+    "$WORK/survivor-custom-machine" >/dev/null || fail 'The surviving dev CustomMachine cannot be safely reconciled'
+  jq --arg ip "$survivor_external_ip" '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion},
+    status:{addresses:(.status.addresses | map(if .type == "ExternalIP" then .address = $ip else . end))}}' \
+    "$WORK/survivor-custom-machine" >"$WORK/custom-machine-status-patch"
+  management patch custommachines.rke.cattle.io "$survivor_machine" -n "$NAMESPACE" --subresource=status \
+    --type=merge --patch-file="$WORK/custom-machine-status-patch" >"$WORK/patched" 2>"$WORK/error" ||
+    fail 'Cannot reconcile the surviving dev control-plane address in Rancher'
+  management wait --for=jsonpath="{.status.addresses[?(@.type=='ExternalIP')].address}=$survivor_external_ip" \
+    "machines.cluster.x-k8s.io/$survivor_machine" -n "$NAMESPACE" --timeout=60s >"$WORK/wait" 2>"$WORK/error" ||
+    fail 'Rancher did not publish the surviving dev control-plane Primary IP'
+  echo "Reconciled surviving dev control-plane $SURVIVOR to Primary IP $survivor_external_ip."
+fi

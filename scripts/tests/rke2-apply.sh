@@ -24,14 +24,20 @@ for i in range(1, 6):
     name = f'rke2-test-server-{i}'
     nodes.append({'metadata': {'name': name, 'uid': f'node-{i}', 'resourceVersion': '42'},
                   'spec': {'providerID': f'hcloud://{i}'},
-                  'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}})
+                  'status': {'addresses': [{'type': 'InternalIP', 'address': f'10.10.1.{100 + i}'},
+                                           {'type': 'ExternalIP', 'address': f'203.0.113.{i}'},
+                                           {'type': 'Hostname', 'address': name}],
+                             'conditions': [{'type': 'Ready', 'status': 'True'}]}})
     machines.append({'kind': 'Machine', 'apiVersion': 'cluster.x-k8s.io/v1beta2',
         'metadata': {'name': f'custom-{i}', 'namespace': 'fleet-default', 'uid': f'machine-{i}', 'resourceVersion': '42',
                      'labels': {'cluster.x-k8s.io/cluster-name': 'rke2-test', 'rke.cattle.io/etcd-role': 'true'},
                      'annotations': {'pre-terminate.delete.hook.machine.cluster.x-k8s.io/rke-bootstrap-cleanup': 'rke-bootstrap-controller'},
                      'ownerReferences': [{'kind': 'Cluster', 'name': 'rke2-test', 'uid': 'cluster-uid'}]},
         'spec': {'infrastructureRef': {'apiGroup': 'rke.cattle.io', 'kind': 'CustomMachine', 'name': f'custom-{i}'}},
-        'status': {'nodeRef': {'name': name}}})
+        'status': {'nodeRef': {'name': name},
+                   'addresses': [{'type': 'InternalIP', 'address': f'10.10.1.{100 + i}'},
+                                 {'type': 'ExternalIP', 'address': f'203.0.113.{i}'},
+                                 {'type': 'Hostname', 'address': name}]}})
     longhorn.append({'metadata': {'name': name, 'uid': f'longhorn-{i}', 'resourceVersion': '42'},
                     'spec': {'allowScheduling': True, 'disks': {'disk': {'allowScheduling': True}}},
                     'status': {'diskStatus': {'disk': {'diskUUID': f'disk-{i}',
@@ -42,7 +48,11 @@ changes += [{'address': f'module.rke2.hcloud_server.node["server-{i}"]', 'mode':
              'change': {'actions': ['no-op'], 'after': {'name': f'rke2-test-server-{i}', 'id': str(i)}}} for i in range(1, 4)]
 save('plan', {'resource_changes': changes, 'planned_values': {'outputs': {
     'nodes': {'value': {f'server-{i}': {'name': f'rke2-test-server-{i}'} for i in range(1, 4)}},
-    'cluster_id': {'value': 'fleet-default/rke2-test'}, 'cluster_v1_id': {'value': 'c-test'}}}})
+    'cluster_id': {'value': 'fleet-default/rke2-test'},
+    'cluster_v1_id': {'value': 'c-test'},
+    'control_plane_delete_empty_dir_data': {'value': False},
+    'worker_delete_empty_dir_data': {'value': False},
+}}})
 save('nodes', {'items': nodes})
 save('machines', {'items': machines})
 save('longhorn', {'items': longhorn})
@@ -103,7 +113,18 @@ def get(name, resource):
         output(value)
 
 action = args[0]
-if action == 'get':
+if action == 'config':
+    (root / 'cutover-configured').touch()
+    output({
+        'apiVersion': 'v1',
+        'kind': 'Config',
+        'clusters': [{'name': 'rke2-test', 'cluster': {'server': 'https://203.0.113.10:6443',
+                                                       'certificate-authority-data': 'dGVzdA=='}}],
+        'users': [{'name': 'rke2-test', 'user': {'token': 'test-token'}}],
+        'contexts': [{'name': 'rke2-test', 'context': {'cluster': 'rke2-test', 'user': 'rke2-test'}}],
+        'current-context': 'rke2-test',
+    })
+elif action == 'get':
     resource = args[1]
     name = args[2] if len(args) > 2 and not args[2].startswith('-') else None
     if resource == 'clusters.provisioning.cattle.io':
@@ -112,6 +133,15 @@ if action == 'get':
         output({'metadata': {'uid': 'cluster-uid'}})
     elif resource == 'machines.cluster.x-k8s.io':
         get(name, 'machines')
+    elif resource == 'custommachines.rke.cattle.io':
+        machine = next((item for item in read('machines')['items'] if item['metadata']['name'] == name), None)
+        if machine is not None:
+            node_name = machine['status']['nodeRef']['name']
+            node = next(item for item in read('nodes')['items'] if item['metadata']['name'] == node_name)
+            output({'metadata': {'name': name, 'namespace': 'fleet-default', 'uid': 'custom-' + name,
+                                 'resourceVersion': '42'},
+                    'spec': {'providerID': node['spec']['providerID']},
+                    'status': {'ready': True, 'addresses': machine['status']['addresses']}})
     elif resource in ('node', 'nodes'):
         if mode == 'unavailable':
             sys.exit(1)
@@ -134,6 +164,20 @@ if action == 'get':
 elif action == 'patch':
     resource, name = args[1:3]
     body = read(Path(next(a.split('=', 1)[1] for a in args if a.startswith('--patch-file='))))
+    if resource == 'custommachines.rke.cattle.io':
+        assert body['metadata']['uid'] == 'custom-' + name
+        assert body['metadata']['resourceVersion'] == '42'
+        data = read('machines')
+        item = next(item for item in data['items'] if item['metadata']['name'] == name)
+        item['status']['addresses'] = body['status']['addresses']
+        save('machines', data)
+        event('SYNC ' + name + ' ' + next(address['address'] for address in body['status']['addresses']
+                                          if address['type'] == 'ExternalIP'))
+        sys.exit(0)
+    if resource == 'nodes.longhorn.io' and mode == 'longhorn-conflict' and not (root / 'longhorn-conflicted').exists():
+        (root / 'longhorn-conflicted').touch()
+        print('Error from server (Conflict): the object has been modified', file=sys.stderr)
+        sys.exit(1)
     key = 'nodes' if resource == 'node' else 'longhorn'
     data = read(key)
     item = next(item for item in data['items'] if item['metadata']['name'] == name)
@@ -147,7 +191,9 @@ elif action == 'patch':
         (root / 'evicting').write_text(name)
 elif action == 'drain':
     name = args[1]
-    assert not any(a in args for a in ('--force', '--delete-emptydir-data', '--disable-eviction'))
+    assert not any(a in args for a in ('--force', '--disable-eviction'))
+    expected_emptydir = mode == 'dev-emptydir' or (mode == 'worker-emptydir' and '-worker-' in name)
+    assert ('--delete-emptydir-data' in args) == expected_emptydir
     assert mode == 'no-longhorn' or not any(item['spec']['nodeID'] == name for item in read('replicas')['items'])
     event('DRAIN ' + name)
     if mode == 'drain-blocked':
@@ -187,7 +233,7 @@ elif action == 'delete':
     (root / 'deleting').write_text(node)
 elif action == 'wait':
     name = args[2]
-    if name.startswith('machines.'):
+    if name.startswith('machines.') and args[1] == '--for=delete':
         if mode == 'machine-pending':
             sys.exit(1)
         node = (root / 'deleting').read_text()
@@ -207,6 +253,12 @@ elif action == 'wait':
             data = read('replicas')
             data['items'].append({'spec': {'nodeID': 'rke2-test-server-4'}})
             save('replicas', data)
+    elif name.startswith('machines.') and args[1].startswith('--for=jsonpath='):
+        expected = args[1].rsplit('=', 1)[1]
+        machine_name = name.rsplit('/', 1)[1]
+        machine = next(item for item in read('machines')['items'] if item['metadata']['name'] == machine_name)
+        assert next(address['address'] for address in machine['status']['addresses']
+                    if address['type'] == 'ExternalIP') == expected
     elif name.startswith('node/'):
         assert not any(item['metadata']['name'] == name[5:] for item in read('nodes')['items'])
     else:
@@ -247,7 +299,8 @@ reset_case() {
   export TEST_MODE="$1"
   python3 "$TEST_DIR/fixture.py"
   rm -f "$TEST_DIR/applied" "$TEST_DIR/evicting" "$TEST_DIR/retired" "$TEST_DIR/deleting" \
-    "$TEST_DIR/health-failed" "$TEST_DIR/health-retried"
+    "$TEST_DIR/health-failed" "$TEST_DIR/health-retried" "$TEST_DIR/longhorn-conflicted" \
+    "$TEST_DIR/cutover-configured"
   : >"$TEST_DIR/events"
 }
 run() {
@@ -275,6 +328,114 @@ assert (root / 'applied').exists()
 assert not (root / 'rke2-test/.rke2-apply-lock').exists()
 PY
 echo 'PASS: single-replica data is rebuilt before drain; Rancher retires servers sequentially before VM apply'
+
+reset_case ok
+jq 'del(.planned_values.outputs.nodes.value)' "$TEST_DIR/plan" >"$TEST_DIR/next"
+mv "$TEST_DIR/next" "$TEST_DIR/plan"
+run || { cat "$TEST_DIR/log"; fail 'partially unknown node output'; }
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply with a partially unknown node output'
+echo 'PASS: survivor inventory comes from resource changes when the node output is partially unknown'
+
+reset_case longhorn-conflict
+run || { cat "$TEST_DIR/log"; fail 'Longhorn conflict retry'; }
+[ -f "$TEST_DIR/longhorn-conflicted" ] || fail 'did not exercise the Longhorn conflict retry'
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply after the Longhorn conflict cleared'
+rg -q 'Longhorn Node .* changed concurrently; retrying' "$TEST_DIR/log" || fail 'did not report the Longhorn conflict retry'
+echo 'PASS: a concurrent Longhorn status update is retried with the latest resource version'
+
+reset_case ok
+python3 - <<'PY'
+import os
+from pathlib import Path
+root = Path(os.environ['TEST_DIR'])
+for filename in ('plan', 'nodes', 'machines', 'longhorn', 'replicas', 'volumes', 'engines', 'members'):
+    text = (root / filename).read_text()
+    for index in (3, 2, 1):
+        text = text.replace(f'rke2-test-server-{index}', f'rke2-test-control-plane-green-{index}')
+        if filename == 'plan':
+            text = text.replace(f'node["server-{index}"]', f'node["control-plane-green-{index}"]')
+    for index in (5, 4):
+        text = text.replace(f'rke2-test-server-{index}', f'rke2-test-control-plane-primary-{index}')
+        if filename == 'plan':
+            text = text.replace(f'node["server-{index}"]', f'node["control-plane-primary-{index}"]')
+    (root / filename).write_text(text)
+PY
+run || { cat "$TEST_DIR/log"; fail 'pool retirement'; }
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply pool retirement'
+rg -q '^RETIRED rke2-test-control-plane-primary-5$' "$TEST_DIR/events" || fail 'did not retire the final primary-pool server'
+echo 'PASS: one named server pool can survive while another pool is evacuated and retired'
+
+reset_case ok
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+root = Path(os.environ['TEST_DIR'])
+
+def load(name):
+    return json.loads((root / name).read_text())
+
+def save(name, value):
+    (root / name).write_text(json.dumps(value))
+
+original = 'rke2-test-control-plane-primary-1'
+replacement = 'rke2-test-control-plane-green-1'
+
+nodes = load('nodes')
+nodes['items'] = nodes['items'][:2]
+nodes['items'][1]['metadata']['name'] = replacement
+nodes['items'] = nodes['items'][1:]
+save('nodes', nodes)
+
+machines = load('machines')
+machines['items'] = machines['items'][:2]
+machines['items'][1]['status']['nodeRef']['name'] = replacement
+machines['items'][1]['status']['addresses'][2]['address'] = replacement
+machines['items'] = machines['items'][1:]
+save('machines', machines)
+
+longhorn = load('longhorn')
+longhorn['items'] = longhorn['items'][:2]
+longhorn['items'][1]['metadata']['name'] = replacement
+save('longhorn', longhorn)
+
+save('replicas', {'items': []})
+save('engines', {'items': []})
+save('members', {'members': [
+    {'name': replacement + '-suffix'},
+]})
+save('plan', {
+    'resource_changes': [
+        {
+            'address': 'module.rke2.hcloud_server.node["control-plane-primary-1"]',
+            'mode': 'managed',
+            'type': 'hcloud_server',
+            'change': {'actions': ['delete'], 'before': {'name': original, 'id': '1'}},
+        },
+        {
+            'address': 'module.rke2.hcloud_server.node["control-plane-green-1"]',
+            'mode': 'managed',
+            'type': 'hcloud_server',
+            'change': {'actions': ['no-op'], 'after': {'name': replacement, 'id': '2'}},
+        },
+    ],
+    'planned_values': {'outputs': {
+        'nodes': {'value': {'control-plane-green-1': {'name': replacement}}},
+        'cluster_id': {'value': 'fleet-default/rke2-test'},
+        'cluster_v1_id': {'value': 'c-test'},
+        'development_mode': {'value': True},
+        'kubernetes_api_endpoint': {'value': 'https://203.0.113.10:6443'},
+        'control_plane_delete_empty_dir_data': {'value': True},
+        'worker_delete_empty_dir_data': {'value': False},
+    }},
+})
+PY
+export TEST_MODE=dev-emptydir
+run || { cat "$TEST_DIR/log"; fail 'dev control-plane migration'; }
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply dev control-plane migration'
+[ -f "$TEST_DIR/cutover-configured" ] || fail 'did not configure survivor API access for the dev cutover'
+if rg -q '^RETIRE rke2-test-server-1$' "$TEST_DIR/events"; then fail 'retired an already absent Rancher Machine again'; fi
+rg -q '^SYNC custom-2 203\.0\.113\.2$' "$TEST_DIR/events" || fail 'did not reconcile the survivor Primary IP in Rancher'
+echo 'PASS: dev migration resumes through the survivor and reconciles its Primary IP in Rancher'
 
 reset_case ok
 jq '.items += [{metadata:{name:"detached-volume"},spec:{numberOfReplicas:1},status:{state:"detached",robustness:"unknown"}}]' \
@@ -391,11 +552,17 @@ for filename in ('plan', 'nodes', 'machines', 'longhorn', 'replicas', 'engines')
 members = json.loads((root / 'members').read_text())
 members['members'] = members['members'][:3]
 (root / 'members').write_text(json.dumps(members))
+plan = json.loads((root / 'plan').read_text())
+plan['planned_values']['outputs']['development_mode'] = {'value': True}
+plan['planned_values']['outputs']['worker_delete_empty_dir_data']['value'] = True
+(root / 'plan').write_text(json.dumps(plan))
 PY
+export TEST_MODE=worker-emptydir
 run || { cat "$TEST_DIR/log"; fail 'dedicated worker shrink'; }
 [ -f "$TEST_DIR/applied" ] || fail 'did not apply worker shrink'
 rg -q '^RETIRED rke2-test-worker-2$' "$TEST_DIR/events" || fail 'missed the second worker'
-echo 'PASS: dedicated worker shrink evacuates storage without removing a surviving server'
+[ ! -f "$TEST_DIR/cutover-configured" ] || fail 'changed the dev API endpoint during a worker-only retirement'
+echo 'PASS: dev worker shrink preserves its API endpoint and honors explicit worker emptyDir deletion'
 
 reset_case ok
 jq '.resource_changes=[]' "$TEST_DIR/plan" >"$TEST_DIR/next"

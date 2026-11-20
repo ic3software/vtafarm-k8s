@@ -113,7 +113,7 @@ run "default_ha_topology" {
 
   assert {
     condition = terraform_data.retired_nodes.triggers_replace.nodes == tolist([
-      "production-server-1", "production-server-2", "production-server-3",
+      "production-control-plane-primary-1", "production-control-plane-primary-2", "production-control-plane-primary-3",
     ])
     error_message = "Retirement reconciliation must track the desired server nodes."
   }
@@ -159,43 +159,43 @@ run "default_ha_topology" {
   }
 
   assert {
-    condition     = local.nodes["server-1"].private_ip == "10.10.1.101"
-    error_message = "Server private addresses must remain deterministic."
+    condition     = local.nodes["control-plane-primary-1"].requested_private_ip == null
+    error_message = "Normal clusters must let Hetzner assign private addresses to named pools."
   }
 
   assert {
     condition = (
       strcontains(
         base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          for config in yamldecode(local.node_user_data["control-plane-primary-1"]).write_files : config.content
           if config.path == "/etc/rancher-node-bootstrap.env"
         ])),
         "PRIVATE_NETWORK_CIDR=\"10.10.0.0/16\"",
       ) &&
       strcontains(
         base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          for config in yamldecode(local.node_user_data["control-plane-primary-1"]).write_files : config.content
           if config.path == "/etc/rancher-node-bootstrap.env"
         ])),
         "PRIVATE_NETWORK_GATEWAY=\"10.10.0.1\"",
       ) &&
       strcontains(
         base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          for config in yamldecode(local.node_user_data["control-plane-primary-1"]).write_files : config.content
           if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
         ])),
         "use-routes: false",
       ) &&
       strcontains(
         base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          for config in yamldecode(local.node_user_data["control-plane-primary-1"]).write_files : config.content
           if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
         ])),
         "to: $${PRIVATE_NETWORK_CIDR}",
       ) &&
       strcontains(
         base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          for config in yamldecode(local.node_user_data["control-plane-primary-1"]).write_files : config.content
           if config.path == "/usr/local/bin/rancher-node-bootstrap.sh"
         ])),
         "to: $${PRIVATE_NETWORK_GATEWAY}/32",
@@ -221,7 +221,7 @@ run "default_ha_topology" {
       strcontains(local.additional_manifest, local.canal_manifest) &&
       can(regex(
         yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).flannel.regexIface,
-        local.nodes["server-1"].private_ip,
+        "10.10.1.101",
       )) &&
       yamldecode(yamldecode(local.canal_manifest).spec.valuesContent).calico.vethuMTU == 1400
     )
@@ -258,10 +258,18 @@ run "dev_workers_without_load_balancer" {
       dev               = true
       ssh_key_name      = "k3s-rancher-admin"
       ssh_allowed_cidrs = ["0.0.0.0/0"]
-      server_count      = 8
-      server_type       = "cx43"
-      worker_count      = 3
-      worker_type       = "cx53"
+      server_pools = {
+        primary = {
+          count       = 1
+          server_type = "cx43"
+        }
+      }
+      worker_pools = {
+        primary = {
+          count       = 3
+          server_type = "cx53"
+        }
+      }
     }
     hcloud_token = "test-token"
   }
@@ -290,16 +298,19 @@ run "dev_workers_without_load_balancer" {
   assert {
     condition = (
       length(hcloud_server.node) == 4 &&
-      hcloud_server.node["server-1"].server_type == "cx43" &&
-      local.server_nodes["server-1"].roles == ["etcd", "controlplane", "worker"] &&
+      hcloud_server.node["control-plane-primary-1"].server_type == "cx43" &&
+      local.server_nodes["control-plane-primary-1"].roles == ["etcd", "controlplane", "worker"] &&
       alltrue([
-        for key in ["worker-1", "worker-2", "worker-3"] :
+        for key in ["worker-primary-1", "worker-primary-2", "worker-primary-3"] :
         hcloud_server.node[key].server_type == "cx53" &&
         local.worker_nodes[key].roles == ["worker"] &&
         local.worker_nodes[key].location == "nbg1"
-      ])
+      ]) &&
+      local.nodes["control-plane-primary-1"].requested_private_ip == "10.10.1.111" &&
+      local.nodes["worker-primary-1"].requested_private_ip == null &&
+      local.nodes["worker-primary-3"].requested_private_ip == null
     )
-    error_message = "Dev must keep one all-in-one server and honor dedicated worker_count on worker_type in the server location."
+    error_message = "Dev must keep one all-in-one server and honor its dedicated worker pool in the server location."
   }
 
   assert {
@@ -324,7 +335,6 @@ run "dev_workers_without_load_balancer" {
       alltrue([
         for key in keys(local.nodes) :
         length(hcloud_server.node[key].network) == 1 &&
-        one(hcloud_server.node[key].network).ip == local.nodes[key].private_ip &&
         hcloud_server.node[key].placement_group_id == null &&
         strcontains(
           base64decode(one([
@@ -341,11 +351,11 @@ run "dev_workers_without_load_balancer" {
           "--internal-address",
         ) &&
         (
-          key == "server-1" ||
+          key == "control-plane-primary-1" ||
           base64decode(one([
             for config in yamldecode(local.node_user_data[key]).write_files : config.content
             if config.path == "/etc/rancher/rke2/config.yaml.d/99-private-supervisor.yaml"
-          ])) == "server: \"https://10.10.1.101:9345\"\n"
+          ])) == "server: \"https://10.10.1.111:9345\"\n"
         )
       ])
     )
@@ -382,9 +392,82 @@ run "dev_workers_without_load_balancer" {
       output.load_balancer_ipv4 == null &&
       output.kubernetes_api_endpoint == "https://203.0.113.10:6443" &&
       contains(local.tls_sans, hcloud_primary_ip.dev_api[0].ip_address) &&
-      one(hcloud_server.node["server-1"].public_net).ipv4 == hcloud_primary_ip.dev_api[0].id
+      one(hcloud_server.node["control-plane-primary-1"].public_net).ipv4 == hcloud_primary_ip.dev_api[0].id
     )
-    error_message = "Multi-node dev must use a stable server-1 API address in both its TLS certificate and kubeconfig without a load balancer."
+    error_message = "Multi-node dev must use the primary pool's stable API address in both its TLS certificate and kubeconfig without a load balancer."
+  }
+}
+
+run "dev_control_plane_pool_migration" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name      = "development"
+      dev               = true
+      ssh_key_name      = "k3s-rancher-admin"
+      ssh_allowed_cidrs = ["0.0.0.0/0"]
+      server_pools = {
+        primary = {
+          count       = 1
+          server_type = "cx33"
+        }
+        green = {
+          count         = 1
+          server_type   = "cx43"
+          auto_location = true
+        }
+      }
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/development"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "development-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      length(hcloud_server.node) == 2 &&
+      local.dev_server_key == "control-plane-primary-1" &&
+      local.server_nodes["control-plane-primary-1"].requested_private_ip == "10.10.1.111" &&
+      local.server_nodes["control-plane-green-1"].requested_private_ip == "10.10.1.151" &&
+      local.server_nodes["control-plane-green-1"].location == "nbg1" &&
+      hcloud_server.node["control-plane-green-1"].name == "development-control-plane-green-1" &&
+      hcloud_server.node["control-plane-green-1"].server_type == "cx43" &&
+      hcloud_server.node["control-plane-green-1"].labels.node_class == "control-plane" &&
+      one(hcloud_server.node["control-plane-primary-1"].public_net).ipv4 == hcloud_primary_ip.dev_api[0].id &&
+      length(hcloud_load_balancer.api) == 0 &&
+      output.development_mode
+    )
+    error_message = "Dev migration must add one privately addressed control-plane node while the primary pool keeps the public API IP."
   }
 }
 
@@ -407,8 +490,12 @@ run "dev_zero_workers_keeps_private_network" {
       dev               = true
       ssh_key_name      = "k3s-rancher-admin"
       ssh_allowed_cidrs = ["0.0.0.0/0"]
-      server_type       = "cx33"
-      worker_count      = 0
+      server_pools = {
+        primary = {
+          count       = 1
+          server_type = "cx33"
+        }
+      }
     }
     hcloud_token = "test-token"
   }
@@ -441,11 +528,11 @@ run "dev_zero_workers_keeps_private_network" {
       length(hcloud_network_subnet.nodes) == 1 &&
       length(hcloud_primary_ip.dev_api) == 1 &&
       length(hcloud_load_balancer.api) == 0 &&
-      length(hcloud_server.node["server-1"].network) == 1 &&
-      one(hcloud_server.node["server-1"].network).ip == "10.10.1.101" &&
+      length(hcloud_server.node["control-plane-primary-1"].network) == 1 &&
+      one(hcloud_server.node["control-plane-primary-1"].network).ip == "10.10.1.111" &&
       strcontains(
         base64decode(one([
-          for config in yamldecode(local.node_user_data["server-1"]).write_files : config.content
+          for config in yamldecode(local.node_user_data["control-plane-primary-1"]).write_files : config.content
           if config.path == "/etc/rancher/node-registration.sh"
         ])),
         "--internal-address",
@@ -453,9 +540,9 @@ run "dev_zero_workers_keeps_private_network" {
       !can(yamldecode(local.machine_global_config)["kube-apiserver-arg"]) &&
       output.kubernetes_api_endpoint == "https://203.0.113.10:6443" &&
       contains(local.tls_sans, hcloud_primary_ip.dev_api[0].ip_address) &&
-      one(hcloud_server.node["server-1"].public_net).ipv4 == hcloud_primary_ip.dev_api[0].id
+      one(hcloud_server.node["control-plane-primary-1"].public_net).ipv4 == hcloud_primary_ip.dev_api[0].id
     )
-    error_message = "Dev must keep its private network and use server-1's stable public IP for a TLS-valid API endpoint without a load balancer."
+    error_message = "Dev must keep its private network and use the primary server's stable public IP for a TLS-valid API endpoint without a load balancer."
   }
 }
 
@@ -474,12 +561,15 @@ run "worker_scale_does_not_renumber_servers" {
 
   variables {
     config = {
-      cluster_name                        = "production"
-      ssh_key_name                        = "k3s-rancher-admin"
-      server_type                         = "cx33"
-      worker_count                        = 2
-      worker_type                         = "cx43"
-      worker_auto_location                = true
+      cluster_name = "production"
+      ssh_key_name = "k3s-rancher-admin"
+      worker_pools = {
+        primary = {
+          count         = 2
+          server_type   = "cx43"
+          auto_location = true
+        }
+      }
       control_plane_delete_empty_dir_data = true
       worker_delete_empty_dir_data        = true
       kube_reserved_cpu                   = "250m"
@@ -519,24 +609,24 @@ run "worker_scale_does_not_renumber_servers" {
 
   assert {
     condition = terraform_data.retired_nodes.triggers_replace.nodes == tolist([
-      "production-server-1", "production-server-2", "production-server-3",
-      "production-worker-1", "production-worker-2",
+      "production-control-plane-primary-1", "production-control-plane-primary-2", "production-control-plane-primary-3",
+      "production-worker-primary-1", "production-worker-primary-2",
     ])
-    error_message = "Worker count changes must also trigger retirement reconciliation."
+    error_message = "Worker-pool changes must also trigger retirement reconciliation."
   }
 
   assert {
-    condition     = local.nodes["server-1"].private_ip == "10.10.1.101" && local.nodes["worker-1"].private_ip == "10.10.1.151"
-    error_message = "Server and worker address ranges must stay independent."
+    condition     = local.nodes["control-plane-primary-1"].requested_private_ip == null && local.nodes["worker-primary-1"].requested_private_ip == null
+    error_message = "Named server and worker pools must let Hetzner assign their private addresses."
   }
 
   assert {
     condition = (
-      hcloud_server.node["server-1"].server_type == "cx33" &&
-      hcloud_server.node["worker-1"].server_type == "cx43" &&
-      hcloud_server.node["server-1"].location == "nbg1" &&
-      local.nodes["worker-1"].location == null &&
-      local.nodes["worker-2"].location == null
+      hcloud_server.node["control-plane-primary-1"].server_type == "cx33" &&
+      hcloud_server.node["worker-primary-1"].server_type == "cx43" &&
+      hcloud_server.node["control-plane-primary-1"].location == "nbg1" &&
+      local.nodes["worker-primary-1"].location == null &&
+      local.nodes["worker-primary-2"].location == null
     )
     error_message = "Server and worker node types must remain independent, and worker locations must be left to Hetzner."
   }
@@ -576,8 +666,12 @@ run "pins_workers_to_cluster_location" {
     config = {
       cluster_name = "production"
       ssh_key_name = "k3s-rancher-admin"
-      worker_count = 1
-      worker_type  = "cx33"
+      worker_pools = {
+        primary = {
+          count       = 1
+          server_type = "cx33"
+        }
+      }
     }
     hcloud_token = "test-token"
   }
@@ -605,9 +699,9 @@ run "pins_workers_to_cluster_location" {
 
   assert {
     condition = (
-      length(data.hcloud_server_type.worker) == 0 &&
-      local.nodes["worker-1"].location == "nbg1" &&
-      hcloud_server.node["worker-1"].location == "nbg1"
+      length(data.hcloud_server_type.auto_location) == 0 &&
+      local.nodes["worker-primary-1"].location == "nbg1" &&
+      hcloud_server.node["worker-primary-1"].location == "nbg1"
     )
     error_message = "Disabling automatic placement must pin every worker to the cluster location."
   }
@@ -635,7 +729,7 @@ run "scopes_kubelet_reservations_to_canary_nodes" {
       system_reserved_cpu            = "250m"
       system_reserved_memory         = "256Mi"
       eviction_hard_memory_available = "512Mi"
-      kubelet_reservation_node_names = ["staging-server-1"]
+      kubelet_reservation_node_names = ["staging-control-plane-primary-1"]
     }
     hcloud_token = "test-token"
   }
@@ -680,7 +774,7 @@ run "scopes_kubelet_reservations_to_canary_nodes" {
       rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].key == "rke.cattle.io/node-name" &&
       rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].operator == "In" &&
       length(rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values) == 1 &&
-      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values[0] == "staging-server-1"
+      rancher2_cluster_v2.this.rke_config[0].machine_selector_config[0].machine_label_selector[0].match_expressions[0].values[0] == "staging-control-plane-primary-1"
     )
     error_message = "The canary selector must target exactly the requested Rancher node names."
   }
@@ -736,6 +830,141 @@ run "configures_cluster_agent_memory_request" {
     )
     error_message = "The cluster-agent customization must set only the requested memory without imposing a limit."
   }
+}
+
+run "creates_multiple_named_server_and_worker_pools" {
+  command = plan
+
+  override_data {
+    target = data.rancher2_setting.agent_tls_mode
+    values = { value = "system-store" }
+  }
+
+  override_data {
+    target = data.rancher2_setting.cacerts
+    values = { value = "" }
+  }
+
+  variables {
+    config = {
+      cluster_name = "production"
+      ssh_key_name = "k3s-rancher-admin"
+      server_pools = {
+        primary = {
+          count       = 3
+          server_type = "cx33"
+        }
+        green = {
+          count         = 3
+          server_type   = "cx43"
+          auto_location = true
+        }
+      }
+      worker_pools = {
+        primary = {
+          count         = 2
+          server_type   = "cx33"
+          auto_location = false
+        }
+        batch = {
+          count         = 2
+          server_type   = "cpx32"
+          auto_location = true
+        }
+      }
+    }
+    hcloud_token = "test-token"
+  }
+
+  override_resource {
+    target = rancher2_cluster_v2.this
+    values = {
+      cluster_registration_token = [{
+        annotations                   = {}
+        cluster_id                    = "fleet-default/production"
+        command                       = ""
+        id                            = "token-id"
+        insecure_command              = ""
+        insecure_node_command         = ""
+        insecure_windows_node_command = ""
+        labels                        = {}
+        manifest_url                  = ""
+        name                          = "production-token"
+        node_command                  = "curl -fsSL https://rancher.example.com/system-agent-install.sh | sh -s -"
+        token                         = "registration-token"
+        windows_node_command          = ""
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      length(local.server_nodes) == 6 &&
+      local.server_nodes["control-plane-primary-1"].name == "production-control-plane-primary-1" &&
+      local.server_nodes["control-plane-primary-1"].requested_private_ip == null &&
+      local.server_nodes["control-plane-green-1"].name == "production-control-plane-green-1" &&
+      local.server_nodes["control-plane-green-1"].requested_private_ip == null &&
+      local.server_nodes["control-plane-green-1"].location == null &&
+      hcloud_server.node["control-plane-primary-1"].server_type == "cx33" &&
+      hcloud_server.node["control-plane-green-1"].server_type == "cx43" &&
+      hcloud_server.node["control-plane-green-1"].labels.node_class == "control-plane" &&
+      hcloud_server.node["control-plane-green-1"].labels.node_pool == "green" &&
+      length(one(hcloud_server.node["control-plane-green-1"].network).alias_ips) == 0 &&
+      contains(keys(data.hcloud_server_type.auto_location), "cx43") &&
+      strcontains(
+        base64decode(one([
+          for config in yamldecode(local.node_user_data["control-plane-green-1"]).write_files : config.content
+          if config.path == "/etc/rancher-node-bootstrap.env"
+        ])),
+        "NODE_PRIVATE_IP=\"\"",
+      ) &&
+      length(hcloud_load_balancer_target.servers) == 6
+    )
+    error_message = "Named server pools must add independent nodes with stable pool-scoped names and resource keys."
+  }
+
+  assert {
+    condition = (
+      length(local.worker_nodes) == 4 &&
+      local.worker_nodes["worker-primary-1"].requested_private_ip == null &&
+      local.worker_nodes["worker-batch-1"].requested_private_ip == null &&
+      local.worker_nodes["worker-batch-1"].location == null &&
+      hcloud_server.node["worker-batch-1"].labels.node_pool == "batch" &&
+      contains(keys(data.hcloud_server_type.auto_location), "cpx32") &&
+      !contains(keys(data.hcloud_server_type.auto_location), "cx33")
+    )
+    error_message = "Each worker pool must keep its own type, provider-assigned address, label and placement policy."
+  }
+
+  assert {
+    condition = terraform_data.retired_nodes.triggers_replace.nodes == tolist([
+      "production-control-plane-green-1", "production-control-plane-green-2", "production-control-plane-green-3",
+      "production-control-plane-primary-1", "production-control-plane-primary-2", "production-control-plane-primary-3",
+      "production-worker-batch-1", "production-worker-batch-2",
+      "production-worker-primary-1", "production-worker-primary-2",
+    ])
+    error_message = "Retirement reconciliation must track every node in every pool."
+  }
+}
+
+run "rejects_even_single_server_pool" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name = "production"
+      ssh_key_name = "k3s-rancher-admin"
+      server_pools = {
+        primary = {
+          count       = 4
+          server_type = "cx43"
+        }
+      }
+    }
+    hcloud_token = "test-token"
+  }
+
+  expect_failures = [var.config]
 }
 
 run "rejects_strict_tls_without_cacerts" {

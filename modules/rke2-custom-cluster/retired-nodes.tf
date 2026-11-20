@@ -35,10 +35,13 @@ resource "terraform_data" "retired_nodes" {
       trap 'exit 143' TERM
       management() { kubectl --kubeconfig="$MANAGEMENT_CONFIG" --request-timeout=20s "$@"; }
       downstream() { kubectl --kubeconfig="$DOWNSTREAM_CONFIG" --request-timeout=20s "$@"; }
+      DOWNSTREAM_READ_ATTEMPTS="$${RKE2_DOWNSTREAM_READ_ATTEMPTS:-60}"
+      [[ "$DOWNSTREAM_READ_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] && [ "$DOWNSTREAM_READ_ATTEMPTS" -le 60 ] ||
+        fail 'RKE2_DOWNSTREAM_READ_ATTEMPTS must be an integer from 1 to 60'
 
       printf '%s\n' "$DESIRED_NODES" >"$WORK/desired"
       jq -e --arg name "$NAME" 'type == "array" and length > 0 and
-        all(.[]; type == "string" and test("^" + $name + "-(server|worker)-[0-9]+$"))' \
+        all(.[]; type == "string" and test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$"))' \
         "$WORK/desired" >/dev/null || fail 'Invalid desired node names'
       management get clusters.provisioning.cattle.io "$NAME" -n "$NAMESPACE" -o json >"$WORK/provisioning" 2>"$WORK/error" || fail 'Cannot read the Rancher provisioning cluster'
       jq -e --arg id "$CLUSTER_V1_ID" '.status.clusterName == $id and .metadata.deletionTimestamp == null' \
@@ -60,7 +63,7 @@ resource "terraform_data" "retired_nodes" {
         .spec.infrastructureRef.kind == "CustomMachine" and
         (.spec.infrastructureRef.apiGroup // (.spec.infrastructureRef.apiVersion // "" | split("/")[0])) == "rke.cattle.io" and
         .spec.infrastructureRef.name == .metadata.name and
-        (.status.nodeRef.name // "" | test("^" + $name + "-(server|worker)-[0-9]+$")) and
+        (.status.nodeRef.name // "" | test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
         ($desired[0] | index($machine.status.nodeRef.name)) == null;
       def node_deleted:
         any(.status.conditions[]?; (.type == "NodeHealthy" or .type == "NodeReady") and
@@ -78,7 +81,15 @@ resource "terraform_data" "retired_nodes" {
       fi
       [ -f "$DOWNSTREAM_CONFIG" ] || fail 'Downstream kubeconfig is missing; renew it and rerun apply'
       read_nodes() {
-        downstream get nodes -o json >"$WORK/nodes" 2>"$WORK/error" || fail 'Cannot reach downstream nodes; rerun apply after restoring access'
+        local attempt
+        for ((attempt = 1; attempt <= DOWNSTREAM_READ_ATTEMPTS; attempt++)); do
+          if downstream get nodes -o json >"$WORK/nodes" 2>"$WORK/error"; then return 0; fi
+          if [ "$attempt" -lt "$DOWNSTREAM_READ_ATTEMPTS" ]; then
+            echo "Waiting for downstream API after infrastructure changes ($attempt/$DOWNSTREAM_READ_ATTEMPTS)."
+            sleep 5
+          fi
+        done
+        fail 'Cannot reach downstream nodes after five minutes; rerun apply after restoring access'
       }
       read_nodes
       jq -r '.[] | [.metadata.name, .metadata.uid, .status.nodeRef.name] | @tsv' "$WORK/candidates" >"$WORK/list"
@@ -121,7 +132,7 @@ resource "terraform_data" "retired_nodes" {
       downstream get nodes.longhorn.io -n longhorn-system -o json >"$WORK/longhorn-nodes" 2>"$WORK/error" || fail 'Cannot list Longhorn Nodes'
       jq -r --arg name "$NAME" --slurpfile desired "$WORK/desired" '
         .items[] | .metadata.name as $node |
-        select(($node | test("^" + $name + "-(server|worker)-[0-9]+$")) and
+        select(($node | test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
           ($desired[0] | index($node)) == null) |
         [.metadata.name,.metadata.uid] | @tsv' "$WORK/longhorn-nodes" >"$WORK/longhorn-list"
       storage_unused() {

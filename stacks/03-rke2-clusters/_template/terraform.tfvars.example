@@ -4,7 +4,8 @@ hcloud_token = "REPLACE_ME"
 rancher_api_url   = "https://rancher.example.com"
 rancher_token_key = "token-REPLACE_ME:REPLACE_ME"
 
-# Hetzner location for every server and the cluster load balancer:
+# Hetzner location for pinned nodes and the cluster load balancer. It also
+# selects the private-network zone:
 # fsn1 = Falkenstein, nbg1 = Nuremberg, hel1 = Helsinki,
 # ash = Ashburn, hil = Hillsboro, sin = Singapore.
 location = "nbg1"
@@ -12,23 +13,55 @@ location = "nbg1"
 # Pin the Rancher-managed Kubernetes release. Upgrade one minor at a time.
 rke2_version = "v1.35.9+rke2r1"
 
-# Set dev = true for one all-in-one RKE2 server with no load balancer.
-# server_count is ignored. Every environment always has a private node network.
+# Set dev = true with one server-pool node for an all-in-one RKE2 server with no
+# load balancer. Two one-node pools may coexist temporarily during a migration.
+# Every environment always has a private node network.
 dev = false
 
-# RKE2 server-node shape. Outside dev, server_count must be odd: 3, 5, 7, or 9.
-# Common x86 types include cx23, cx33, cx43, cx53, cpx22, and cpx32.
-server_count = 3
-server_type  = "cx33"
+# Every machine belongs to a named pool, and every node name includes its pool.
+# Add a pool or increase its count to create nodes.
+server_pools = {
+  primary = {
+    count         = 3
+    server_type   = "cx33"
+    auto_location = false
+  }
+}
 
-# Optional dedicated workers use their own count and server type. In dev they
-# are always pinned to location. Outside dev, false pins every worker and true
-# lets Hetzner choose automatically and requires
-# the worker type to be confined to the cluster's network zone, because the
-# private network is attached only after server creation.
-worker_count         = 0
-worker_type          = "cx23"
-worker_auto_location = false
+# Dedicated workers are optional. In dev every pool is pinned to location.
+# Outside dev, auto_location=false pins either kind of pool; true omits the
+# location and lets Hetzner choose. The provider cannot express a preferred
+# location followed by fallbacks, and the type must be confined to the
+# cluster's network zone.
+worker_pools = {}
+
+# Example worker pool:
+# worker_pools = {
+#   primary = {
+#     count         = 3
+#     server_type   = "cx33"
+#     auto_location = false
+#   }
+# }
+#
+# A safe cx33 -> cx43 server migration takes two separate applies:
+#   1. Add the green entry, then apply.
+#   2. After all new nodes are Ready, remove primary.
+#      `make apply-rke2` evacuates Longhorn, drains, and retires each cx33 node
+#      through Rancher before OpenTofu deletes any VM.
+#
+# server_pools = {
+#   primary = {
+#     count         = 3
+#     server_type   = "cx33"
+#     auto_location = false
+#   }
+#   green = {
+#     count         = 3
+#     server_type   = "cx43"
+#     auto_location = true
+#   }
+# }
 
 # Keep false unless workloads using emptyDir have been verified safe to recreate.
 drain_timeout_seconds               = 1800

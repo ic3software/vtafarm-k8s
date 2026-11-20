@@ -25,34 +25,61 @@ locals {
   # hands out sits in the first /24 of the subnet.
   private_subnet_regex = "^${replace(regex("^\\d+\\.\\d+\\.\\d+", cidrhost(var.config.subnet_cidr, 0)), ".", "\\.")}\\."
 
-  server_nodes = {
-    for i in range(var.config.dev ? 1 : var.config.server_count) : "server-${i + 1}" => {
-      name        = "${var.config.cluster_name}-server-${i + 1}"
-      private_ip  = cidrhost(var.config.subnet_cidr, 101 + i)
-      server_type = var.config.server_type
-      location    = var.config.location
-      roles = concat(
-        ["etcd", "controlplane"],
-        var.config.dev || var.config.servers_are_workers ? ["worker"] : [],
-      )
-    }
+  # Every pool keeps its own 1..N sequence. Hetzner assigns private IPs outside
+  # dev; deterministic dev server addresses keep migration testing predictable.
+  server_pools = var.config.server_pools
+  worker_pools = var.config.worker_pools
+  dev_server_pool_slots = {
+    for pool_name in keys(local.server_pools) :
+    pool_name => pool_name == "primary" ? 111 : 112 + parseint(substr(md5(pool_name), 0, 8), 16) % 88
   }
 
-  worker_nodes = {
-    for i in range(var.config.worker_count) : "worker-${i + 1}" => {
-      name        = "${var.config.cluster_name}-worker-${i + 1}"
-      private_ip  = cidrhost(var.config.subnet_cidr, 151 + i)
-      server_type = var.config.worker_type
-      # Dev workers share the server's location to keep its test topology
-      # predictable. Automatic placement is reserved for normal HA clusters.
-      location = var.config.dev ? var.config.location : (
-        var.config.worker_auto_location ? null : var.config.location
-      )
-      roles = ["worker"]
+  server_nodes = merge({}, [
+    for pool_name, pool in local.server_pools : {
+      for i in range(pool.count) :
+      "control-plane-${pool_name}-${i + 1}" => {
+        name = "${var.config.cluster_name}-control-plane-${pool_name}-${i + 1}"
+        requested_private_ip = var.config.dev ? cidrhost(
+          var.config.subnet_cidr,
+          local.dev_server_pool_slots[pool_name] + i,
+        ) : null
+        server_type = pool.server_type
+        # Dev stays pinned because its public Primary IP is location-bound.
+        location      = var.config.dev || !pool.auto_location ? var.config.location : null
+        pool          = pool_name
+        node_class    = "control-plane"
+        auto_location = pool.auto_location
+        roles = concat(
+          ["etcd", "controlplane"],
+          var.config.dev || var.config.servers_are_workers ? ["worker"] : [],
+        )
+      }
     }
-  }
+  ]...)
+
+  worker_nodes = merge({}, [
+    for pool_name, pool in local.worker_pools : {
+      for i in range(pool.count) :
+      "worker-${pool_name}-${i + 1}" => {
+        name                 = "${var.config.cluster_name}-worker-${pool_name}-${i + 1}"
+        requested_private_ip = null
+        server_type          = pool.server_type
+        # Dev workers share the server's location to keep its test topology
+        # predictable. Automatic placement is reserved for normal HA clusters.
+        location      = var.config.dev || !pool.auto_location ? var.config.location : null
+        pool          = pool_name
+        node_class    = "worker"
+        auto_location = pool.auto_location
+        roles         = ["worker"]
+      }
+    }
+  ]...)
 
   nodes = merge(local.server_nodes, local.worker_nodes)
+
+  dev_server_key = var.config.dev ? (
+    contains(keys(local.server_nodes), "control-plane-primary-1") ? "control-plane-primary-1" : sort(keys(local.server_nodes))[0]
+  ) : null
 
   tls_sans = var.config.dev ? compact([
     hcloud_primary_ip.dev_api[0].ip_address,
@@ -236,18 +263,17 @@ locals {
     for key, node in local.nodes : key => templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
       hostname                = node.name
       use_private_network     = true
-      node_private_ip         = node.private_ip
+      node_private_ip         = node.requested_private_ip == null ? "" : node.requested_private_ip
       private_network_cidr    = var.config.network_cidr
       private_network_gateway = local.private_network_gateway
       private_interface_mtu   = local.private_interface_mtu
       private_supervisor_url = var.config.dev && startswith(key, "worker-") ? (
-        "https://${local.server_nodes["server-1"].private_ip}:9345"
+        "https://${local.server_nodes[local.dev_server_key].requested_private_ip}:9345"
       ) : ""
       bootstrap_script = file("${path.module}/templates/rancher-node-bootstrap.sh")
       registration_script = join(" ", concat(
         [local.registration_command],
         [for role in node.roles : "--${role}"],
-        ["--internal-address", node.private_ip],
         ["--node-name", node.name],
       ))
     })
