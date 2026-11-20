@@ -38,7 +38,7 @@ resource "terraform_data" "retired_nodes" {
 
       printf '%s\n' "$DESIRED_NODES" >"$WORK/desired"
       jq -e --arg name "$NAME" 'type == "array" and length > 0 and
-        all(.[]; type == "string" and test("^" + $name + "-(server|worker)-[0-9]+$"))' \
+        all(.[]; type == "string" and test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$"))' \
         "$WORK/desired" >/dev/null || fail 'Invalid desired node names'
       management get clusters.provisioning.cattle.io "$NAME" -n "$NAMESPACE" -o json >"$WORK/provisioning" 2>"$WORK/error" || fail 'Cannot read the Rancher provisioning cluster'
       jq -e --arg id "$CLUSTER_V1_ID" '.status.clusterName == $id and .metadata.deletionTimestamp == null' \
@@ -60,7 +60,7 @@ resource "terraform_data" "retired_nodes" {
         .spec.infrastructureRef.kind == "CustomMachine" and
         (.spec.infrastructureRef.apiGroup // (.spec.infrastructureRef.apiVersion // "" | split("/")[0])) == "rke.cattle.io" and
         .spec.infrastructureRef.name == .metadata.name and
-        (.status.nodeRef.name // "" | test("^" + $name + "-(server|worker)-[0-9]+$")) and
+        (.status.nodeRef.name // "" | test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
         ($desired[0] | index($machine.status.nodeRef.name)) == null;
       def node_deleted:
         any(.status.conditions[]?; (.type == "NodeHealthy" or .type == "NodeReady") and
@@ -121,7 +121,7 @@ resource "terraform_data" "retired_nodes" {
       downstream get nodes.longhorn.io -n longhorn-system -o json >"$WORK/longhorn-nodes" 2>"$WORK/error" || fail 'Cannot list Longhorn Nodes'
       jq -r --arg name "$NAME" --slurpfile desired "$WORK/desired" '
         .items[] | .metadata.name as $node |
-        select(($node | test("^" + $name + "-(server|worker)-[0-9]+$")) and
+        select(($node | test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
           ($desired[0] | index($node)) == null) |
         [.metadata.name,.metadata.uid] | @tsv' "$WORK/longhorn-nodes" >"$WORK/longhorn-list"
       storage_unused() {

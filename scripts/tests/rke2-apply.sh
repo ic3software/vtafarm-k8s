@@ -277,6 +277,88 @@ PY
 echo 'PASS: single-replica data is rebuilt before drain; Rancher retires servers sequentially before VM apply'
 
 reset_case ok
+python3 - <<'PY'
+import os
+from pathlib import Path
+root = Path(os.environ['TEST_DIR'])
+for filename in ('plan', 'nodes', 'machines', 'longhorn', 'replicas', 'volumes', 'engines', 'members'):
+    text = (root / filename).read_text()
+    for index in (3, 2, 1):
+        text = text.replace(f'rke2-test-server-{index}', f'rke2-test-control-plane-green-{index}')
+        if filename == 'plan':
+            text = text.replace(f'node["server-{index}"]', f'node["control-plane-green-{index}"]')
+    (root / filename).write_text(text)
+PY
+run || { cat "$TEST_DIR/log"; fail 'pool retirement'; }
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply pool retirement'
+rg -q '^RETIRED rke2-test-server-5$' "$TEST_DIR/events" || fail 'did not retire the final legacy-pool server'
+echo 'PASS: a named server pool can survive while legacy-pool servers are evacuated and retired'
+
+reset_case ok
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+root = Path(os.environ['TEST_DIR'])
+
+def load(name):
+    return json.loads((root / name).read_text())
+
+def save(name, value):
+    (root / name).write_text(json.dumps(value))
+
+legacy = 'rke2-test-server-1'
+replacement = 'rke2-test-control-plane-primary-1'
+
+nodes = load('nodes')
+nodes['items'] = nodes['items'][:2]
+nodes['items'][1]['metadata']['name'] = replacement
+save('nodes', nodes)
+
+machines = load('machines')
+machines['items'] = machines['items'][:2]
+machines['items'][1]['status']['nodeRef']['name'] = replacement
+save('machines', machines)
+
+longhorn = load('longhorn')
+longhorn['items'] = longhorn['items'][:2]
+longhorn['items'][1]['metadata']['name'] = replacement
+save('longhorn', longhorn)
+
+save('replicas', {'items': []})
+save('engines', {'items': []})
+save('members', {'members': [
+    {'name': legacy + '-suffix'},
+    {'name': replacement + '-suffix'},
+]})
+save('plan', {
+    'resource_changes': [
+        {
+            'address': 'module.rke2.hcloud_server.node["server-1"]',
+            'mode': 'managed',
+            'type': 'hcloud_server',
+            'change': {'actions': ['delete'], 'before': {'name': legacy, 'id': '1'}},
+        },
+        {
+            'address': 'module.rke2.hcloud_server.node["control-plane-primary-1"]',
+            'mode': 'managed',
+            'type': 'hcloud_server',
+            'change': {'actions': ['no-op'], 'after': {'name': replacement, 'id': '2'}},
+        },
+    ],
+    'planned_values': {'outputs': {
+        'nodes': {'value': {'control-plane-primary-1': {'name': replacement}}},
+        'cluster_id': {'value': 'fleet-default/rke2-test'},
+        'cluster_v1_id': {'value': 'c-test'},
+        'development_mode': {'value': True},
+    }},
+})
+PY
+run || { cat "$TEST_DIR/log"; fail 'dev control-plane migration'; }
+[ -f "$TEST_DIR/applied" ] || fail 'did not apply dev control-plane migration'
+rg -q '^RETIRED rke2-test-server-1$' "$TEST_DIR/events" || fail 'did not retire the dev legacy server'
+echo 'PASS: dev migration can retire legacy etcd after the replacement control-plane node is healthy'
+
+reset_case ok
 jq '.items += [{metadata:{name:"detached-volume"},spec:{numberOfReplicas:1},status:{state:"detached",robustness:"unknown"}}]' \
   "$TEST_DIR/volumes" >"$TEST_DIR/next"
 mv "$TEST_DIR/next" "$TEST_DIR/volumes"

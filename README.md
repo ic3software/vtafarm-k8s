@@ -291,24 +291,45 @@ code stacks/03-rke2-clusters/clusters/rke2-vtafarm-production/terraform.tfvars
 Go through every value in the file and read the comments above them. The scaffold already
 wrote `terraform.tfvars` for you, so there is nothing to copy.
 
-For a disposable development cluster, set the following values. Dev mode creates one
-all-in-one server using `server_type`, without a load balancer, and exposes ingress directly
-on that server. OpenTofu assigns server-1 a stable Primary IPv4 and includes it in the RKE2 API
-certificate, so the kubeconfig can connect to that address directly. Like every environment,
-it always has a private node network. Set `worker_count` above zero when placement or multi-node
-storage testing is needed. `ssh_allowed_cidrs` controls both SSH and Kubernetes API access and
-may be left open for a disposable cluster:
+For a disposable development cluster, set the following values. Dev mode normally requires one
+server-pool node, creates no load balancer, and exposes ingress directly on that server. OpenTofu
+assigns it a stable Primary IPv4 and includes it in the RKE2 API certificate, so the kubeconfig
+can connect directly. Like every environment, it always has a private node network. Add a worker
+pool when placement or multi-node storage testing is needed. `ssh_allowed_cidrs` controls both
+SSH and Kubernetes API access and may be left open for a disposable cluster:
 
 ```hcl
-dev               = true
-server_type       = "cx33"
-worker_count      = 2
-worker_type       = "cx23"
+dev = true
+server_pools = {
+  legacy = {
+    count       = 1
+    server_type = "cx33"
+  }
+}
+worker_pools = {
+  legacy = {
+    count       = 2
+    server_type = "cx23"
+  }
+}
 ssh_allowed_cidrs = ["0.0.0.0/0"]
 ```
 
 Omit `dev` or leave it `false` for the normal highly available topology. A dev cluster has no
 control-plane redundancy and is not suitable for production.
+
+During a dev shape migration, `server_pool_migration = true` permits exactly two control-plane
+nodes: one node in `legacy` and one replacement node in another pool. The legacy node keeps the
+public API Primary IP while both nodes communicate over the private network.
+
+Normal HA clusters can use named server and worker pools when two machine shapes must coexist.
+The reserved `legacy` pool adopts the original `server-1..N` or `worker-1..N` nodes without
+renaming or replacing them. A shape migration is deliberately two applies: first add the new
+pool, wait for it to become healthy, then remove the old pool. The apply wrapper evacuates
+Longhorn and retires nodes through Rancher before deleting their VMs; it rejects a plan that
+tries to add and remove nodes together.
+
+See [RKE2 node pools](docs/rke2-node-pools.md) for the complete `cx33` to `cx43` example.
 
 ```bash
 make init-rke2  CLUSTER=rke2-vtafarm-production

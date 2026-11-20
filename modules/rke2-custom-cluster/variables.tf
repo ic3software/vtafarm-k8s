@@ -3,15 +3,27 @@ variable "config" {
   type = object({
     cluster_name = string
 
-    location             = optional(string, "nbg1")
-    dev                  = optional(bool, false)
-    server_count         = optional(number, 3)
-    server_type          = optional(string, "cx33")
-    servers_are_workers  = optional(bool, true)
-    worker_count         = optional(number, 0)
-    worker_type          = optional(string, "cx23")
-    worker_auto_location = optional(bool, false)
-    os_image             = optional(string, "ubuntu-24.04")
+    location = optional(string, "nbg1")
+    dev      = optional(bool, false)
+    server_pools = optional(map(object({
+      count         = number
+      server_type   = string
+      auto_location = optional(bool, false)
+      })), {
+      legacy = {
+        count         = 3
+        server_type   = "cx33"
+        auto_location = false
+      }
+    })
+    server_pool_migration = optional(bool, false)
+    servers_are_workers   = optional(bool, true)
+    worker_pools = optional(map(object({
+      count         = number
+      server_type   = string
+      auto_location = optional(bool, false)
+    })), {})
+    os_image = optional(string, "ubuntu-24.04")
 
     ssh_key_name      = string
     ssh_allowed_cidrs = optional(list(string), ["0.0.0.0/0"])
@@ -56,18 +68,54 @@ variable "config" {
   }
 
   validation {
-    condition     = var.config.dev || (var.config.server_count >= 3 && var.config.server_count % 2 == 1 && var.config.server_count <= 9)
-    error_message = "Outside dev, server_count must be an odd number between 3 and 9 so etcd has quorum and fits Hetzner's 10-server spread-group limit."
+    condition = var.config.dev ? (
+      var.config.server_pool_migration ? (
+        sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) == 2 &&
+        length(var.config.server_pools) == 2 &&
+        try(var.config.server_pools.legacy.count, 0) == 1 &&
+        alltrue([for pool in values(var.config.server_pools) : pool.count == 1])
+        ) : (
+        sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) == 1
+      )
+      ) : (
+      sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) >= 3 &&
+      sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) <= 9 &&
+      (
+        sum(concat([0], [for pool in values(var.config.server_pools) : pool.count])) % 2 == 1 ||
+        var.config.server_pool_migration
+      )
+    )
+    error_message = "Dev requires one control-plane node, or exactly one legacy and one replacement node while server_pool_migration is true. Outside dev, the total must be between 3 and 9 and odd unless migration mode is enabled."
   }
 
   validation {
-    condition     = var.config.worker_count >= 0 && var.config.worker_count <= 49
-    error_message = "worker_count must be between 0 and 49."
+    condition     = sum(concat([0], [for pool in values(var.config.worker_pools) : pool.count])) <= 49
+    error_message = "The worker-pool total must be between 0 and 49."
   }
 
   validation {
-    condition     = var.config.servers_are_workers || var.config.worker_count > 0
-    error_message = "The cluster needs at least one worker role: enable servers_are_workers or set worker_count above zero."
+    condition     = var.config.servers_are_workers || sum(concat([0], [for pool in values(var.config.worker_pools) : pool.count])) > 0
+    error_message = "The cluster needs at least one worker role: enable servers_are_workers or define a non-empty worker_pools map."
+  }
+
+  validation {
+    condition = length(var.config.server_pools) > 0 && alltrue([
+      for name, pool in var.config.server_pools :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name)) &&
+      pool.count >= 1 && floor(pool.count) == pool.count &&
+      length(name == "legacy" ? "${var.config.cluster_name}-server-${pool.count}" : "${var.config.cluster_name}-control-plane-${name}-${pool.count}") <= 63
+    ])
+    error_message = "Every server pool needs a DNS-safe name, a positive whole count, and node names no longer than 63 characters."
+  }
+
+  validation {
+    condition = alltrue([
+      for name, pool in var.config.worker_pools :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name)) &&
+      pool.count >= 1 && floor(pool.count) == pool.count &&
+      length(name == "legacy" ? "${var.config.cluster_name}-worker-${pool.count}" : "${var.config.cluster_name}-worker-${name}-${pool.count}") <= 63
+    ])
+    error_message = "Every worker pool needs a DNS-safe name, a positive whole count, and node names no longer than 63 characters."
   }
 
   validation {

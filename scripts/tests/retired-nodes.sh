@@ -222,6 +222,18 @@ printf 'DELETE custom-server-4\nDELETE custom-server-5\n' >"$TEST_DIR/expected"
 cmp -s "$TEST_DIR/expected" "$TEST_DIR/deletions" || fail 'server scale-down left retired Machines'
 echo 'PASS: five-to-three server scale-down removes exactly server-4 and server-5 Machines'
 
+reset_case ok
+export DESIRED_NODES='["rke2-test-control-plane-green-1","rke2-test-control-plane-green-2","rke2-test-control-plane-green-3"]'
+jq '.items |= map(.metadata.name |= sub("rke2-test-server-"; "rke2-test-control-plane-green-"))' \
+  "$TEST_DIR/nodes-base" >"$TEST_DIR/nodes"
+jq '(.items[0].status.nodeRef.name)="rke2-test-worker-batch-1"' \
+  "$TEST_DIR/machines-base" >"$TEST_DIR/machines"
+run cleanup || { cat "$TEST_DIR/log"; fail 'named-pool cleanup'; }
+printf 'DELETE custom-worker-1\nDELETE custom-worker-2\nDELETE custom-desired\n' >"$TEST_DIR/expected"
+cmp -s "$TEST_DIR/expected" "$TEST_DIR/deletions" || fail 'named pools were not recognised during cleanup'
+echo 'PASS: cleanup recognises named server and worker pools'
+export DESIRED_NODES='["rke2-test-server-1","rke2-test-server-2","rke2-test-server-3"]'
+
 reset_case longhorn
 echo '{"items":[]}' >"$TEST_DIR/machines"
 run cleanup || { cat "$TEST_DIR/log"; fail 'Longhorn cleanup after manual Rancher deletion'; }

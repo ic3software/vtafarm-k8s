@@ -20,15 +20,23 @@ output "load_balancer_ipv4" {
   value       = var.config.dev ? null : hcloud_load_balancer.api[0].ipv4
 }
 
+output "development_mode" {
+  description = "Whether this cluster intentionally runs without a load balancer and may retire down to one control-plane node."
+  value       = var.config.dev
+}
+
 output "nodes" {
-  description = "RKE2 node names, roles, locations, and addresses."
+  description = "RKE2 node names, classes, pools, types, roles, locations, and addresses."
   value = {
     for key, server in hcloud_server.node : key => {
-      name       = server.name
-      roles      = local.nodes[key].roles
-      location   = server.location
-      public_ip  = server.ipv4_address
-      private_ip = local.nodes[key].private_ip
+      name        = server.name
+      node_class  = local.nodes[key].node_class
+      pool        = local.nodes[key].pool
+      server_type = server.server_type
+      roles       = local.nodes[key].roles
+      location    = server.location
+      public_ip   = server.ipv4_address
+      private_ip  = one(server.network).ip
     }
   }
 }

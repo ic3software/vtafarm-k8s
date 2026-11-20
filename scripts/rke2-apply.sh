@@ -17,6 +17,7 @@ ETCD_HEALTH_ATTEMPTS="${RKE2_ETCD_HEALTH_ATTEMPTS:-60}"
 WORK="$(mktemp -d)"
 LOCK="$CLUSTER_DIR/.rke2-apply-lock"
 LOCKED=false
+MIN_SERVER_NODES=3
 cleanup() {
   rm -rf "$WORK"
   if [ "$LOCKED" = true ]; then rmdir "$LOCK"; fi
@@ -35,11 +36,11 @@ jq '[.resource_changes[]? | select(.mode == "managed" and .type == "hcloud_serve
 if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
   # Replacement and mixed grow/shrink plans need new capacity before retirement.
   jq -e --arg name "$NAME" '
-    all(.[]; .address | test("^module\\.rke2\\.hcloud_server\\.node\\[\"(server|worker)-[0-9]+\"\\]$")) and
+    all(.[]; .address | test("^module\\.rke2\\.hcloud_server\\.node\\[\"(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)\"\\]$")) and
     all(.[]; .change.actions == ["delete"] and
-      (.change.before.name | test("^" + $name + "-(server|worker)-[0-9]+$")) and
+      (.change.before.name | test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
       (.change.before.id | tostring | test("^[0-9]+$")))' "$WORK/deletions" >/dev/null ||
-    fail 'Only count reductions of this custom cluster are supported; stage VM replacements separately'
+    fail 'Only node-pool reductions of this custom cluster are supported; stage VM replacements separately'
   jq -e 'all(.resource_changes[]? | select(.mode == "managed" and .type == "hcloud_server");
     (.change.actions | index("create")) == null)' "$WORK/plan.json" >/dev/null ||
     fail 'Add the new nodes in a separate apply before reducing existing node counts'
@@ -49,6 +50,9 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
     fail 'Apply other infrastructure or Rancher configuration changes separately from node retirement'
   jq -e '.planned_values.outputs.nodes.value | type == "object" and length > 0' "$WORK/plan.json" >/dev/null ||
     fail 'The saved plan has no known remaining node inventory'
+  if [ "$(jq -r '.planned_values.outputs.development_mode.value // false' "$WORK/plan.json")" = true ]; then
+    MIN_SERVER_NODES=1
+  fi
   jq '[.planned_values.outputs.nodes.value[] | .name] | sort' "$WORK/plan.json" >"$WORK/desired"
   jq --slurpfile desired "$WORK/desired" '[.resource_changes[]? | .change.after.name as $node |
     select(.mode == "managed" and .type == "hcloud_server" and ($desired[0] | index($node)) != null) |
@@ -56,9 +60,10 @@ if [ "$(jq length "$WORK/deletions")" -gt 0 ]; then
     "$WORK/plan.json" >"$WORK/remaining-vms"
   jq -e --slurpfile desired "$WORK/desired" 'length == ($desired[0] | length) and
     all(.[]; .id | test("^[0-9]+$"))' "$WORK/remaining-vms" >/dev/null || fail 'The remaining VM identities must be known in the saved plan'
-  jq -e --arg name "$NAME" 'all(.[]; test("^" + $name + "-(server|worker)-[0-9]+$")) and
-    ([.[] | select(test("-server-[0-9]+$"))] | length) >= 3' "$WORK/desired" >/dev/null ||
-    fail 'Retirement requires at least three remaining server nodes'
+  jq -e --arg name "$NAME" --argjson minimum "$MIN_SERVER_NODES" '
+    all(.[]; test("^" + $name + "-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+|worker(-[a-z0-9][a-z0-9-]*)?-[0-9]+)$")) and
+    ([.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))] | length) >= $minimum' \
+    "$WORK/desired" >/dev/null || fail "Retirement requires at least $MIN_SERVER_NODES remaining control-plane node(s)"
   jq -e --slurpfile desired "$WORK/desired" 'all(.[]; .change.before.name as $node |
     ($desired[0] | index($node)) == null)' "$WORK/deletions" >/dev/null || fail 'A retiring node is still desired by the saved plan'
   echo 'Before deleting VMs, this apply will migrate Longhorn data and retire these nodes through Rancher:'
@@ -128,7 +133,7 @@ while IFS=$'\t' read -r node vm_id; do
     jq -e 'length == 1' "$WORK/$node-machine" >/dev/null || fail "$node has no matching Rancher Machine"
     jq -r --arg node "$node" '.items[] | select(.metadata.name == $node) | .metadata.uid' "$WORK/nodes" >"$WORK/$node-uid"
   fi
-  if [[ "$node" == "$NAME-server-"* ]] && [ "$(jq length "$WORK/$node-machine")" -eq 1 ]; then
+  if [[ "$node" == "$NAME-server-"* || "$node" == "$NAME-control-plane-"* ]] && [ "$(jq length "$WORK/$node-machine")" -eq 1 ]; then
     jq -e '.[0].metadata.labels["rke.cattle.io/etcd-role"] == "true" and
       (.[0].metadata.deletionTimestamp != null or
        .[0].metadata.annotations["pre-terminate.delete.hook.machine.cluster.x-k8s.io/rke-bootstrap-cleanup"] != null)' \
@@ -136,7 +141,7 @@ while IFS=$'\t' read -r node vm_id; do
   fi
 done <"$WORK/retire"
 
-SURVIVOR="$(jq -r '[.[] | select(test("-server-[0-9]+$"))][0]' "$WORK/desired")"
+SURVIVOR="$(jq -r '[.[] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$"))][0]' "$WORK/desired")"
 etcd() {
   downstream exec -n kube-system "etcd-$SURVIVOR" -c etcd -- etcdctl \
     --endpoints=https://127.0.0.1:2379 \
@@ -148,12 +153,12 @@ check_etcd() {
   local attempt
   for ((attempt = 1; attempt <= ETCD_HEALTH_ATTEMPTS; attempt++)); do
     if etcd member list -w json >"$WORK/members" 2>"$WORK/error" &&
-      jq -e --slurpfile desired "$WORK/desired" '.members as $members |
-        all($desired[0][] | select(test("-server-[0-9]+$")); . as $name |
+      jq -e --argjson minimum "$MIN_SERVER_NODES" --slurpfile desired "$WORK/desired" '.members as $members |
+        all($desired[0][] | select(test("-(server-[0-9]+|control-plane-[a-z0-9][a-z0-9-]*-[0-9]+)$")); . as $name |
           any($members[]; (.name == $name or (.name | startswith($name + "-"))) and .isLearner != true))' \
         "$WORK/members" >/dev/null &&
       etcd endpoint health --cluster -w json >"$WORK/health" 2>"$WORK/error" &&
-      jq -e --slurpfile members "$WORK/members" 'length == ($members[0].members | length) and length >= 3 and
+      jq -e --argjson minimum "$MIN_SERVER_NODES" --slurpfile members "$WORK/members" 'length == ($members[0].members | length) and length >= $minimum and
         all(.[]; .health == true)' "$WORK/health" >/dev/null; then
       return 0
     fi

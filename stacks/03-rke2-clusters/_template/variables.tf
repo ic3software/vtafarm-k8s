@@ -27,27 +27,37 @@ variable "rancher_insecure" {
 }
 
 variable "location" {
-  description = "Hetzner location for all cluster nodes and the load balancer."
+  description = "Hetzner location for pinned cluster nodes and the load balancer; it also selects the private-network zone."
   type        = string
   default     = "nbg1"
 }
 
 variable "dev" {
-  description = "Create one development server without a load balancer. All nodes still use the cluster private network."
+  description = "Run without a load balancer. Steady state has one control-plane node; migration mode temporarily permits one legacy and one replacement node."
   type        = bool
   default     = false
 }
 
-variable "server_count" {
-  description = "Number of RKE2 server nodes. Must be an odd number between 3 and 9; ignored when dev is true."
-  type        = number
-  default     = 3
+variable "server_pools" {
+  description = "Named RKE2 server pools. The reserved legacy pool adopts existing server-N nodes without replacing them."
+  type = map(object({
+    count         = number
+    server_type   = string
+    auto_location = optional(bool, false)
+  }))
+  default = {
+    legacy = {
+      count         = 3
+      server_type   = "cx33"
+      auto_location = false
+    }
+  }
 }
 
-variable "server_type" {
-  description = "Hetzner server type for RKE2 server nodes."
-  type        = string
-  default     = "cx33"
+variable "server_pool_migration" {
+  description = "Explicitly allow a temporary even total of etcd server nodes while moving between server pools."
+  type        = bool
+  default     = false
 }
 
 variable "servers_are_workers" {
@@ -56,22 +66,14 @@ variable "servers_are_workers" {
   default     = true
 }
 
-variable "worker_count" {
-  description = "Number of dedicated RKE2 worker nodes, including in dev mode."
-  type        = number
-  default     = 0
-}
-
-variable "worker_type" {
-  description = "Hetzner server type for dedicated RKE2 worker nodes."
-  type        = string
-  default     = "cx23"
-}
-
-variable "worker_auto_location" {
-  description = "Let Hetzner choose worker locations in normal clusters; dev workers are always pinned to location."
-  type        = bool
-  default     = false
+variable "worker_pools" {
+  description = "Named dedicated-worker pools. The reserved legacy pool adopts existing worker-N nodes without replacing them."
+  type = map(object({
+    count         = number
+    server_type   = string
+    auto_location = optional(bool, false)
+  }))
+  default = {}
 }
 
 variable "os_image" {

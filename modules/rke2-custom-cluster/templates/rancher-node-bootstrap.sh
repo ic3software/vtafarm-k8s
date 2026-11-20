@@ -23,7 +23,6 @@ source /etc/rancher-node-bootstrap.env
 : "${USE_PRIVATE_NETWORK:?not set in /etc/rancher-node-bootstrap.env}"
 
 if [ "$USE_PRIVATE_NETWORK" = "true" ]; then
-  : "${NODE_PRIVATE_IP:?not set in /etc/rancher-node-bootstrap.env}"
   : "${PRIVATE_NETWORK_CIDR:?not set in /etc/rancher-node-bootstrap.env}"
   : "${PRIVATE_NETWORK_GATEWAY:?not set in /etc/rancher-node-bootstrap.env}"
   : "${PRIVATE_IFACE_MTU:?not set in /etc/rancher-node-bootstrap.env}"
@@ -32,8 +31,14 @@ fi
 log() { echo "[rancher-node-bootstrap] $(date -Is) $*"; }
 
 interface_with_ip() {
+  [ -n "$NODE_PRIVATE_IP" ] || return 1
   ip -o -4 addr show |
     awk -v pfx="${NODE_PRIVATE_IP}/" '$4 ~ "^"pfx {print $2; exit}'
+}
+
+private_ip_on_interface() {
+  ip -o -4 addr show dev "$1" scope global |
+    awk '{split($4, address, "/"); print address[1]; exit}'
 }
 
 find_private_interface() {
@@ -95,11 +100,20 @@ if [ "$USE_PRIVATE_NETWORK" = "true" ]; then
   DETECTED_IFACE=""
   NETPLAN_CONFIGURED=0
   for _ in $(seq 1 60); do
-    IFACE="$(interface_with_ip)"
+    IFACE="$(interface_with_ip || true)"
     [ -n "$IFACE" ] && break
 
     if [ -z "$DETECTED_IFACE" ]; then
       DETECTED_IFACE="$(find_private_interface "$PUBLIC_IFACE" || true)"
+    fi
+
+    if [ -n "$DETECTED_IFACE" ]; then
+      DETECTED_PRIVATE_IP="$(private_ip_on_interface "$DETECTED_IFACE" || true)"
+      if [ -n "$DETECTED_PRIVATE_IP" ]; then
+        NODE_PRIVATE_IP="$DETECTED_PRIVATE_IP"
+        IFACE="$DETECTED_IFACE"
+        break
+      fi
     fi
 
     if [ -z "$DETECTED_IFACE" ]; then
@@ -122,7 +136,7 @@ if [ "$USE_PRIVATE_NETWORK" = "true" ]; then
 fi
 
 log "registering node with Rancher"
-/bin/bash /etc/rancher/node-registration.sh
+/bin/bash /etc/rancher/node-registration.sh "$NODE_PRIVATE_IP"
 rm -f /etc/rancher/node-registration.sh
 
 log "waiting for rancher-system-agent.service"

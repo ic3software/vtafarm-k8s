@@ -14,6 +14,10 @@ output "load_balancer_ipv4" {
   value = module.rke2.load_balancer_ipv4
 }
 
+output "development_mode" {
+  value = module.rke2.development_mode
+}
+
 output "nodes" {
   value = module.rke2.nodes
 }
