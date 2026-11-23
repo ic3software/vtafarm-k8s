@@ -1,6 +1,11 @@
 # Cost
 
-Monthly cost in `nbg1`, with the default settings:
+Monthly cost in `nbg1`, with the default settings. There are two bills: the management cluster
+that runs Rancher, and each farm cluster that Rancher provisions.
+
+## Management cluster (Rancher)
+
+The three `cx23` servers run k3s and Rancher only. No farm workload runs on them.
 
 | Item | Unit | Qty | / month |
 | --- | --- | --- | --- |
@@ -18,20 +23,109 @@ Two ways to scale:
 - A fourth and a fifth server cost €13.18 per month. The cluster then survives two node
   failures at the same time instead of one.
 
-This table covers the **management** cluster only. Every downstream RKE2 cluster is billed on
-top of it, and it has the same shape: its server nodes (`cx33` by default, not `cx23`), one
-load balancer, and one public IPv4 address per node.
+## Farm cluster (RKE2)
 
-Longhorn adds no line to the Hetzner bill. It uses the NVMe disks of the nodes and does not
-attach Cloud Volumes, so the Vault PVCs use disk space on machines that you already pay for.
-The cost is that each volume is stored `longhorn_replica_count` times. This is why that count
-defaults to one. Hetzner Cloud Volumes are still available as the `hcloud-volumes` storage
-class, for data that should be billed and attached separately.
+The farm itself runs on a downstream RKE2 cluster, and every such cluster is billed on top of
+the management cluster. It has the same shape: its nodes, one load balancer, and one public
+IPv4 address per node. Two layouts have been run, both with three control plane nodes:
 
-Enabling stack 06 adds one 50 GiB Prometheus Volume, one 50 GiB Thanos Compactor workspace, and
-two 10 GiB Store Gateway caches by default. It also consumes Hetzner Object Storage for the
-30-day Thanos block history, plus CPU and memory for Prometheus, Thanos, Grafana, Alertmanager,
-node-exporter and kube-state-metrics on the existing nodes. Volume and object-storage usage are
-separate from the estimate above; check current Hetzner prices before enabling it. All of these
-observability Volumes use the retained StorageClass and keep billing after stack destroy until
-they are explicitly deleted.
+| Layout | Control plane | Workers | Machines | VTAs (approx.) | / month | Per VTA |
+| --- | --- | --- | --- | --- | --- | --- |
+| `cx33` farm | 3 | 3 | 6 | 175 | €73.73 | €0.42 |
+| `cx43` farm | 3 | 1 | 4 | 350 | €88.15 | €0.25 |
+
+The `cx43` farm hosts about twice as many VTAs on two fewer machines, for €14.42 per month
+more. Starting from the three control plane nodes, the `cx33` farm needs three extra machines
+to reach 175 VTAs, and the `cx43` farm needs one extra machine to reach 350.
+
+`cx33` farm, 6 machines, approximately 175 VTAs:
+
+| Item | Unit | Qty | / month |
+| --- | --- | --- | --- |
+| `cx33` (4 vCPU / 8 GB / 80 GB NVMe) | €10.19 | 6 | €61.14 |
+| Load Balancer `lb11` | €8.99 | 1 | €8.99 |
+| Public IPv4 | €0.60 | 6 | €3.60 |
+| **Estimated total per cluster** | | | **€73.73** |
+
+`cx43` farm, 4 machines, approximately 350 VTAs:
+
+| Item | Unit | Qty | / month |
+| --- | --- | --- | --- |
+| `cx43` (8 vCPU / 16 GB / 160 GB NVMe) | €19.19 | 4 | €76.76 |
+| Load Balancer `lb11` | €8.99 | 1 | €8.99 |
+| Public IPv4 | €0.60 | 4 | €2.40 |
+| **Estimated total per cluster** | | | **€88.15** |
+
+Each extra node adds one server and one IPv4 address: €10.79 per month for a `cx33`, €19.79
+for a `cx43`. Both pools are billed while a cluster moves from one server type to the other;
+see [RKE2 node pools](rke2-node-pools.md).
+
+## Storage
+
+### Longhorn: no extra cost
+
+Stacks 01 to 05 add no storage line to the Hetzner bill. Longhorn uses the NVMe disks of the
+farm nodes and does not attach Cloud Volumes, so the Vault, Vault transit and PostgreSQL PVCs
+use disk space on machines that you already pay for. The cost is that each volume is stored
+`longhorn_replica_count` times. This is why that count defaults to one. The management cluster
+has no persistent volumes at all.
+
+### Cloud Volumes: stack 06 only
+
+Observability is the one stack that attaches Hetzner Cloud Volumes, through the
+`hcloud-volumes` and `hcloud-volumes-retain` storage classes. With the template defaults, per
+farm cluster:
+
+| Volume | StorageClass | Size | / month |
+| --- | --- | --- | --- |
+| Prometheus TSDB | `hcloud-volumes-retain` | 50 GB | €3.43 |
+| Thanos Compactor workspace | `hcloud-volumes` | 50 GB | €3.43 |
+| Loki | `hcloud-volumes-retain` | 10 GB | €0.69 |
+| **Volumes total per cluster** | | **110 GB** | **€7.55** |
+
+This uses €0.0686 per GB per month. Hetzner does not publish the Volume rate on its public
+pricing pages, so check it in the Console before relying on the figure. Each extra Prometheus
+or Loki replica adds another Volume of the same size.
+
+The two Thanos Store Gateway caches (3 GiB each) are on Longhorn and cost nothing extra.
+Grafana has no persistent volume. Stack 06 also uses CPU and memory on the existing nodes for
+Prometheus, Thanos, Loki, Alloy, Grafana, node-exporter and kube-state-metrics.
+
+The Prometheus and Loki Volumes use the retained StorageClass. They keep billing after a stack
+destroy until they are explicitly deleted.
+
+### Object Storage: one base fee for every bucket
+
+Hetzner bills Object Storage once per account, not per bucket. The €7.79 base fee in the
+management table includes 1 TB of storage and 1 TB of egress across all buckets, and it is
+charged in full from the first bucket, even an empty one. Every bucket in this deployment
+shares that allowance:
+
+| Bucket | Contents | Stack |
+| --- | --- | --- |
+| State and backup bucket | OpenTofu state and tfvars, etcd snapshots, Rancher backups | 01, 02 and every stack's backend |
+| Longhorn backup bucket | Volume backups, 30 kept by default, when backups are enabled | 04 |
+| Thanos bucket | 30 days of metric blocks | 06 |
+| Loki bucket | 30 days of log chunks, plus ruler data | 06 |
+
+These can be separate buckets or prefixes in a shared one; the bill is the same. Extra buckets
+cost nothing while the total stays under 1 TB, which a deployment of this size does not come
+close to. Above that, storage costs about €7.77 per TB per month and egress €1.20 per TB.
+Traffic between the clusters and Object Storage inside `eu-central` is free.
+
+## Whole deployment
+
+One management cluster and one farm cluster, per month:
+
+| Item | `cx33` farm | `cx43` farm |
+| --- | --- | --- |
+| Machines (3 management + farm) | 9 | 7 |
+| VTAs (approx.) | 175 | 350 |
+| Management cluster compute | €30.56 | €30.56 |
+| Farm cluster compute | €73.73 | €88.15 |
+| Object Storage base fee | €7.79 | €7.79 |
+| **Total without stack 06** | **€112.08** | **€126.50** |
+| Observability Cloud Volumes | €7.55 | €7.55 |
+| **Total with stack 06** | **€119.63** | **€134.05** |
+
+All prices on this page include 20% VAT.
