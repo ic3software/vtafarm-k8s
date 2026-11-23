@@ -120,6 +120,8 @@ One management cluster and one farm cluster, per month:
 | Item | `cx33` farm | `cx43` farm |
 | --- | --- | --- |
 | Machines (3 management + farm) | 9 | 7 |
+| vCPU (6 management + farm) | 6 + 24 = 30 | 6 + 32 = 38 |
+| RAM (12 GB management + farm) | 12 + 48 = 60 GB | 12 + 64 = 76 GB |
 | VTAs (approx.) | 175 | 350 |
 | Management cluster compute | €30.56 | €30.56 |
 | Farm cluster compute | €73.73 | €88.15 |
