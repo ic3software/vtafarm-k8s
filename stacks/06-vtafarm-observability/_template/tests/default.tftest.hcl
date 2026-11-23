@@ -30,6 +30,14 @@ run "enabled_with_sensitive_credentials" {
 
   assert {
     condition = (
+      var.prometheus_storage_size == "20Gi" &&
+      var.prometheus_retention_size == "16GB"
+    )
+    error_message = "The template must leave Prometheus WAL and compaction headroom on its default Volume."
+  }
+
+  assert {
+    condition = (
       var.loki_replicas == 3 &&
       var.loki_gateway_replicas == 2 &&
       var.loki_storage_size == "20Gi" &&
