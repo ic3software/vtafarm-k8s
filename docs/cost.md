@@ -83,10 +83,10 @@ farm cluster:
 
 | Volume | StorageClass | Size | / month |
 | --- | --- | --- | --- |
-| Prometheus TSDB | `hcloud-volumes-retain` | 50 GB | €3.43 |
+| Prometheus TSDB | `hcloud-volumes-retain` | 20 GB | €1.37 |
 | Thanos Compactor workspace | `hcloud-volumes` | 50 GB | €3.43 |
 | Loki | `hcloud-volumes-retain` | 10 GB | €0.69 |
-| **Volumes total per cluster** | | **110 GB** | **€7.55** |
+| **Volumes total per cluster** | | **80 GB** | **€5.49** |
 
 This uses €0.0686 per GB per month. Hetzner does not publish the Volume rate on its public
 pricing pages, so check it in the Console before relying on the figure. Each extra Prometheus
@@ -132,7 +132,7 @@ One management cluster and one farm cluster, per month:
 | Farm cluster compute | €73.73 | €88.15 |
 | Object Storage base fee | €7.79 | €7.79 |
 | **Total without stack 06** | **€112.08** | **€126.50** |
-| Observability Cloud Volumes | €7.55 | €7.55 |
-| **Total with stack 06** | **€119.63** | **€134.05** |
+| Observability Cloud Volumes | €5.49 | €5.49 |
+| **Total with stack 06** | **€117.57** | **€131.99** |
 
 All prices on this page include 20% VAT.

@@ -9,9 +9,9 @@ variable "config" {
     chart_version        = optional(string, "93.2.2")
 
     storage_class_name        = optional(string, "hcloud-volumes-retain")
-    prometheus_storage_size   = optional(string, "50Gi")
+    prometheus_storage_size   = optional(string, "20Gi")
     prometheus_retention      = optional(string, "30d")
-    prometheus_retention_size = optional(string, "40GB")
+    prometheus_retention_size = optional(string, "16GB")
     scrape_interval           = optional(string, "30s")
     evaluation_interval       = optional(string, "30s")
 

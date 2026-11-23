@@ -50,7 +50,7 @@ variable "prometheus_storage_class" {
 variable "prometheus_storage_size" {
   description = "Hetzner Cloud Volume capacity requested by Prometheus."
   type        = string
-  default     = "50Gi"
+  default     = "20Gi"
 }
 
 variable "prometheus_retention" {
@@ -62,7 +62,7 @@ variable "prometheus_retention" {
 variable "prometheus_retention_size" {
   description = "Maximum Prometheus TSDB size; keep it below the PVC size for WAL and compaction headroom."
   type        = string
-  default     = "40GB"
+  default     = "16GB"
 }
 
 variable "prometheus_scrape_interval" {
