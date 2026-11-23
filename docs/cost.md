@@ -38,6 +38,11 @@ The `cx43` farm hosts about twice as many VTAs on two fewer machines, for €14.
 more. Starting from the three control plane nodes, the `cx33` farm needs three extra machines
 to reach 175 VTAs, and the `cx43` farm needs one extra machine to reach 350.
 
+The capacity doubles although the `cx43` farm has only a third more vCPU and RAM (32 vCPU and
+64 GB against 24 vCPU and 48 GB). The reason is fixed overhead: the control plane, Vault,
+PostgreSQL and the per-node system pods take the same memory on either farm before the first
+VTA is scheduled, so the larger nodes leave about twice as much room for VTAs.
+
 `cx33` farm, 6 machines, approximately 175 VTAs:
 
 | Item | Unit | Qty | / month |
