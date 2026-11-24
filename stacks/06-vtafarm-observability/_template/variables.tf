@@ -333,3 +333,14 @@ variable "alertmanager_enabled" {
   type        = bool
   default     = false
 }
+
+variable "alertmanager_replicas" {
+  description = "Number of Alertmanager replicas. Values greater than one enable Alertmanager high availability."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.alertmanager_replicas >= 1 && var.alertmanager_replicas <= 5 && floor(var.alertmanager_replicas) == var.alertmanager_replicas
+    error_message = "alertmanager_replicas must be a whole number from 1 to 5."
+  }
+}

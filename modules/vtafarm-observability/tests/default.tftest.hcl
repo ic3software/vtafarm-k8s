@@ -390,6 +390,30 @@ run "custom_prometheus_replicas_and_resources" {
   }
 }
 
+run "alertmanager_high_availability" {
+  command = plan
+
+  variables {
+    config = {
+      cluster_name          = "rke2-vtafarm-production"
+      enabled               = true
+      thanos_enabled        = false
+      alertmanager_enabled  = true
+      alertmanager_replicas = 2
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.enabled == true &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.alertmanagerSpec.replicas == 2 &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.alertmanagerSpec.podAntiAffinity == "soft" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.alertmanagerSpec.podAntiAffinityTopologyKey == "kubernetes.io/hostname"
+    )
+    error_message = "Alertmanager enablement, replica count, and node spreading must follow configuration."
+  }
+}
+
 run "prometheus_without_thanos" {
   command = plan
 

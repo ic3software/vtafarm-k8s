@@ -55,8 +55,9 @@ variable "config" {
     loki_s3_access_key    = optional(string, "")
     loki_s3_secret_key    = optional(string, "")
 
-    grafana_enabled      = optional(bool, true)
-    alertmanager_enabled = optional(bool, false)
+    grafana_enabled       = optional(bool, true)
+    alertmanager_enabled  = optional(bool, false)
+    alertmanager_replicas = optional(number, 1)
   })
 
   validation {
@@ -106,6 +107,15 @@ variable "config" {
       floor(var.config.prometheus_replicas) == var.config.prometheus_replicas
     )
     error_message = "prometheus_replicas must be a whole number from 1 to 5."
+  }
+
+  validation {
+    condition = (
+      var.config.alertmanager_replicas >= 1 &&
+      var.config.alertmanager_replicas <= 5 &&
+      floor(var.config.alertmanager_replicas) == var.config.alertmanager_replicas
+    )
+    error_message = "alertmanager_replicas must be a whole number from 1 to 5."
   }
 
   validation {
