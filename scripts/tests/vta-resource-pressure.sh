@@ -21,8 +21,15 @@ elif [[ "$args" == *" exec "* && "$args" == *"/work/vta/config.toml"* ]]; then
 elif [[ "$args" == *" get pod "* ]]; then
   printf '100m'
 elif [[ "$args" == *"memory.max"* ]]; then
-  printf '67108864 12582912\n'
+  printf '67108864 12582912 2097152\n'
 elif [[ "$args" == *" exec "* ]]; then
+  while [ "$#" -gt 2 ]; do
+    if [ "$1" = perl ] && [ "$2" = -e ]; then
+      perl -c -e "$3" >/dev/null 2>&1
+      exit
+    fi
+    shift
+  done
   exit 0
 else
   echo "unexpected kubectl call: $*" >&2
@@ -44,8 +51,12 @@ full_stack_output="$(run --did did:webvh:test:full-stack-vta --resource cpu --le
 grep -q 'Pod:       fpp-user-3/fs-20-vta-new' <<<"$full_stack_output"
 
 memory_output="$(run --did did:webvh:test:my-vta --resource memory --level warning --dry-run)"
-grep -q 'Planned cgroup target: 52MiB' <<<"$memory_output"
+grep -q 'current working set: 10MiB' <<<"$memory_output"
+grep -q 'Planned working-set target: 52MiB' <<<"$memory_output"
 grep -q 'Duration:  660s' <<<"$memory_output"
+
+memory_run_output="$(run --did did:webvh:test:my-vta --resource memory --level critical --duration 30 --yes)"
+grep -q 'Pressure test finished' <<<"$memory_run_output"
 
 if run --context rke2-vtafarm-production --did did:webvh:test:my-vta --resource cpu --level critical --dry-run \
   >"$WORK/non-dev-output" 2>&1; then

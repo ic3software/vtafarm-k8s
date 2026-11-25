@@ -176,19 +176,41 @@ if [ "$RESOURCE" = cpu ]; then
   kubectl --context "$CONTEXT" -n "$MATCH_NAMESPACE" exec "$MATCH_POD" -c "$MATCH_CONTAINER" -- \
     perl -e 1 >/dev/null 2>&1 || fail "the VTA image needs Perl for bounded CPU pressure"
 else
-  read -r MEMORY_LIMIT MEMORY_CURRENT < <(
+  read -r MEMORY_LIMIT MEMORY_CURRENT MEMORY_INACTIVE_FILE < <(
     kubectl --context "$CONTEXT" -n "$MATCH_NAMESPACE" exec "$MATCH_POD" -c "$MATCH_CONTAINER" -- sh -c '
       if [ -r /sys/fs/cgroup/memory.max ] && [ "$(cat /sys/fs/cgroup/memory.max)" != max ]; then
-        printf "%s %s\n" "$(cat /sys/fs/cgroup/memory.max)" "$(cat /sys/fs/cgroup/memory.current)"
+        limit_path=/sys/fs/cgroup/memory.max
+        usage_path=/sys/fs/cgroup/memory.current
+        stat_path=/sys/fs/cgroup/memory.stat
+        inactive_key=inactive_file
       elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
-        printf "%s %s\n" "$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)" "$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)"
-      fi'
+        limit_path=/sys/fs/cgroup/memory/memory.limit_in_bytes
+        usage_path=/sys/fs/cgroup/memory/memory.usage_in_bytes
+        stat_path=/sys/fs/cgroup/memory/memory.stat
+        inactive_key=total_inactive_file
+      else
+        exit 1
+      fi
+      inactive_file=0
+      while read -r stat_key stat_value _; do
+        if [ "$stat_key" = "$inactive_key" ]; then
+          inactive_file="$stat_value"
+          break
+        fi
+      done < "$stat_path"
+      printf "%s %s %s\n" "$(cat "$limit_path")" "$(cat "$usage_path")" "$inactive_file"'
   )
-  [[ "${MEMORY_LIMIT:-}" =~ ^[0-9]+$ && "${MEMORY_CURRENT:-}" =~ ^[0-9]+$ ]] ||
+  [[ "${MEMORY_LIMIT:-}" =~ ^[0-9]+$ && "${MEMORY_CURRENT:-}" =~ ^[0-9]+$ &&
+    "${MEMORY_INACTIVE_FILE:-}" =~ ^[0-9]+$ ]] ||
     fail "the VTA has no readable memory cgroup limit"
+  if [ "$MEMORY_CURRENT" -gt "$MEMORY_INACTIVE_FILE" ]; then
+    MEMORY_WORKING_SET=$((MEMORY_CURRENT - MEMORY_INACTIVE_FILE))
+  else
+    MEMORY_WORKING_SET=0
+  fi
   MEMORY_TARGET=$((MEMORY_LIMIT * TARGET_PERCENT / 100))
-  echo "Memory limit: $((MEMORY_LIMIT / 1024 / 1024))MiB; current cgroup usage: $((MEMORY_CURRENT / 1024 / 1024))MiB"
-  echo "Planned cgroup target: $((MEMORY_TARGET / 1024 / 1024))MiB"
+  echo "Memory limit: $((MEMORY_LIMIT / 1024 / 1024))MiB; current working set: $((MEMORY_WORKING_SET / 1024 / 1024))MiB"
+  echo "Planned working-set target: $((MEMORY_TARGET / 1024 / 1024))MiB"
   kubectl --context "$CONTEXT" -n "$MATCH_NAMESPACE" exec "$MATCH_POD" -c "$MATCH_CONTAINER" -- \
     perl -e 1 >/dev/null 2>&1 || fail "the VTA image needs Perl for bounded memory pressure"
 fi
@@ -259,26 +281,70 @@ else
       use warnings;
       my ($target, $seconds) = @ARGV;
       my @chunks;
-      sub current_usage {
-        for my $path (qw(/sys/fs/cgroup/memory.current /sys/fs/cgroup/memory/memory.usage_in_bytes)) {
-          next unless -r $path;
-          open my $fh, "<", $path or next;
-          my $value = <$fh>;
-          close $fh;
-          chomp $value;
-          return $value if $value =~ /^\d+$/;
+      sub read_number {
+        my ($path) = @_;
+        open my $fh, "<", $path or die "cannot read $path: $!\n";
+        my $value = <$fh>;
+        close $fh;
+        chomp $value;
+        die "invalid value in $path\n" unless $value =~ /^\d+$/;
+        return $value;
+      }
+      sub working_set {
+        my ($usage_path, $stat_path, $inactive_key);
+        if (-r "/sys/fs/cgroup/memory.current") {
+          ($usage_path, $stat_path, $inactive_key) = (
+            "/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.stat", "inactive_file"
+          );
+        } elsif (-r "/sys/fs/cgroup/memory/memory.usage_in_bytes") {
+          ($usage_path, $stat_path, $inactive_key) = (
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+            "/sys/fs/cgroup/memory/memory.stat",
+            "total_inactive_file"
+          );
+        } else {
+          die "cannot read cgroup memory usage\n";
         }
-        die "cannot read cgroup memory usage\n";
+        my $usage = read_number($usage_path);
+        my $inactive = 0;
+        open my $fh, "<", $stat_path or die "cannot read $stat_path: $!\n";
+        while (my $line = <$fh>) {
+          my ($key, $value) = split /\s+/, $line;
+          if ($key eq $inactive_key && defined $value && $value =~ /^\d+$/) {
+            $inactive = $value;
+            last;
+          }
+        }
+        close $fh;
+        return $usage > $inactive ? $usage - $inactive : 0;
+      }
+      sub now {
+        open my $fh, "<", "/proc/uptime" or die "cannot read /proc/uptime: $!\n";
+        my $line = <$fh>;
+        close $fh;
+        return (split /\s+/, $line)[0];
       }
       while (1) {
-        my $current = current_usage();
+        my $current = working_set();
         last if $current >= $target;
         my $chunk = $target - $current;
         $chunk = 262144 if $chunk > 262144;
         push @chunks, "x" x $chunk;
         select undef, undef, undef, 0.02;
       }
-      sleep($seconds);
+      my $end = now() + $seconds;
+      while (now() < $end) {
+        my $current = working_set();
+        if ($current < $target) {
+          my $chunk = $target - $current;
+          $chunk = 262144 if $chunk > 262144;
+          push @chunks, "x" x $chunk;
+        } else {
+          my $remaining = $end - now();
+          my $pause = $remaining < 0.1 ? $remaining : 0.1;
+          select undef, undef, undef, $pause if $pause > 0;
+        }
+      }
     ' "$MEMORY_TARGET" "$DURATION"
 fi
 
