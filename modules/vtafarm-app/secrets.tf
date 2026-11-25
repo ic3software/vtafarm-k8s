@@ -42,3 +42,25 @@ resource "kubernetes_secret_v1" "api" {
     MONITOR_TOKEN           = var.config.monitor_token
   }
 }
+
+resource "kubernetes_secret_v1" "alertmanager_webhook" {
+  count = var.config.alertmanager_webhook_enabled ? 1 : 0
+
+  metadata {
+    name      = var.config.alertmanager_webhook_secret_name
+    namespace = var.config.namespace
+  }
+
+  type = "Opaque"
+  data_wo = {
+    ALERTMANAGER_WEBHOOK_TOKEN = var.alertmanager_webhook_token
+  }
+  data_wo_revision = var.config.alertmanager_webhook_token_revision
+
+  lifecycle {
+    precondition {
+      condition     = length(trimspace(var.alertmanager_webhook_token)) >= 32
+      error_message = "alertmanager_webhook_token must contain at least 32 characters when the webhook is enabled."
+    }
+  }
+}

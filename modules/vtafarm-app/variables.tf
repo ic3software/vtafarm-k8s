@@ -31,6 +31,12 @@ variable "config" {
     # Shared secret gating /api/v1/monitor/*. Empty disables the endpoints.
     monitor_token = optional(string, "")
 
+    # Alertmanager and the API share one token, but each stack owns the Secret
+    # in its own namespace. The token itself is a separate ephemeral variable.
+    alertmanager_webhook_enabled        = optional(bool, false)
+    alertmanager_webhook_secret_name    = optional(string, "vtafarm-alertmanager-webhook")
+    alertmanager_webhook_token_revision = optional(number, 1)
+
     # Private Prometheus-compatible endpoint created by stack 06. Empty keeps
     # tenant metrics disabled until an operator explicitly enables them.
     metrics_query_url = optional(string, "")
@@ -102,4 +108,20 @@ variable "config" {
     condition     = var.config.placement.worker_replicas >= 0 && floor(var.config.placement.worker_replicas) == var.config.placement.worker_replicas
     error_message = "placement.worker_replicas must be a non-negative integer."
   }
+
+  validation {
+    condition = (
+      var.config.alertmanager_webhook_token_revision >= 1 &&
+      floor(var.config.alertmanager_webhook_token_revision) == var.config.alertmanager_webhook_token_revision
+    )
+    error_message = "alertmanager_webhook_token_revision must be a positive whole number."
+  }
+}
+
+variable "alertmanager_webhook_token" {
+  description = "Bearer token written to the API namespace Secret without persisting it in plan or state."
+  type        = string
+  default     = ""
+  sensitive   = true
+  ephemeral   = true
 }

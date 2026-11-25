@@ -344,3 +344,40 @@ variable "alertmanager_replicas" {
     error_message = "alertmanager_replicas must be a whole number from 1 to 5."
   }
 }
+
+variable "alertmanager_webhook_enabled" {
+  description = "Create the monitoring-side webhook Secret and route tenant alerts to the private VTAFarm API."
+  type        = bool
+  default     = false
+}
+
+variable "alertmanager_webhook_url" {
+  description = "Private in-cluster VTAFarm API Alertmanager webhook URL."
+  type        = string
+  default     = "http://vtafarm-api.default.svc.cluster.local:8080/api/v1/internal/alertmanager/webhook"
+}
+
+variable "alertmanager_webhook_secret_name" {
+  description = "Secret created in the monitoring namespace for the Alertmanager webhook token."
+  type        = string
+  default     = "vtafarm-alertmanager-webhook"
+}
+
+variable "alertmanager_webhook_token" {
+  description = "Shared Alertmanager webhook bearer token. Use the same value in stack 05 for this cluster."
+  type        = string
+  default     = ""
+  sensitive   = true
+  ephemeral   = true
+}
+
+variable "alertmanager_webhook_token_revision" {
+  description = "Increment in both stacks whenever alertmanager_webhook_token is rotated."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.alertmanager_webhook_token_revision >= 1 && floor(var.alertmanager_webhook_token_revision) == var.alertmanager_webhook_token_revision
+    error_message = "alertmanager_webhook_token_revision must be a positive whole number."
+  }
+}

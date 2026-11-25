@@ -10,6 +10,7 @@ VTAFARM_PLATFORM_ROOT := $(ROOT)/stacks/04-vtafarm-platform/clusters
 VTAFARM_PLATFORM_TEMPLATE := $(ROOT)/stacks/04-vtafarm-platform/_template
 VTAFARM_PLATFORM_CLUSTER_DIR := $(VTAFARM_PLATFORM_ROOT)/$(CLUSTER)
 VTAFARM_APP_ROOT := $(ROOT)/stacks/05-vtafarm-app/clusters
+VTAFARM_APP_TEMPLATE := $(ROOT)/stacks/05-vtafarm-app/_template
 VTAFARM_APP_CLUSTER_DIR := $(VTAFARM_APP_ROOT)/$(CLUSTER)
 VTAFARM_PLATFORM_MODULE := $(ROOT)/modules/vtafarm-platform
 VTAFARM_OBSERVABILITY_ROOT := $(ROOT)/stacks/06-vtafarm-observability/clusters
@@ -89,17 +90,21 @@ lint: ## Check OpenTofu formatting and Markdown style
 	tofu -chdir=$(RANCHER) fmt -recursive -check
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive -check
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) fmt -recursive -check
+	tofu -chdir=$(ROOT)/modules/vtafarm-app fmt -recursive -check
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) fmt -recursive -check
 	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive -check
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) fmt -recursive -check
+	tofu -chdir=$(VTAFARM_APP_TEMPLATE) fmt -recursive -check
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) fmt -recursive -check
 	tofu -chdir=$(INFRA) validate
 	tofu -chdir=$(RANCHER) validate
 	tofu -chdir=$(RKE2_TEMPLATE) validate
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) validate
+	tofu -chdir=$(VTAFARM_APP_TEMPLATE) validate
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) validate
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster test
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) test
+	tofu -chdir=$(ROOT)/modules/vtafarm-app test
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) test
 	$(MAKE) test-tfvars-sync
 	$(MAKE) test-kubeconfig
@@ -129,9 +134,11 @@ fmt: ## Auto-format OpenTofu and Markdown in place
 	tofu -chdir=$(RANCHER) fmt -recursive
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster fmt -recursive
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) fmt -recursive
+	tofu -chdir=$(ROOT)/modules/vtafarm-app fmt -recursive
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) fmt -recursive
 	tofu -chdir=$(RKE2_TEMPLATE) fmt -recursive
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) fmt -recursive
+	tofu -chdir=$(VTAFARM_APP_TEMPLATE) fmt -recursive
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) fmt -recursive
 	markdownlint-cli2 --fix
 
@@ -141,9 +148,11 @@ init: check-state-env ## Download providers for all stacks and module tests
 	tofu -chdir=$(RANCHER) init $(call backend_config,02-rancher)
 	tofu -chdir=$(RKE2_TEMPLATE) init -backend=false
 	tofu -chdir=$(VTAFARM_PLATFORM_TEMPLATE) init -backend=false
+	tofu -chdir=$(VTAFARM_APP_TEMPLATE) init -backend=false
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_TEMPLATE) init -backend=false
 	tofu -chdir=$(ROOT)/modules/rke2-custom-cluster init -backend=false
 	tofu -chdir=$(VTAFARM_PLATFORM_MODULE) init -backend=false
+	tofu -chdir=$(ROOT)/modules/vtafarm-app init -backend=false
 	tofu -chdir=$(VTAFARM_OBSERVABILITY_MODULE) init -backend=false
 
 .PHONY: plan

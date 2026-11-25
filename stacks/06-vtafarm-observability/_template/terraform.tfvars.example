@@ -82,3 +82,9 @@ loki_retention        = "720h"
 grafana_enabled       = true
 alertmanager_enabled  = true
 alertmanager_replicas = 1
+
+# Generate with `openssl rand -hex 32`. Stack 05 for this cluster must use the
+# same token and revision. Increment the revision whenever the token changes.
+alertmanager_webhook_enabled        = false
+alertmanager_webhook_token          = ""
+alertmanager_webhook_token_revision = 1

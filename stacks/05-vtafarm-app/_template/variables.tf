@@ -87,6 +87,37 @@ variable "monitor_token" {
   sensitive   = true
 }
 
+variable "alertmanager_webhook_enabled" {
+  description = "Create the API-side Alertmanager webhook Secret. Enable only after setting the same token in stacks 05 and 06."
+  type        = bool
+  default     = false
+}
+
+variable "alertmanager_webhook_token" {
+  description = "Shared Alertmanager webhook bearer token. Use the same value in stack 06 for this cluster."
+  type        = string
+  default     = ""
+  sensitive   = true
+  ephemeral   = true
+}
+
+variable "alertmanager_webhook_token_revision" {
+  description = "Increment in both stacks whenever alertmanager_webhook_token is rotated."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.alertmanager_webhook_token_revision >= 1 && floor(var.alertmanager_webhook_token_revision) == var.alertmanager_webhook_token_revision
+    error_message = "alertmanager_webhook_token_revision must be a positive whole number."
+  }
+}
+
+variable "alertmanager_webhook_secret_name" {
+  description = "Secret created in the API namespace for the Alertmanager webhook token."
+  type        = string
+  default     = "vtafarm-alertmanager-webhook"
+}
+
 variable "metrics_query_url" {
   description = "Private Prometheus-compatible endpoint created by stack 06. Empty disables tenant metrics."
   type        = string
