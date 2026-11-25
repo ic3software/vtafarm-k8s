@@ -10,6 +10,14 @@ locals {
   thanos_query_frontend_url   = "http://${local.thanos_release_name}-query-frontend.${var.config.monitoring_namespace}.svc:9090"
   loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.logging_namespace}.svc"
   thanos_s3_prefix            = var.config.thanos_s3_prefix != "" ? var.config.thanos_s3_prefix : "thanos/${var.config.cluster_name}"
+  tenant_alert_warning_text = lookup({
+    "1m"  = "1 minute"
+    "10m" = "10 minutes"
+  }, var.config.tenant_alert_warning_for, var.config.tenant_alert_warning_for)
+  tenant_alert_critical_text = lookup({
+    "1m" = "1 minute"
+    "5m" = "5 minutes"
+  }, var.config.tenant_alert_critical_for, var.config.tenant_alert_critical_for)
 
   # The RKE2 control-plane processes are static pods whose metrics listeners
   # are not exposed through the Services this chart assumes. Keep their
@@ -202,8 +210,8 @@ locals {
             receiver        = "vtafarm-api"
             matchers        = ["audience=\"tenant\""]
             group_by        = ["cluster", "label_session_id", "label_app", "alertname", "resource"]
-            group_wait      = "30s"
-            group_interval  = "5m"
+            group_wait      = var.config.alertmanager_tenant_group_wait
+            group_interval  = var.config.alertmanager_tenant_group_interval
             repeat_interval = "12h"
           }]
         }
@@ -441,21 +449,21 @@ locals {
               expr   = <<-PROMQL
                 (
                   100 * max by (namespace, label_session_id, label_app) (
-                    vtafarm:pod_cpu_usage_cores:rate5m
+                    vtafarm:pod_cpu_usage_cores:rate${var.config.tenant_cpu_usage_window}
                     / clamp_min(vtafarm:pod_cpu_limit_cores, 0.001)
                   ) >= 75
                 ) and (
                   100 * max by (namespace, label_session_id, label_app) (
-                    vtafarm:pod_cpu_usage_cores:rate5m
+                    vtafarm:pod_cpu_usage_cores:rate${var.config.tenant_cpu_usage_window}
                     / clamp_min(vtafarm:pod_cpu_limit_cores, 0.001)
                   ) < 90
                 )
               PROMQL
-              for    = "10m"
+              for    = var.config.tenant_alert_warning_for
               labels = { audience = "tenant", category = "resource", resource = "cpu", severity = "warning" }
               annotations = {
                 summary       = "CPU usage is above 75%"
-                description   = "This component has used at least 75% of its CPU limit for 10 minutes. Review its workload and consider increasing CPU capacity."
+                description   = "This component has used at least 75% of its CPU limit for ${local.tenant_alert_warning_text}. Review its workload and consider increasing CPU capacity."
                 usage_percent = "{{ printf \"%.1f\" $value }}"
               }
             },
@@ -463,15 +471,15 @@ locals {
               alert  = "VTAFarmCPUUsageCritical"
               expr   = <<-PROMQL
                 100 * max by (namespace, label_session_id, label_app) (
-                  vtafarm:pod_cpu_usage_cores:rate5m
+                  vtafarm:pod_cpu_usage_cores:rate${var.config.tenant_cpu_usage_window}
                   / clamp_min(vtafarm:pod_cpu_limit_cores, 0.001)
                 ) >= 90
               PROMQL
-              for    = "5m"
+              for    = var.config.tenant_alert_critical_for
               labels = { audience = "tenant", category = "resource", resource = "cpu", severity = "critical" }
               annotations = {
                 summary       = "CPU usage is above 90%"
-                description   = "This component has used at least 90% of its CPU limit for 5 minutes and may be throttled. Increase CPU capacity if the load is expected."
+                description   = "This component has used at least 90% of its CPU limit for ${local.tenant_alert_critical_text} and may be throttled. Increase CPU capacity if the load is expected."
                 usage_percent = "{{ printf \"%.1f\" $value }}"
               }
             },
@@ -490,11 +498,11 @@ locals {
                   ) < 90
                 )
               PROMQL
-              for    = "10m"
+              for    = var.config.tenant_alert_warning_for
               labels = { audience = "tenant", category = "resource", resource = "memory", severity = "warning" }
               annotations = {
                 summary       = "Memory usage is above 75%"
-                description   = "This component has used at least 75% of its memory limit for 10 minutes. Review its workload and consider increasing memory capacity."
+                description   = "This component has used at least 75% of its memory limit for ${local.tenant_alert_warning_text}. Review its workload and consider increasing memory capacity."
                 usage_percent = "{{ printf \"%.1f\" $value }}"
               }
             },
@@ -506,11 +514,11 @@ locals {
                   / clamp_min(vtafarm:pod_memory_limit_bytes, 1)
                 ) >= 90
               PROMQL
-              for    = "5m"
+              for    = var.config.tenant_alert_critical_for
               labels = { audience = "tenant", category = "resource", resource = "memory", severity = "critical" }
               annotations = {
                 summary       = "Memory usage is above 90%"
-                description   = "This component has used at least 90% of its memory limit for 5 minutes and is at risk of being OOMKilled. Increase memory capacity."
+                description   = "This component has used at least 90% of its memory limit for ${local.tenant_alert_critical_text} and is at risk of being OOMKilled. Increase memory capacity."
                 usage_percent = "{{ printf \"%.1f\" $value }}"
               }
             },

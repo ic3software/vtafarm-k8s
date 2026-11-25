@@ -62,6 +62,12 @@ variable "config" {
     alertmanager_webhook_url            = optional(string, "http://vtafarm-api.default.svc.cluster.local:8080/api/v1/internal/alertmanager/webhook")
     alertmanager_webhook_secret_name    = optional(string, "vtafarm-alertmanager-webhook")
     alertmanager_webhook_token_revision = optional(number, 1)
+    alertmanager_tenant_group_wait      = optional(string, "30s")
+    alertmanager_tenant_group_interval  = optional(string, "1m")
+
+    tenant_cpu_usage_window   = optional(string, "5m")
+    tenant_alert_warning_for  = optional(string, "10m")
+    tenant_alert_critical_for = optional(string, "5m")
   })
 
   validation {
@@ -80,6 +86,21 @@ variable "config" {
   validation {
     condition     = !var.config.alertmanager_webhook_enabled || var.config.alertmanager_enabled
     error_message = "alertmanager_enabled must be true when the tenant webhook is enabled."
+  }
+
+  validation {
+    condition     = contains(["1m", "5m"], var.config.tenant_cpu_usage_window)
+    error_message = "tenant_cpu_usage_window must select an existing 1m or 5m CPU recording rule."
+  }
+
+  validation {
+    condition = alltrue([
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.tenant_alert_warning_for)),
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.tenant_alert_critical_for)),
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.alertmanager_tenant_group_wait)),
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.alertmanager_tenant_group_interval)),
+    ])
+    error_message = "Tenant alert durations and Alertmanager grouping durations must be positive Prometheus durations such as 1m or 30s."
   }
 
   validation {

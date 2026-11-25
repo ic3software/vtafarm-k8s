@@ -83,6 +83,14 @@ grafana_enabled       = true
 alertmanager_enabled  = true
 alertmanager_replicas = 1
 
+# Normal-operation defaults. Development clusters may use 1m alert windows and
+# 10s/30s Alertmanager grouping for faster end-to-end alert verification.
+tenant_cpu_usage_window             = "5m"
+tenant_alert_warning_for            = "10m"
+tenant_alert_critical_for           = "5m"
+alertmanager_tenant_group_wait      = "30s"
+alertmanager_tenant_group_interval  = "1m"
+
 # Generate with `openssl rand -hex 32`. Stack 05 for this cluster must use the
 # same token and revision. Increment the revision whenever the token changes.
 alertmanager_webhook_enabled        = false

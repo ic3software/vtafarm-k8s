@@ -345,6 +345,41 @@ variable "alertmanager_replicas" {
   }
 }
 
+variable "alertmanager_tenant_group_wait" {
+  description = "Time Alertmanager waits before sending the first grouped tenant notification."
+  type        = string
+  default     = "30s"
+}
+
+variable "alertmanager_tenant_group_interval" {
+  description = "Time Alertmanager waits before sending tenant alert state changes for an existing group."
+  type        = string
+  default     = "1m"
+}
+
+variable "tenant_cpu_usage_window" {
+  description = "CPU recording-rule window used by tenant alerts. Use 1m for development feedback or 5m for normal operation."
+  type        = string
+  default     = "5m"
+
+  validation {
+    condition     = contains(["1m", "5m"], var.tenant_cpu_usage_window)
+    error_message = "tenant_cpu_usage_window must be 1m or 5m."
+  }
+}
+
+variable "tenant_alert_warning_for" {
+  description = "Time CPU and memory warning conditions must remain true before firing."
+  type        = string
+  default     = "10m"
+}
+
+variable "tenant_alert_critical_for" {
+  description = "Time CPU and memory critical conditions must remain true before firing."
+  type        = string
+  default     = "5m"
+}
+
 variable "alertmanager_webhook_enabled" {
   description = "Create the monitoring-side webhook Secret and route tenant alerts to the private VTAFarm API."
   type        = bool

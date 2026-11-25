@@ -81,6 +81,12 @@ module "observability" {
     alertmanager_webhook_url            = var.alertmanager_webhook_url
     alertmanager_webhook_secret_name    = var.alertmanager_webhook_secret_name
     alertmanager_webhook_token_revision = var.alertmanager_webhook_token_revision
+    alertmanager_tenant_group_wait      = var.alertmanager_tenant_group_wait
+    alertmanager_tenant_group_interval  = var.alertmanager_tenant_group_interval
+
+    tenant_cpu_usage_window   = var.tenant_cpu_usage_window
+    tenant_alert_warning_for  = var.tenant_alert_warning_for
+    tenant_alert_critical_for = var.tenant_alert_critical_for
   }
 
   alertmanager_webhook_token = var.alertmanager_webhook_token

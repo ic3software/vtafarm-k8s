@@ -463,6 +463,8 @@ run "tenant_alerts_and_webhook" {
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.alertmanagerSpec.secrets[0] == "vtafarm-alertmanager-webhook" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.alertmanagerSpec.podMetadata.annotations["vtafarm.ic3.dev/alertmanager-webhook-token-revision"] == "1" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].receiver == "vtafarm-api" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_wait == "30s" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_interval == "1m" &&
       contains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].matchers, "audience=\"tenant\"") &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.receivers[1].webhook_configs[0].send_resolved == true &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.receivers[1].webhook_configs[0].http_config.authorization.credentials_file == "/etc/alertmanager/secrets/vtafarm-alertmanager-webhook/ALERTMANAGER_WEBHOOK_TOKEN"
@@ -475,9 +477,47 @@ run "tenant_alerts_and_webhook" {
       length(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules) == 9 &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].alert == "VTAFarmCPUUsageHigh" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].labels.audience == "tenant" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0]["for"] == "10m" &&
+      strcontains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].expr, "vtafarm:pod_cpu_usage_cores:rate5m") &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[1]["for"] == "5m" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[8].alert == "VTAFarmComponentUnavailable" &&
       contains(yamldecode(helm_release.kube_prometheus_stack[0].values[0])["kube-state-metrics"].metricLabelsAllowlist, "deployments=[app,session-id]")
     )
     error_message = "All nine tenant alert rules and the deployment label metrics required by availability alerts must be rendered."
+  }
+}
+
+run "fast_tenant_alert_overrides" {
+  command = plan
+
+  variables {
+    alertmanager_webhook_token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    config = {
+      cluster_name                       = "rke2-vtafarm-development"
+      enabled                            = true
+      thanos_enabled                     = false
+      alertmanager_enabled               = true
+      alertmanager_webhook_enabled       = true
+      tenant_cpu_usage_window            = "1m"
+      tenant_alert_warning_for           = "1m"
+      tenant_alert_critical_for          = "1m"
+      alertmanager_tenant_group_wait     = "10s"
+      alertmanager_tenant_group_interval = "30s"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_wait == "10s" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_interval == "30s" &&
+      strcontains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].expr, "vtafarm:pod_cpu_usage_cores:rate1m") &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0]["for"] == "1m" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[1]["for"] == "1m" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[2]["for"] == "1m" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[3]["for"] == "1m" &&
+      strcontains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[1].annotations.description, "for 1 minute")
+    )
+    error_message = "Development overrides must use the 1m CPU window, one-minute CPU and memory alert durations, and shorter tenant notification grouping."
   }
 }
