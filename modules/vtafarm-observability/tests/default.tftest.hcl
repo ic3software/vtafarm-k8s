@@ -474,16 +474,15 @@ run "tenant_alerts_and_webhook" {
 
   assert {
     condition = (
-      length(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules) == 9 &&
+      length(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules) == 8 &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].alert == "VTAFarmCPUUsageHigh" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].labels.audience == "tenant" &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0]["for"] == "10m" &&
       strcontains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].expr, "vtafarm:pod_cpu_usage_cores:rate5m") &&
       yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[1]["for"] == "5m" &&
-      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[8].alert == "VTAFarmComponentUnavailable" &&
-      contains(yamldecode(helm_release.kube_prometheus_stack[0].values[0])["kube-state-metrics"].metricLabelsAllowlist, "deployments=[app,session-id]")
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[7].alert == "VTAFarmComponentCrashLooping"
     )
-    error_message = "All nine tenant alert rules and the deployment label metrics required by availability alerts must be rendered."
+    error_message = "All eight tenant alert rules must be rendered."
   }
 }
 

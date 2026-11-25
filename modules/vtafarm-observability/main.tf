@@ -61,7 +61,6 @@ locals {
       metricLabelsAllowlist = [
         "namespaces=[managed-by,user-id]",
         "pods=[app,session-id]",
-        "deployments=[app,session-id]",
         "persistentvolumeclaims=[managed-by,session-id,component]",
       ]
       resources = {
@@ -594,22 +593,6 @@ locals {
               annotations = {
                 summary     = "A component is repeatedly crashing"
                 description = "Kubernetes has placed this component in CrashLoopBackOff for at least 3 minutes. Download the related logs to investigate the startup failure."
-              }
-            },
-            {
-              alert  = "VTAFarmComponentUnavailable"
-              expr   = <<-PROMQL
-                max by (namespace, label_session_id, label_app) (
-                  (kube_deployment_status_replicas_available < 1)
-                  * on (namespace, deployment) group_left(label_session_id, label_app)
-                  kube_deployment_labels{label_session_id!=""}
-                ) > 0
-              PROMQL
-              for    = "2m"
-              labels = { audience = "tenant", category = "availability", resource = "availability", severity = "critical" }
-              annotations = {
-                summary     = "A component is unavailable"
-                description = "This component has had no available Deployment replica for at least 2 minutes. The resolved incident will show the observed downtime."
               }
             },
           ]
