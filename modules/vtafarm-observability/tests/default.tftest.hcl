@@ -436,3 +436,87 @@ run "prometheus_without_thanos" {
     error_message = "Disabling Thanos must keep Prometheus standalone without an object-store secret."
   }
 }
+
+run "tenant_alerts_and_webhook" {
+  command = plan
+
+  variables {
+    alertmanager_webhook_token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    config = {
+      cluster_name                     = "rke2-vtafarm-development"
+      enabled                          = true
+      thanos_enabled                   = false
+      alertmanager_enabled             = true
+      alertmanager_webhook_enabled     = true
+      alertmanager_webhook_url         = "http://vtafarm-api.default.svc.cluster.local:8080/api/v1/internal/alertmanager/webhook"
+      alertmanager_webhook_secret_name = "vtafarm-alertmanager-webhook"
+    }
+  }
+
+  assert {
+    condition = (
+      length(kubernetes_secret_v1.alertmanager_webhook) == 1 &&
+      kubernetes_secret_v1.alertmanager_webhook[0].metadata[0].name == "vtafarm-alertmanager-webhook" &&
+      kubernetes_secret_v1.alertmanager_webhook[0].metadata[0].namespace == "monitoring" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.enabled == true &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.alertmanagerSpec.secrets[0] == "vtafarm-alertmanager-webhook" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.alertmanagerSpec.podMetadata.annotations["vtafarm.ic3.dev/alertmanager-webhook-token-revision"] == "1" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].receiver == "vtafarm-api" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_wait == "30s" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_interval == "1m" &&
+      contains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].matchers, "audience=\"tenant\"") &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.receivers[1].webhook_configs[0].send_resolved == true &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.receivers[1].webhook_configs[0].http_config.authorization.credentials_file == "/etc/alertmanager/secrets/vtafarm-alertmanager-webhook/ALERTMANAGER_WEBHOOK_TOKEN"
+    )
+    error_message = "Tenant alerts must be routed to the authenticated API webhook with resolved notifications enabled."
+  }
+
+  assert {
+    condition = (
+      length(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules) == 8 &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].alert == "VTAFarmCPUUsageHigh" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].labels.audience == "tenant" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0]["for"] == "10m" &&
+      strcontains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].expr, "vtafarm:pod_cpu_usage_cores:rate5m") &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[1]["for"] == "5m" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[7].alert == "VTAFarmComponentCrashLooping"
+    )
+    error_message = "All eight tenant alert rules must be rendered."
+  }
+}
+
+run "fast_tenant_alert_overrides" {
+  command = plan
+
+  variables {
+    alertmanager_webhook_token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    config = {
+      cluster_name                       = "rke2-vtafarm-development"
+      enabled                            = true
+      thanos_enabled                     = false
+      alertmanager_enabled               = true
+      alertmanager_webhook_enabled       = true
+      tenant_cpu_usage_window            = "1m"
+      tenant_alert_warning_for           = "1m"
+      tenant_alert_critical_for          = "1m"
+      alertmanager_tenant_group_wait     = "10s"
+      alertmanager_tenant_group_interval = "30s"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_wait == "10s" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).alertmanager.config.route.routes[0].group_interval == "30s" &&
+      strcontains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0].expr, "vtafarm:pod_cpu_usage_cores:rate1m") &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[0]["for"] == "1m" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[1]["for"] == "1m" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[2]["for"] == "1m" &&
+      yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[3]["for"] == "1m" &&
+      strcontains(yamldecode(helm_release.kube_prometheus_stack[0].values[0]).additionalPrometheusRulesMap["vtafarm-tenant-alerts"].groups[0].rules[1].annotations.description, "for 1 minute")
+    )
+    error_message = "Development overrides must use the 1m CPU window, one-minute CPU and memory alert durations, and shorter tenant notification grouping."
+  }
+}

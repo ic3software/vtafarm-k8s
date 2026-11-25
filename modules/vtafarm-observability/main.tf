@@ -10,6 +10,14 @@ locals {
   thanos_query_frontend_url   = "http://${local.thanos_release_name}-query-frontend.${var.config.monitoring_namespace}.svc:9090"
   loki_gateway_url            = "http://${local.loki_release_name}-gateway.${var.config.logging_namespace}.svc"
   thanos_s3_prefix            = var.config.thanos_s3_prefix != "" ? var.config.thanos_s3_prefix : "thanos/${var.config.cluster_name}"
+  tenant_alert_warning_text = lookup({
+    "1m"  = "1 minute"
+    "10m" = "10 minutes"
+  }, var.config.tenant_alert_warning_for, var.config.tenant_alert_warning_for)
+  tenant_alert_critical_text = lookup({
+    "1m" = "1 minute"
+    "5m" = "5 minutes"
+  }, var.config.tenant_alert_critical_for, var.config.tenant_alert_critical_for)
 
   # The RKE2 control-plane processes are static pods whose metrics listeners
   # are not exposed through the Services this chart assumes. Keep their
@@ -110,9 +118,9 @@ locals {
         retentionSize      = var.config.prometheus_retention_size
         walCompression     = true
         enableAdminAPI     = false
-        externalLabels = var.config.thanos_enabled ? {
+        externalLabels = {
           cluster = var.config.cluster_name
-        } : {}
+        }
         thanos = var.config.thanos_enabled ? {
           objectStorageConfig = {
             existingSecret = {
@@ -168,10 +176,10 @@ locals {
       }
     }
 
-    alertmanager = {
+    alertmanager = merge({
       enabled = var.config.alertmanager_enabled
       ingress = { enabled = false }
-      alertmanagerSpec = {
+      alertmanagerSpec = merge({
         replicas                   = var.config.alertmanager_replicas
         retention                  = "120h"
         podAntiAffinity            = "soft"
@@ -180,8 +188,55 @@ locals {
           requests = { cpu = "25m", memory = "64Mi" }
           limits   = { memory = "256Mi" }
         }
+        podMetadata = {
+          annotations = var.config.alertmanager_webhook_enabled ? {
+            "vtafarm.ic3.dev/alertmanager-webhook-token-revision" = tostring(var.config.alertmanager_webhook_token_revision)
+          } : {}
+        }
+        }, var.config.alertmanager_webhook_enabled ? {
+        secrets = [var.config.alertmanager_webhook_secret_name]
+      } : {})
+      }, var.config.alertmanager_webhook_enabled ? {
+      config = {
+        global = { resolve_timeout = "5m" }
+        route = {
+          receiver        = "null"
+          group_by        = ["namespace"]
+          group_wait      = "30s"
+          group_interval  = "5m"
+          repeat_interval = "12h"
+          routes = [{
+            receiver        = "vtafarm-api"
+            matchers        = ["audience=\"tenant\""]
+            group_by        = ["cluster", "label_session_id", "label_app", "alertname", "resource"]
+            group_wait      = var.config.alertmanager_tenant_group_wait
+            group_interval  = var.config.alertmanager_tenant_group_interval
+            repeat_interval = "12h"
+          }]
+        }
+        inhibit_rules = [{
+          source_matchers = ["audience=\"tenant\"", "severity=\"critical\""]
+          target_matchers = ["audience=\"tenant\"", "severity=\"warning\""]
+          equal           = ["cluster", "label_session_id", "label_app", "resource"]
+        }]
+        receivers = [
+          { name = "null" },
+          {
+            name = "vtafarm-api"
+            webhook_configs = [{
+              url           = var.config.alertmanager_webhook_url
+              send_resolved = true
+              http_config = {
+                authorization = {
+                  type             = "Bearer"
+                  credentials_file = "/etc/alertmanager/secrets/${var.config.alertmanager_webhook_secret_name}/ALERTMANAGER_WEBHOOK_TOKEN"
+                }
+              }
+            }]
+          },
+        ]
       }
-    }
+    } : {})
 
     grafana = {
       enabled                   = var.config.grafana_enabled
@@ -379,6 +434,166 @@ locals {
                   kube_pod_labels{label_session_id!=""}
                 )
               PROMQL
+            },
+          ]
+        }]
+      }
+      "vtafarm-tenant-alerts" = {
+        groups = [{
+          name     = "vtafarm.tenant-alerts"
+          interval = var.config.evaluation_interval
+          rules = [
+            {
+              alert  = "VTAFarmCPUUsageHigh"
+              expr   = <<-PROMQL
+                (
+                  100 * max by (namespace, label_session_id, label_app) (
+                    vtafarm:pod_cpu_usage_cores:rate${var.config.tenant_cpu_usage_window}
+                    / clamp_min(vtafarm:pod_cpu_limit_cores, 0.001)
+                  ) >= 75
+                ) and (
+                  100 * max by (namespace, label_session_id, label_app) (
+                    vtafarm:pod_cpu_usage_cores:rate${var.config.tenant_cpu_usage_window}
+                    / clamp_min(vtafarm:pod_cpu_limit_cores, 0.001)
+                  ) < 90
+                )
+              PROMQL
+              for    = var.config.tenant_alert_warning_for
+              labels = { audience = "tenant", category = "resource", resource = "cpu", severity = "warning" }
+              annotations = {
+                summary       = "CPU usage is above 75%"
+                description   = "This component has used at least 75% of its CPU limit for ${local.tenant_alert_warning_text}. Review its workload and consider increasing CPU capacity."
+                usage_percent = "{{ printf \"%.1f\" $value }}"
+              }
+            },
+            {
+              alert  = "VTAFarmCPUUsageCritical"
+              expr   = <<-PROMQL
+                100 * max by (namespace, label_session_id, label_app) (
+                  vtafarm:pod_cpu_usage_cores:rate${var.config.tenant_cpu_usage_window}
+                  / clamp_min(vtafarm:pod_cpu_limit_cores, 0.001)
+                ) >= 90
+              PROMQL
+              for    = var.config.tenant_alert_critical_for
+              labels = { audience = "tenant", category = "resource", resource = "cpu", severity = "critical" }
+              annotations = {
+                summary       = "CPU usage is above 90%"
+                description   = "This component has used at least 90% of its CPU limit for ${local.tenant_alert_critical_text} and may be throttled. Increase CPU capacity if the load is expected."
+                usage_percent = "{{ printf \"%.1f\" $value }}"
+              }
+            },
+            {
+              alert  = "VTAFarmMemoryUsageHigh"
+              expr   = <<-PROMQL
+                (
+                  100 * max by (namespace, label_session_id, label_app) (
+                    vtafarm:pod_memory_working_set_bytes
+                    / clamp_min(vtafarm:pod_memory_limit_bytes, 1)
+                  ) >= 75
+                ) and (
+                  100 * max by (namespace, label_session_id, label_app) (
+                    vtafarm:pod_memory_working_set_bytes
+                    / clamp_min(vtafarm:pod_memory_limit_bytes, 1)
+                  ) < 90
+                )
+              PROMQL
+              for    = var.config.tenant_alert_warning_for
+              labels = { audience = "tenant", category = "resource", resource = "memory", severity = "warning" }
+              annotations = {
+                summary       = "Memory usage is above 75%"
+                description   = "This component has used at least 75% of its memory limit for ${local.tenant_alert_warning_text}. Review its workload and consider increasing memory capacity."
+                usage_percent = "{{ printf \"%.1f\" $value }}"
+              }
+            },
+            {
+              alert  = "VTAFarmMemoryUsageCritical"
+              expr   = <<-PROMQL
+                100 * max by (namespace, label_session_id, label_app) (
+                  vtafarm:pod_memory_working_set_bytes
+                  / clamp_min(vtafarm:pod_memory_limit_bytes, 1)
+                ) >= 90
+              PROMQL
+              for    = var.config.tenant_alert_critical_for
+              labels = { audience = "tenant", category = "resource", resource = "memory", severity = "critical" }
+              annotations = {
+                summary       = "Memory usage is above 90%"
+                description   = "This component has used at least 90% of its memory limit for ${local.tenant_alert_critical_text} and is at risk of being OOMKilled. Increase memory capacity."
+                usage_percent = "{{ printf \"%.1f\" $value }}"
+              }
+            },
+            {
+              alert  = "VTAFarmStorageUsageHigh"
+              expr   = <<-PROMQL
+                (
+                  100 * max by (namespace, label_session_id, label_app) (
+                    vtafarm:pod_persistent_volume_used_bytes
+                    / clamp_min(vtafarm:pod_persistent_volume_capacity_bytes, 1)
+                  ) >= 75
+                ) and (
+                  100 * max by (namespace, label_session_id, label_app) (
+                    vtafarm:pod_persistent_volume_used_bytes
+                    / clamp_min(vtafarm:pod_persistent_volume_capacity_bytes, 1)
+                  ) < 90
+                )
+              PROMQL
+              for    = "15m"
+              labels = { audience = "tenant", category = "resource", resource = "storage", severity = "warning" }
+              annotations = {
+                summary       = "Storage usage is above 75%"
+                description   = "This component has used at least 75% of its persistent storage for 15 minutes. Plan a storage increase before it fills."
+                usage_percent = "{{ printf \"%.1f\" $value }}"
+              }
+            },
+            {
+              alert  = "VTAFarmStorageUsageCritical"
+              expr   = <<-PROMQL
+                100 * max by (namespace, label_session_id, label_app) (
+                  vtafarm:pod_persistent_volume_used_bytes
+                  / clamp_min(vtafarm:pod_persistent_volume_capacity_bytes, 1)
+                ) >= 90
+              PROMQL
+              for    = "5m"
+              labels = { audience = "tenant", category = "resource", resource = "storage", severity = "critical" }
+              annotations = {
+                summary       = "Storage usage is above 90%"
+                description   = "This component has used at least 90% of its persistent storage and may stop writing data. Increase storage capacity urgently."
+                usage_percent = "{{ printf \"%.1f\" $value }}"
+              }
+            },
+            {
+              alert  = "VTAFarmMemoryOOMKilled"
+              expr   = <<-PROMQL
+                max by (namespace, label_session_id, label_app) (
+                  (
+                    max by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total[5m])) > 0
+                    and on (namespace, pod, container)
+                    max by (namespace, pod, container) (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1)
+                  )
+                  * on (namespace, pod) group_left(label_session_id, label_app)
+                  kube_pod_labels{label_session_id!=""}
+                ) > 0
+              PROMQL
+              labels = { audience = "tenant", category = "availability", resource = "memory", severity = "critical" }
+              annotations = {
+                summary     = "A container was OOMKilled"
+                description = "This component reached its memory limit and Kubernetes restarted it. Related logs and the incident window are available in the VTA Farm portal."
+              }
+            },
+            {
+              alert  = "VTAFarmComponentCrashLooping"
+              expr   = <<-PROMQL
+                max by (namespace, label_session_id, label_app) (
+                  kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}
+                  * on (namespace, pod) group_left(label_session_id, label_app)
+                  kube_pod_labels{label_session_id!=""}
+                ) > 0
+              PROMQL
+              for    = "3m"
+              labels = { audience = "tenant", category = "availability", resource = "runtime", severity = "critical" }
+              annotations = {
+                summary     = "A component is repeatedly crashing"
+                description = "Kubernetes has placed this component in CrashLoopBackOff for at least 3 minutes. Download the related logs to investigate the startup failure."
+              }
             },
           ]
         }]
@@ -1011,6 +1226,32 @@ resource "kubernetes_secret_v1" "loki_s3" {
   }
 }
 
+resource "kubernetes_secret_v1" "alertmanager_webhook" {
+  count = var.config.enabled && var.config.alertmanager_webhook_enabled ? 1 : 0
+
+  metadata {
+    name      = var.config.alertmanager_webhook_secret_name
+    namespace = kubernetes_namespace_v1.monitoring[0].metadata[0].name
+    labels = {
+      "app.kubernetes.io/managed-by" = "opentofu"
+      "vtafarm.ic3.dev/cluster"      = var.config.cluster_name
+    }
+  }
+
+  type = "Opaque"
+  data_wo = {
+    ALERTMANAGER_WEBHOOK_TOKEN = var.alertmanager_webhook_token
+  }
+  data_wo_revision = var.config.alertmanager_webhook_token_revision
+
+  lifecycle {
+    precondition {
+      condition     = length(trimspace(var.alertmanager_webhook_token)) >= 32
+      error_message = "alertmanager_webhook_token must contain at least 32 characters when the webhook is enabled."
+    }
+  }
+}
+
 resource "helm_release" "kube_prometheus_stack" {
   count = var.config.enabled ? 1 : 0
 
@@ -1025,6 +1266,7 @@ resource "helm_release" "kube_prometheus_stack" {
   timeout = 900
 
   depends_on = [
+    kubernetes_secret_v1.alertmanager_webhook,
     kubernetes_secret_v1.thanos_objstore,
     kubernetes_storage_class_v1.hcloud_volumes_retain,
   ]

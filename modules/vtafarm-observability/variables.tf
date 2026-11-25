@@ -55,14 +55,60 @@ variable "config" {
     loki_s3_access_key    = optional(string, "")
     loki_s3_secret_key    = optional(string, "")
 
-    grafana_enabled       = optional(bool, true)
-    alertmanager_enabled  = optional(bool, false)
-    alertmanager_replicas = optional(number, 1)
+    grafana_enabled                     = optional(bool, true)
+    alertmanager_enabled                = optional(bool, false)
+    alertmanager_replicas               = optional(number, 1)
+    alertmanager_webhook_enabled        = optional(bool, false)
+    alertmanager_webhook_url            = optional(string, "http://vtafarm-api.default.svc.cluster.local:8080/api/v1/internal/alertmanager/webhook")
+    alertmanager_webhook_secret_name    = optional(string, "vtafarm-alertmanager-webhook")
+    alertmanager_webhook_token_revision = optional(number, 1)
+    alertmanager_tenant_group_wait      = optional(string, "30s")
+    alertmanager_tenant_group_interval  = optional(string, "1m")
+
+    tenant_cpu_usage_window   = optional(string, "5m")
+    tenant_alert_warning_for  = optional(string, "10m")
+    tenant_alert_critical_for = optional(string, "5m")
   })
 
   validation {
     condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.config.cluster_name))
     error_message = "cluster_name must be a lowercase DNS-safe name."
+  }
+
+  validation {
+    condition = (
+      !var.config.alertmanager_webhook_enabled ||
+      can(regex("^https?://[^[:space:]]+$", var.config.alertmanager_webhook_url))
+    )
+    error_message = "alertmanager_webhook_url must be an HTTP(S) URL when the tenant webhook is enabled."
+  }
+
+  validation {
+    condition     = !var.config.alertmanager_webhook_enabled || var.config.alertmanager_enabled
+    error_message = "alertmanager_enabled must be true when the tenant webhook is enabled."
+  }
+
+  validation {
+    condition     = contains(["1m", "5m"], var.config.tenant_cpu_usage_window)
+    error_message = "tenant_cpu_usage_window must select an existing 1m or 5m CPU recording rule."
+  }
+
+  validation {
+    condition = alltrue([
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.tenant_alert_warning_for)),
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.tenant_alert_critical_for)),
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.alertmanager_tenant_group_wait)),
+      can(regex("^[1-9][0-9]*(s|m|h)$", var.config.alertmanager_tenant_group_interval)),
+    ])
+    error_message = "Tenant alert durations and Alertmanager grouping durations must be positive Prometheus durations such as 1m or 30s."
+  }
+
+  validation {
+    condition = (
+      var.config.alertmanager_webhook_token_revision >= 1 &&
+      floor(var.config.alertmanager_webhook_token_revision) == var.config.alertmanager_webhook_token_revision
+    )
+    error_message = "alertmanager_webhook_token_revision must be a positive whole number."
   }
 
   validation {
@@ -260,4 +306,12 @@ variable "config" {
     )
     error_message = "thanos_s3_prefix must be empty or a slash-separated object prefix without spaces, leading/trailing slashes, or empty segments."
   }
+}
+
+variable "alertmanager_webhook_token" {
+  description = "Bearer token written to the monitoring namespace Secret without persisting it in plan or state."
+  type        = string
+  default     = ""
+  sensitive   = true
+  ephemeral   = true
 }

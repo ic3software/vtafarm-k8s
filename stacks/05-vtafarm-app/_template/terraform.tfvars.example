@@ -36,6 +36,12 @@ farm_signing_key = ""
 # openssl rand -hex 32. Empty disables /api/v1/monitor/*.
 monitor_token = ""
 
+# Generate with `openssl rand -hex 32`. Stack 06 for this cluster must use the
+# same token and revision. Increment the revision whenever the token changes.
+alertmanager_webhook_enabled        = false
+alertmanager_webhook_token          = ""
+alertmanager_webhook_token_revision = 1
+
 # Empty disables tenant metrics. When stack 06 is enabled, use its
 # metrics_query_url output here.
 metrics_query_url = ""

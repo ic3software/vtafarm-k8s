@@ -23,14 +23,17 @@ module "app" {
     cloudflare_api_token = var.cloudflare_api_token
     cloudflare_zone_id   = var.cloudflare_zone_id
 
-    did_hosting_did         = var.did_hosting_did
-    did_hosting_private_key = var.did_hosting_private_key
-    farm_did                = var.farm_did
-    farm_signing_key        = var.farm_signing_key
-    monitor_token           = var.monitor_token
-    metrics_query_url       = var.metrics_query_url
-    logging_query_url       = var.logging_query_url
-    placement               = var.placement
+    did_hosting_did                     = var.did_hosting_did
+    did_hosting_private_key             = var.did_hosting_private_key
+    farm_did                            = var.farm_did
+    farm_signing_key                    = var.farm_signing_key
+    monitor_token                       = var.monitor_token
+    alertmanager_webhook_enabled        = var.alertmanager_webhook_enabled
+    alertmanager_webhook_secret_name    = var.alertmanager_webhook_secret_name
+    alertmanager_webhook_token_revision = var.alertmanager_webhook_token_revision
+    metrics_query_url                   = var.metrics_query_url
+    logging_query_url                   = var.logging_query_url
+    placement                           = var.placement
 
     vtafarm_version     = var.vtafarm_version
     vtafarm_api_version = var.vtafarm_api_version
@@ -39,4 +42,6 @@ module "app" {
     traefik_namespace  = var.traefik_namespace
     cluster_ingress_ip = var.cluster_ingress_ip
   }
+
+  alertmanager_webhook_token = var.alertmanager_webhook_token
 }

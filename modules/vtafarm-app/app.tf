@@ -20,6 +20,10 @@ resource "helm_release" "api" {
     postgresql   = { storageClass = var.config.storage_class }
     metrics      = { queryURL = var.config.metrics_query_url }
     logging      = { queryURL = var.config.logging_query_url }
+    alerting = {
+      existingSecret = var.config.alertmanager_webhook_enabled ? var.config.alertmanager_webhook_secret_name : ""
+      tokenRevision  = tostring(var.config.alertmanager_webhook_token_revision)
+    }
     vtaClaim = {
       farmDID       = var.config.farm_did
       trustTaskBase = "https://${local.api_host}/trust-task"
@@ -50,6 +54,7 @@ resource "helm_release" "api" {
 
   depends_on = [
     kubernetes_secret_v1.api,
+    kubernetes_secret_v1.alertmanager_webhook,
     kubernetes_secret_v1.postgres,
     helm_release.tls,
   ]
