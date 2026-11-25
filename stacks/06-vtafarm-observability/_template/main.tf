@@ -74,7 +74,8 @@ module "observability" {
     loki_s3_access_key    = local.loki_s3_access_key
     loki_s3_secret_key    = local.loki_s3_secret_key
 
-    grafana_enabled      = var.grafana_enabled
-    alertmanager_enabled = var.alertmanager_enabled
+    grafana_enabled       = var.grafana_enabled
+    alertmanager_enabled  = var.alertmanager_enabled
+    alertmanager_replicas = var.alertmanager_replicas
   }
 }

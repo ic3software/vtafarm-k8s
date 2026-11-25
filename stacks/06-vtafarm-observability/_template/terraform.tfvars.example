@@ -79,5 +79,6 @@ loki_retention        = "720h"
 # Prometheus, Thanos Query, Loki, Alloy, and Grafana remain private ClusterIP
 # services. Use kubectl port-forward for operator access; tenant telemetry goes
 # through an authorized API rather than exposing the backends directly.
-grafana_enabled      = true
-alertmanager_enabled = false
+grafana_enabled       = true
+alertmanager_enabled  = true
+alertmanager_replicas = 1

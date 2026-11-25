@@ -172,8 +172,10 @@ locals {
       enabled = var.config.alertmanager_enabled
       ingress = { enabled = false }
       alertmanagerSpec = {
-        replicas  = 1
-        retention = "120h"
+        replicas                   = var.config.alertmanager_replicas
+        retention                  = "120h"
+        podAntiAffinity            = "soft"
+        podAntiAffinityTopologyKey = "kubernetes.io/hostname"
         resources = {
           requests = { cpu = "25m", memory = "64Mi" }
           limits   = { memory = "256Mi" }
